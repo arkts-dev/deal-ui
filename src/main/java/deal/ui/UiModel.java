@@ -61,11 +61,46 @@ public final class UiModel {
         ACTION
     }
 
-    public record TypedExpression(Expression expression, ValueType type) {}
+    public sealed interface IrExpression permits IrString, IrBoolean, IrStateField, IrNot, IrAction {
+        ValueType type();
+        SourceSpan span();
+    }
+
+    public record IrString(String value, SourceSpan span) implements IrExpression {
+        @Override public ValueType type() { return ValueType.STRING; }
+    }
+    public record IrBoolean(boolean value, SourceSpan span) implements IrExpression {
+        @Override public ValueType type() { return ValueType.BOOLEAN; }
+    }
+    public record IrStateField(String field, ValueType type, SourceSpan span) implements IrExpression {}
+    public record IrNot(IrExpression operand, SourceSpan span) implements IrExpression {
+        @Override public ValueType type() { return ValueType.BOOLEAN; }
+    }
+    public record IrAction(String typeName, SourceSpan span) implements IrExpression {
+        @Override public ValueType type() { return ValueType.ACTION; }
+    }
+
+    public sealed interface IrNode permits IrComponent, IrWhen {
+        SourceSpan span();
+    }
+    public record IrComponent(String name, Map<String, IrExpression> props, List<IrNode> children,
+                              SourceSpan span) implements IrNode {
+        public IrComponent {
+            props = immutableMap(props);
+            children = List.copyOf(children);
+        }
+    }
+    public record IrWhen(IrExpression condition, List<IrNode> children, SourceSpan span) implements IrNode {
+        public IrWhen { children = List.copyOf(children); }
+    }
+    public record IrView(String name, String stateType, List<IrNode> children, SourceSpan span) {
+        public IrView { children = List.copyOf(children); }
+    }
+
     public record FieldInfo(ValueType type, Object defaultValue) {}
 
-    public record CheckedProgram(ParsedSource parsed, String actionType, Map<String, FieldInfo> stateFields,
-                                 Map<String, FieldInfo> actionFields) {
+    public record CheckedProgram(ParsedSource parsed, IrView ir, String actionType,
+                                 Map<String, FieldInfo> stateFields, Map<String, FieldInfo> actionFields) {
         public CheckedProgram {
             stateFields = immutableMap(stateFields);
             actionFields = immutableMap(actionFields);

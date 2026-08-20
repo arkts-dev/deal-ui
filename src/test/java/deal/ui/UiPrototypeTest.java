@@ -37,10 +37,13 @@ public final class UiPrototypeTest {
             Thread.currentThread().setContextClassLoader(loader);
             Class<?> generatedUi = Class.forName(result.uiClass(), true, loader);
             UiModel.CheckedProgram generatedProgram = (UiModel.CheckedProgram) generatedUi.getMethod("program").invoke(null);
-            check(generatedProgram.parsed().view().name().equals("MuseumCard"),
+            check(generatedProgram.ir().name().equals("MuseumCard"),
                 "generated UI artifact reconstructs the typed root view");
+            check(generatedProgram.ir().span().startLine() == 22,
+                "generated typed IR preserves root source span");
             try (UiProgramRuntime runtime = new UiProgramRuntime(generatedProgram, result.moduleClass())) {
                 check(runtime.stateSnapshot().get("expanded").equals(false), "initial DEAL state is collapsed");
+                check(runtime.tree().span().startLine() == 23, "runtime node preserves source span");
                 check(texts(runtime.tree()).equals(List.of("The Starry Night", "Vincent van Gogh")),
                     "initial tree uses DEAL state");
                 JComponent component = runtime.renderer().renderForTesting(runtime.tree());
@@ -71,8 +74,25 @@ public final class UiPrototypeTest {
         expectDiagnostic("UI1001", sourceText().replace("Text(value: state.title)", "Text(state.title)"));
         expectDiagnostic("UI1007", sourceText().replace("// @ui-root\n", ""));
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));
+        expectUnsafeOutput(source, root);
+        expectUnsafeOutput(source, source.getParent());
+        expectUnsafeOutput(source, fsRoot());
+        Path symlink = root.resolve("output-link");
+        Files.deleteIfExists(symlink);
+        Files.createSymbolicLink(symlink, root.resolve("build"));
+        expectUnsafeOutput(source, symlink);
+        Files.deleteIfExists(symlink);
 
         System.out.println("Passed: " + passed);
+    }
+
+    private static void expectUnsafeOutput(Path source, Path output) throws Exception {
+        try {
+            new UiCompiler(fsRoot()).compile(source, output);
+            throw new AssertionError("Expected unsafe output rejection: " + output);
+        } catch (java.io.IOException failure) {
+            check(failure.getMessage().contains("Unsafe"), "unsafe output is rejected: " + output);
+        }
     }
 
     private static void expectCompilerFailure(String source) throws Exception {

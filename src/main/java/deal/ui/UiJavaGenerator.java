@@ -14,41 +14,28 @@ public final class UiJavaGenerator {
         line(out, "    return java.util.Collections.unmodifiableMap(result);");
         line(out, "  }");
         line(out, "  public static deal.ui.UiModel.CheckedProgram program() {");
-        line(out, "    java.nio.file.Path file = java.nio.file.Path.of(" + quote(program.parsed().view().span().file().toString()) + ");");
-        line(out, "    deal.ui.UiModel.View view = " + view(program.parsed().view()) + ";");
-        line(out, "    deal.ui.UiModel.ParsedSource parsed = new deal.ui.UiModel.ParsedSource(\"\", \"\", view);");
-        line(out, "    return new deal.ui.UiModel.CheckedProgram(parsed, " + quote(program.actionType()) + ", "
+        line(out, "    java.nio.file.Path file = java.nio.file.Path.of(" + quote(program.ir().span().file().toString()) + ");");
+        line(out, "    deal.ui.UiModel.IrView ir = " + view(program.ir()) + ";");
+        line(out, "    return new deal.ui.UiModel.CheckedProgram(null, ir, " + quote(program.actionType()) + ", "
             + fields(program.stateFields()) + ", " + fields(program.actionFields()) + ");");
         line(out, "  }");
         line(out, "  public static void main(java.lang.String[] args) {");
         line(out, "    deal.ui.UiProgramRuntime runtime = new deal.ui.UiProgramRuntime(program(), " + quote(moduleClass) + ");");
         line(out, "    runtime.show();");
         line(out, "  }");
-        line(out, "  public static void verifyVisible(java.nio.file.Path evidenceDirectory) {");
-        line(out, "    deal.ui.UiProgramRuntime runtime = new deal.ui.UiProgramRuntime(program(), " + quote(moduleClass) + ");");
-        line(out, "    try {");
-        line(out, "      runtime.show();");
-        line(out, "      runtime.capture(evidenceDirectory.resolve(\"museum-collapsed.png\"));");
-        line(out, "      runtime.clickButton(\"Toggle details\");");
-        line(out, "      if (!java.lang.Boolean.TRUE.equals(runtime.stateSnapshot().get(\"expanded\"))) throw new java.lang.IllegalStateException(\"DEAL update did not commit expanded state\");");
-        line(out, "      runtime.capture(evidenceDirectory.resolve(\"museum-expanded.png\"));");
-        line(out, "    } finally {");
-        line(out, "      runtime.close();");
-        line(out, "    }");
-        line(out, "  }");
         line(out, "}");
         return out.toString();
     }
 
-    private String view(UiModel.View view) {
-        return "new deal.ui.UiModel.View(" + quote(view.name()) + ", " + quote(view.stateParameter()) + ", "
-            + quote(view.stateType()) + ", " + nodes(view.children()) + ", " + span(view.span()) + ")";
+    private String view(UiModel.IrView view) {
+        return "new deal.ui.UiModel.IrView(" + quote(view.name()) + ", " + quote(view.stateType()) + ", "
+            + nodes(view.children()) + ", " + span(view.span()) + ")";
     }
 
-    private String nodes(Iterable<UiModel.Node> nodes) {
+    private String nodes(Iterable<UiModel.IrNode> nodes) {
         StringBuilder result = new StringBuilder("java.util.List.of(");
         boolean first = true;
-        for (UiModel.Node node : nodes) {
+        for (UiModel.IrNode node : nodes) {
             if (!first) result.append(", ");
             first = false;
             result.append(node(node));
@@ -56,20 +43,21 @@ public final class UiJavaGenerator {
         return result.append(')').toString();
     }
 
-    private String node(UiModel.Node node) {
-        if (node instanceof UiModel.Component component) {
-            return "new deal.ui.UiModel.Component(" + quote(component.name()) + ", " + expressions(component.props())
-                + ", " + nodes(component.children()) + ", " + span(component.span()) + ")";
+    private String node(UiModel.IrNode node) {
+        if (node instanceof UiModel.IrComponent component) {
+            return "new deal.ui.UiModel.IrComponent(" + quote(component.name()) + ", "
+                + expressions(component.props()) + ", " + nodes(component.children()) + ", "
+                + span(component.span()) + ")";
         }
-        UiModel.When when = (UiModel.When) node;
-        return "new deal.ui.UiModel.When(" + expression(when.condition()) + ", " + nodes(when.thenChildren())
+        UiModel.IrWhen when = (UiModel.IrWhen) node;
+        return "new deal.ui.UiModel.IrWhen(" + expression(when.condition()) + ", " + nodes(when.children())
             + ", " + span(when.span()) + ")";
     }
 
-    private String expressions(Map<String, UiModel.Expression> values) {
+    private String expressions(Map<String, UiModel.IrExpression> values) {
         StringBuilder result = new StringBuilder("ordered(");
         boolean first = true;
-        for (Map.Entry<String, UiModel.Expression> entry : values.entrySet()) {
+        for (Map.Entry<String, UiModel.IrExpression> entry : values.entrySet()) {
             if (!first) result.append(", ");
             first = false;
             result.append("java.util.Map.entry(").append(quote(entry.getKey())).append(", ")
@@ -78,23 +66,22 @@ public final class UiJavaGenerator {
         return result.append(')').toString();
     }
 
-    private String expression(UiModel.Expression expression) {
-        if (expression instanceof UiModel.StringLiteral literal) {
-            return "new deal.ui.UiModel.StringLiteral(" + quote(literal.value()) + ", " + span(literal.span()) + ")";
+    private String expression(UiModel.IrExpression expression) {
+        if (expression instanceof UiModel.IrString literal) {
+            return "new deal.ui.UiModel.IrString(" + quote(literal.value()) + ", " + span(literal.span()) + ")";
         }
-        if (expression instanceof UiModel.BooleanLiteral literal) {
-            return "new deal.ui.UiModel.BooleanLiteral(" + literal.value() + ", " + span(literal.span()) + ")";
+        if (expression instanceof UiModel.IrBoolean literal) {
+            return "new deal.ui.UiModel.IrBoolean(" + literal.value() + ", " + span(literal.span()) + ")";
         }
-        if (expression instanceof UiModel.StatePath path) {
-            return "new deal.ui.UiModel.StatePath(" + quote(path.root()) + ", " + quote(path.field()) + ", "
-                + span(path.span()) + ")";
+        if (expression instanceof UiModel.IrStateField field) {
+            return "new deal.ui.UiModel.IrStateField(" + quote(field.field()) + ", deal.ui.UiModel.ValueType."
+                + field.type().name() + ", " + span(field.span()) + ")";
         }
-        if (expression instanceof UiModel.NotExpression not) {
-            return "new deal.ui.UiModel.NotExpression(" + expression(not.operand()) + ", " + span(not.span()) + ")";
+        if (expression instanceof UiModel.IrNot not) {
+            return "new deal.ui.UiModel.IrNot(" + expression(not.operand()) + ", " + span(not.span()) + ")";
         }
-        UiModel.ActionLiteral action = (UiModel.ActionLiteral) expression;
-        return "new deal.ui.UiModel.ActionLiteral(" + quote(action.typeName()) + ", " + expressions(action.fields())
-            + ", " + span(action.span()) + ")";
+        UiModel.IrAction action = (UiModel.IrAction) expression;
+        return "new deal.ui.UiModel.IrAction(" + quote(action.typeName()) + ", " + span(action.span()) + ")";
     }
 
     private String fields(Map<String, UiModel.FieldInfo> fields) {
@@ -128,7 +115,5 @@ public final class UiJavaGenerator {
         return '"' + escaped + '"';
     }
 
-    private void line(StringBuilder out, String value) {
-        out.append(value).append('\n');
-    }
+    private void line(StringBuilder out, String value) { out.append(value).append('\n'); }
 }

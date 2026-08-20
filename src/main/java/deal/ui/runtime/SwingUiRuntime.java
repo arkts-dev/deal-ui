@@ -30,18 +30,20 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class SwingUiRuntime implements AutoCloseable {
-    public sealed interface Node permits CardNode, ColumnNode, TextNode, ButtonNode {}
-    public record CardNode(List<Node> children) implements Node {
-        public CardNode { children = List.copyOf(children); }
+    public sealed interface Node permits CardNode, ColumnNode, TextNode, ButtonNode {
+        deal.ui.UiModel.SourceSpan span();
     }
-    public record ColumnNode(List<Node> children) implements Node {
-        public ColumnNode { children = List.copyOf(children); }
+    public record CardNode(List<Node> children, deal.ui.UiModel.SourceSpan span) implements Node {
+        public CardNode { children = List.copyOf(children); Objects.requireNonNull(span); }
     }
-    public record TextNode(String text) implements Node {
-        public TextNode { Objects.requireNonNull(text); }
+    public record ColumnNode(List<Node> children, deal.ui.UiModel.SourceSpan span) implements Node {
+        public ColumnNode { children = List.copyOf(children); Objects.requireNonNull(span); }
     }
-    public record ButtonNode(String text, String actionType) implements Node {
-        public ButtonNode { Objects.requireNonNull(text); Objects.requireNonNull(actionType); }
+    public record TextNode(String text, deal.ui.UiModel.SourceSpan span) implements Node {
+        public TextNode { Objects.requireNonNull(text); Objects.requireNonNull(span); }
+    }
+    public record ButtonNode(String text, String actionType, deal.ui.UiModel.SourceSpan span) implements Node {
+        public ButtonNode { Objects.requireNonNull(text); Objects.requireNonNull(actionType); Objects.requireNonNull(span); }
     }
 
     @FunctionalInterface

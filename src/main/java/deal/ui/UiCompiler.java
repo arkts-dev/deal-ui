@@ -34,6 +34,7 @@ public final class UiCompiler {
             throw new IOException("DEAL compiler classes not found under " + fsRoot.resolve("build")
                 + "; run /home/igelhaus/coding/deal/fs/run_tests.sh first");
         }
+        validateOutput(input, output);
         String source = Files.readString(input);
         UiModel.ParsedSource parsed = UiParser.parse(input, source);
         recreateDirectory(output);
@@ -99,12 +100,43 @@ public final class UiCompiler {
         }
     }
 
+    private void validateOutput(Path source, Path output) throws IOException {
+        Path sourceReal = source.toRealPath();
+        Path sourceParent = sourceReal.getParent();
+        Path fsReal = fsRoot.toRealPath();
+        Path cwdReal = Path.of("").toAbsolutePath().normalize().toRealPath();
+        Path outputAbsolute = output.toAbsolutePath().normalize();
+        Path existing = outputAbsolute;
+        while (existing != null && !Files.exists(existing)) existing = existing.getParent();
+        if (existing == null) throw new IOException("Output has no existing filesystem ancestor: " + output);
+        if (Files.isSymbolicLink(existing)) {
+            throw new IOException("Unsafe symbolic-link output path: " + existing);
+        }
+        Path existingReal = existing.toRealPath();
+        Path resolved = existing.getNameCount() == outputAbsolute.getNameCount()
+            ? existingReal
+            : existingReal.resolve(outputAbsolute.subpath(existing.getNameCount(),
+                outputAbsolute.getNameCount())).normalize();
+        if (resolved.getParent() == null || resolved.equals(cwdReal) || resolved.equals(fsReal)
+                || resolved.startsWith(fsReal) || sourceReal.startsWith(resolved)
+                || (sourceParent != null && sourceParent.startsWith(resolved))
+                || Files.exists(resolved.resolve(".git"))) {
+            throw new IOException("Unsafe output directory overlaps source, repository, compiler, or filesystem root: "
+                + outputAbsolute);
+        }
+        Path cursor = outputAbsolute;
+        while (cursor != null && !cursor.equals(existing)) {
+            if (Files.isSymbolicLink(cursor)) {
+                throw new IOException("Unsafe symbolic-link output path: " + cursor);
+            }
+            cursor = cursor.getParent();
+        }
+    }
+
     private void recreateDirectory(Path directory) throws IOException {
         if (Files.exists(directory)) {
             try (var paths = Files.walk(directory)) {
-                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                    Files.delete(path);
-                }
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
         }
         Files.createDirectories(directory);

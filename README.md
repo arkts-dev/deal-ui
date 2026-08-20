@@ -11,9 +11,9 @@ backend. No files under that compiler repository are modified.
 ```bash
 ./scripts/test.sh
 ./scripts/build.sh
+./scripts/verify-visible.sh
 ./bin/deal-ui dump-ir examples/museum/museum.deal
 ./bin/deal-ui run examples/museum/museum.deal
-./bin/deal-ui verify-visible examples/museum/museum.deal --output build/visible-smoke
 ```
 
 `DEAL_FS_ROOT` may point to another intact checkout of the same compiler.
@@ -37,10 +37,9 @@ update, and entry declarations are parsed, checked, and lowered by the real
 DEAL JVM backend. Generated UI code binds those generated classes and calls the
 generated exported `update` method.
 
-Swing is part of the JDK. If the installed JDK is headless-only, `run` and
-`verify-visible` download the matching OpenJDK desktop package into `.deps/` and
-assemble a repository-local runtime without changing the system installation.
-A graphical desktop is required for `run` and `verify-visible`; automated tests use
-headless Swing component construction and real button dispatch. `verify-visible`
-launches the generated UI, captures collapsed and expanded PNGs, performs a real
-button click, verifies committed DEAL state, and closes the window.
+Swing is part of the JDK. If the installed JDK is headless-only, `run` downloads
+the matching OpenJDK desktop package into `.deps/` and assembles a repository-local
+runtime without changing the system installation. A graphical desktop is required
+for `run`; automated tests use headless Swing component construction and real button
+dispatch. `scripts/verify-visible.sh` owns the museum-specific visual scenario;
+the generic CLI contains no application-specific interaction assumptions.

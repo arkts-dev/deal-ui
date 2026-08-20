@@ -69,7 +69,9 @@ public final class UiChecker {
         }
         validateUpdate(functions.get("update"), exportedFunctions.contains("update"), parsed.view().stateType(),
             actionEntry.getKey(), parsed.view().span());
-        return new UiModel.CheckedProgram(parsed, actionEntry.getKey(), stateFieldInfo, actionFieldInfo);
+        UiModel.IrView ir = new UiModel.IrView(parsed.view().name(), parsed.view().stateType(),
+            lowerNodes(parsed.view().children(), parsed.view(), stateFields), parsed.view().span());
+        return new UiModel.CheckedProgram(parsed, ir, actionEntry.getKey(), stateFieldInfo, actionFieldInfo);
     }
 
     private ProgramNode parseDeal(Path sourceFile, String source) {
@@ -167,6 +169,43 @@ public final class UiChecker {
                 validateActions(when.thenChildren(), view, actionType, actionFields, stateFields);
             }
         }
+    }
+
+    private List<UiModel.IrNode> lowerNodes(List<UiModel.Node> nodes, UiModel.View view,
+                                            Map<String, UiModel.ValueType> stateFields) {
+        List<UiModel.IrNode> result = new java.util.ArrayList<>();
+        for (UiModel.Node node : nodes) {
+            if (node instanceof UiModel.Component component) {
+                Map<String, UiModel.IrExpression> props = new LinkedHashMap<>();
+                for (Map.Entry<String, UiModel.Expression> prop : component.props().entrySet()) {
+                    props.put(prop.getKey(), lowerExpression(prop.getValue(), view, stateFields));
+                }
+                result.add(new UiModel.IrComponent(component.name(), props,
+                    lowerNodes(component.children(), view, stateFields), component.span()));
+            } else if (node instanceof UiModel.When when) {
+                result.add(new UiModel.IrWhen(lowerExpression(when.condition(), view, stateFields),
+                    lowerNodes(when.thenChildren(), view, stateFields), when.span()));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private UiModel.IrExpression lowerExpression(UiModel.Expression expression, UiModel.View view,
+                                                  Map<String, UiModel.ValueType> stateFields) {
+        if (expression instanceof UiModel.StringLiteral literal) {
+            return new UiModel.IrString(literal.value(), literal.span());
+        }
+        if (expression instanceof UiModel.BooleanLiteral literal) {
+            return new UiModel.IrBoolean(literal.value(), literal.span());
+        }
+        if (expression instanceof UiModel.StatePath path) {
+            return new UiModel.IrStateField(path.field(), stateFields.get(path.field()), path.span());
+        }
+        if (expression instanceof UiModel.NotExpression not) {
+            return new UiModel.IrNot(lowerExpression(not.operand(), view, stateFields), not.span());
+        }
+        UiModel.ActionLiteral action = (UiModel.ActionLiteral) expression;
+        return new UiModel.IrAction(action.typeName(), action.span());
     }
 
     private UiModel.ValueType expressionType(UiModel.Expression expression, UiModel.View view,

@@ -80,12 +80,6 @@ public final class Main {
                 compiler.build(result, runtimeClasses());
                 runApplication(result);
             }
-            case "verify-visible" -> {
-                compiler.build(result, runtimeClasses());
-                verifyVisible(result);
-                System.out.println("Visible UI verification successful: "
-                    + result.outputDirectory().resolve("visible-evidence"));
-            }
             default -> throw new IllegalArgumentException("Unknown command: " + command);
         }
         return 0;
@@ -94,12 +88,6 @@ public final class Main {
     private static void runApplication(UiCompiler.Result result) throws Exception {
         Class<?> application = loadApplication(result);
         application.getMethod("main", String[].class).invoke(null, (Object) new String[0]);
-    }
-
-    private static void verifyVisible(UiCompiler.Result result) throws Exception {
-        Class<?> application = loadApplication(result);
-        application.getMethod("verifyVisible", Path.class).invoke(null,
-            result.outputDirectory().resolve("visible-evidence"));
     }
 
     private static Class<?> loadApplication(UiCompiler.Result result) throws Exception {
@@ -123,6 +111,6 @@ public final class Main {
     }
 
     private static void usage() {
-        System.err.println("Usage: deal-ui <check|dump-ir|build|run|verify-visible> <source.deal> [--output <dir>] [--fs-root <path>]");
+        System.err.println("Usage: deal-ui <check|dump-ir|build|run> <source.deal> [--output <dir>] [--fs-root <path>]");
     }
 }
