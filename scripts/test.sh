@@ -10,3 +10,4 @@ mkdir -p "$TEST_CLASSES"
 mapfile -t TEST_SOURCES < <(printf '%s\n' "$ROOT"/src/test/java/deal/ui/*.java)
 javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -d "$TEST_CLASSES" "${TEST_SOURCES[@]}"
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPrototypeTest
+printf '%s\n' "Test verification completed with assertions enabled"
