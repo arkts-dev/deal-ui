@@ -1,0 +1,36 @@
+export class MuseumState {
+  title: string = "The Starry Night";
+  artist: string = "Vincent van Gogh";
+  expanded: boolean = false;
+}
+
+export class ToggleDetails {}
+
+export function update(state: MuseumState, action: ToggleDetails): MuseumState {
+  return {
+    title: state.title,
+    artist: state.artist,
+    expanded: !state.expanded
+  };
+}
+
+export function main(): null {
+  return null;
+}
+
+// @ui-root
+export view MuseumCard(state: MuseumState): View {
+  Card {
+    Column {
+      Text(value: state.title)
+      Text(value: state.artist)
+      When(state.expanded) {
+        Text(value: "Painted in 1889")
+      }
+      Button(
+        text: "Toggle details",
+        onClick: action ToggleDetails {}
+      )
+    }
+  }
+}

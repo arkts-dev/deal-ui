@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+"$ROOT/scripts/compile.sh"
+JAVA=java
+if [[ "${1:-}" == "run" || "${1:-}" == "verify-visible" ]]; then
+  JAVA=$("$ROOT/scripts/java-ui.sh")
+fi
+exec "$JAVA" -cp "$ROOT/build/classes:${DEAL_FS_ROOT:-/home/igelhaus/coding/deal/fs}/build" deal.ui.Main "$@"
