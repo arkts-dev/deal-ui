@@ -207,10 +207,8 @@ public final class UiParser {
         int line = 1;
         int foundLine = 1;
         while (offset <= source.length()) {
-            int end = source.indexOf('\n', offset);
-            if (end < 0) {
-                end = source.length();
-            }
+            int end = offset;
+            while (end < source.length() && source.charAt(end) != '\n' && source.charAt(end) != '\r') end++;
             String value = source.substring(offset, end).trim();
             if (value.equals("// @ui-root")) {
                 if (foundStart >= 0) {
@@ -218,19 +216,33 @@ public final class UiParser {
                         file, line, 1);
                 }
                 foundStart = offset;
-                foundEnd = end < source.length() ? end + 1 : end;
+                foundEnd = end;
+                if (foundEnd < source.length() && source.charAt(foundEnd) == '\r') foundEnd++;
+                if (foundEnd < source.length() && source.charAt(foundEnd) == '\n') foundEnd++;
                 foundLine = line;
             }
             if (end == source.length()) {
                 break;
             }
-            offset = end + 1;
+            offset = end;
+            if (offset < source.length() && source.charAt(offset) == '\r') offset++;
+            if (offset < source.length() && source.charAt(offset) == '\n') offset++;
             line++;
         }
         if (foundStart < 0) {
             throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required", file, 1, 1);
         }
         return new Token(Kind.IDENTIFIER, "@ui-root", foundStart, foundEnd, foundLine, 1, foundLine, 12);
+    }
+
+    private static int[] advance(String source, int offset, int line, int column) {
+        char current = source.charAt(offset++);
+        if (current == '\r') {
+            if (offset < source.length() && source.charAt(offset) == '\n') offset++;
+            return new int[]{offset, line + 1, 1};
+        }
+        if (current == '\n') return new int[]{offset, line + 1, 1};
+        return new int[]{offset, line, column + 1};
     }
 
     private static String whitespacePreservingLines(String value) {
@@ -248,7 +260,12 @@ public final class UiParser {
         int line = 1;
         int column = 1;
         for (int i = 0; i < startOffset; i++) {
-            if (source.charAt(i) == '\n') {
+            char current = source.charAt(i);
+            if (current == '\r') {
+                if (i + 1 < startOffset && source.charAt(i + 1) == '\n') i++;
+                line++;
+                column = 1;
+            } else if (current == '\n') {
                 line++;
                 column = 1;
             } else {
@@ -258,19 +275,41 @@ public final class UiParser {
         while (offset < source.length()) {
             char c = source.charAt(offset);
             if (Character.isWhitespace(c)) {
-                if (c == '\n') {
-                    line++;
-                    column = 1;
-                } else {
-                    column++;
-                }
-                offset++;
+                int[] position = advance(source, offset, line, column);
+                offset = position[0];
+                line = position[1];
+                column = position[2];
                 continue;
             }
             if (c == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
-                while (offset < source.length() && source.charAt(offset) != '\n') {
+                while (offset < source.length() && source.charAt(offset) != '\n' && source.charAt(offset) != '\r') {
                     offset++;
                     column++;
+                }
+                continue;
+            }
+            if (c == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
+                int commentLine = line;
+                int commentColumn = column;
+                offset += 2;
+                column += 2;
+                boolean closed = false;
+                while (offset < source.length()) {
+                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
+                            && source.charAt(offset + 1) == '/') {
+                        offset += 2;
+                        column += 2;
+                        closed = true;
+                        break;
+                    }
+                    int[] position = advance(source, offset, line, column);
+                    offset = position[0];
+                    line = position[1];
+                    column = position[2];
+                }
+                if (!closed) {
+                    throw new UiDiagnostic("UI1001", "Unterminated block comment", file,
+                        commentLine, commentColumn);
                 }
                 continue;
             }

@@ -75,6 +75,12 @@ public final class UiPrototypeTest {
         expectDiagnostic("UI1001", sourceText().replace("Text(value: state.title)", "let value: string"));
         expectDiagnostic("UI1001", sourceText().replace("Text(value: state.title)", "Text(state.title)"));
         expectDiagnostic("UI1007", sourceText().replace("// @ui-root\n", ""));
+        UiModel.ParsedSource blockComment = UiParser.parse(source,
+            sourceText().replace("  Card {", "  /* layout */ Card {"));
+        check(blockComment.view().children().size() == 1, "block comments are UI whitespace");
+        expectDiagnostic("UI1001", sourceText().replace("  Card {", "  /* unterminated Card {"));
+        expectLineEndingSpan(sourceText().replace("\n", "\r\n"), "CRLF");
+        expectLineEndingSpan(sourceText().replace("\n", "\r"), "CR");
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));
         expectUnsafeOutput(source, root, outputRoot);
         expectUnsafeOutput(source, source.getParent(), outputRoot);
@@ -90,8 +96,35 @@ public final class UiPrototypeTest {
         expectUnsafeOutput(source, symlink, outputRoot);
         expectRootSubstitution(source, root, "before-output-creation");
         expectRootSubstitution(source, root, "after-output-creation");
+        expectOutputSubstitution(source, root);
 
         System.out.println("Passed: " + passed);
+    }
+
+    private static void expectOutputSubstitution(Path source, Path root) throws Exception {
+        Path outputRoot = root.resolve("build/output-substitution");
+        recreateEmpty(outputRoot);
+        Path output = outputRoot.resolve("result");
+        Path displaced = outputRoot.resolve("displaced");
+        Path attacker = outputRoot.resolve("attacker");
+        Files.createDirectory(attacker);
+        Path sentinel = attacker.resolve("sentinel.txt");
+        Files.writeString(sentinel, "retain");
+        UiCompiler.OutputHook hook = transition -> {
+            if (transition.equals("after-output-creation")) {
+                Files.move(output, displaced);
+                Files.createSymbolicLink(output, attacker);
+            }
+        };
+        try {
+            new UiCompiler(fsRoot(), outputRoot, hook).compile(source, output);
+            throw new AssertionError("Expected substituted output rejection");
+        } catch (java.io.IOException failure) {
+            check(failure.getMessage().contains("output directory identity changed"),
+                "output substitution fails closed");
+            check(Files.readString(sentinel).equals("retain"), "output substitution retains attacker data");
+            check(Files.list(attacker).count() == 1, "output substitution creates no attacker artifacts");
+        }
     }
 
     private static void expectRootSubstitution(Path source, Path root, String transition) throws Exception {
@@ -142,6 +175,19 @@ public final class UiPrototypeTest {
                 check(failure.getMessage().contains("DEAL JVM compilation failed"),
                     "authoritative DEAL compiler rejects invalid ordinary DEAL");
             }
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    private static void expectLineEndingSpan(String source, String kind) throws Exception {
+        Path file = Files.createTempFile("deal-ui-lines-", ".deal");
+        try {
+            Files.writeString(file, source);
+            UiModel.ParsedSource parsed = UiParser.parse(file, source);
+            check(parsed.view().span().startLine() == 22, kind + " root line is preserved");
+            check(parsed.view().children().get(0).span().startLine() == 23,
+                kind + " child line is preserved");
         } finally {
             Files.deleteIfExists(file);
         }

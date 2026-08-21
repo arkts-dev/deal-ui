@@ -53,8 +53,10 @@ public final class UiCompiler {
         outputHook.run("before-output-creation");
         ensureRootIdentity(rootKey);
         Files.createDirectory(output);
+        Object outputKey = fileKey(output);
         outputHook.run("after-output-creation");
         ensureRootIdentity(rootKey);
+        ensurePathIdentity(output, outputKey, "output directory");
         Path dealSource = output.resolve("deal-src").resolve(input.getFileName().toString());
             Files.createDirectories(dealSource.getParent());
             Files.writeString(dealSource, parsed.dealSource());
@@ -145,9 +147,13 @@ public final class UiCompiler {
     }
 
     private void ensureRootIdentity(Object expected) throws IOException {
-        Object current = fileKey(outputRoot);
-        if (expected == null || !expected.equals(current)) {
-            throw new IOException("Compiler output root identity changed during compilation: " + outputRoot);
+        ensurePathIdentity(outputRoot, expected, "output root");
+    }
+
+    private void ensurePathIdentity(Path path, Object expected, String label) throws IOException {
+        Object current = fileKey(path);
+        if (expected == null || !expected.equals(current) || Files.isSymbolicLink(path)) {
+            throw new IOException("Compiler " + label + " identity changed during compilation: " + path);
         }
     }
 
