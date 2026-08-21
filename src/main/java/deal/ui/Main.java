@@ -37,7 +37,7 @@ public final class Main {
         }
         String command = args[0];
         Path source = null;
-        Path output = Path.of("build/deal-ui-outputs/ui");
+        Path output = null;
         Path fsRoot = defaultFsRoot();
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
@@ -67,8 +67,12 @@ public final class Main {
         if (source == null) {
             throw new IllegalArgumentException("Missing UI source file");
         }
-        Path outputRoot = Path.of("build/deal-ui-outputs").toAbsolutePath().normalize();
+        Path outputRoot = Path.of(System.getProperty("java.io.tmpdir"),
+            "deal-ui-" + ProcessHandle.current().info().user().orElseThrow()).toAbsolutePath().normalize();
         java.nio.file.Files.createDirectories(outputRoot);
+        java.nio.file.Files.setPosixFilePermissions(outputRoot,
+            java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        if (output == null) output = outputRoot.resolve("ui-" + System.nanoTime());
         UiCompiler compiler = new UiCompiler(fsRoot, outputRoot);
         UiCompiler.Result result = compiler.compile(source, output);
         switch (command) {
