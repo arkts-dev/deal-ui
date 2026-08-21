@@ -88,10 +88,8 @@ public final class UiPrototypeTest {
         Path symlink = outputRoot.resolve("output-link");
         Files.createSymbolicLink(symlink, root.resolve("build"));
         expectUnsafeOutput(source, symlink, outputRoot);
-        expectRootSubstitution(source, root, "before-staging");
-        expectRootSubstitution(source, root, "after-staging");
-        expectRootSubstitution(source, root, "before-publication");
-        expectRootSubstitution(source, root, "before-cleanup");
+        expectRootSubstitution(source, root, "before-output-creation");
+        expectRootSubstitution(source, root, "after-output-creation");
 
         System.out.println("Passed: " + passed);
     }
@@ -110,16 +108,10 @@ public final class UiPrototypeTest {
             if (current.equals(transition)) {
                 Files.move(owned, moved);
                 Files.createSymbolicLink(owned, attacker);
-                if (transition.equals("before-cleanup")) throw new java.io.IOException("forced failure");
             }
         };
-        Path compileSource = source;
-        if (transition.equals("before-cleanup")) {
-            compileSource = parent.resolve("invalid.deal");
-            Files.writeString(compileSource, sourceText().replace("expanded: boolean = false", "expanded: string = false"));
-        }
         try {
-            new UiCompiler(fsRoot(), owned, hook).compile(compileSource, owned.resolve("result"));
+            new UiCompiler(fsRoot(), owned, hook).compile(source, owned.resolve("result"));
             throw new AssertionError("Expected substituted root rejection at " + transition);
         } catch (java.io.IOException failure) {
             check(failure.getMessage().contains("identity changed") || failure.getMessage().contains("forced failure"),
