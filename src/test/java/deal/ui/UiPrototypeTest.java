@@ -88,8 +88,44 @@ public final class UiPrototypeTest {
         Path symlink = outputRoot.resolve("output-link");
         Files.createSymbolicLink(symlink, root.resolve("build"));
         expectUnsafeOutput(source, symlink, outputRoot);
+        expectRootSubstitution(source, root, "before-staging");
+        expectRootSubstitution(source, root, "before-publication");
+        expectRootSubstitution(source, root, "before-cleanup");
 
         System.out.println("Passed: " + passed);
+    }
+
+    private static void expectRootSubstitution(Path source, Path root, String transition) throws Exception {
+        Path parent = root.resolve("build/substitution-" + transition);
+        recreateEmpty(parent);
+        Path owned = parent.resolve("owned");
+        Path moved = parent.resolve("moved");
+        Path attacker = parent.resolve("attacker");
+        Files.createDirectory(owned);
+        Files.createDirectory(attacker);
+        Path sentinel = attacker.resolve("sentinel.txt");
+        Files.writeString(sentinel, "retain");
+        UiCompiler.OutputHook hook = current -> {
+            if (current.equals(transition)) {
+                Files.move(owned, moved);
+                Files.createSymbolicLink(owned, attacker);
+                if (transition.equals("before-cleanup")) throw new java.io.IOException("forced failure");
+            }
+        };
+        Path compileSource = source;
+        if (transition.equals("before-cleanup")) {
+            compileSource = parent.resolve("invalid.deal");
+            Files.writeString(compileSource, sourceText().replace("expanded: boolean = false", "expanded: string = false"));
+        }
+        try {
+            new UiCompiler(fsRoot(), owned, hook).compile(compileSource, owned.resolve("result"));
+            throw new AssertionError("Expected substituted root rejection at " + transition);
+        } catch (java.io.IOException failure) {
+            check(failure.getMessage().contains("identity changed") || failure.getMessage().contains("forced failure"),
+                "root substitution fails closed at " + transition);
+            check(Files.readString(sentinel).equals("retain"),
+                "root substitution retains attacker data at " + transition);
+        }
     }
 
     private static void expectUnsafeOutput(Path source, Path output, Path outputRoot) throws Exception {

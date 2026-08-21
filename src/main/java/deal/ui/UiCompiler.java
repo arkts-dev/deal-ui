@@ -14,12 +14,22 @@ public final class UiCompiler {
                          Path generatedJava, Path generatedUiJava, Path uiIr,
                          String moduleClass, String uiClass, UiModel.CheckedProgram program) {}
 
+    interface OutputHook {
+        void run(String transition) throws IOException;
+    }
+
     private final Path fsRoot;
     private final Path outputRoot;
+    private final OutputHook outputHook;
 
     public UiCompiler(Path fsRoot, Path outputRoot) {
+        this(fsRoot, outputRoot, transition -> {});
+    }
+
+    UiCompiler(Path fsRoot, Path outputRoot, OutputHook outputHook) {
         this.fsRoot = fsRoot.toAbsolutePath().normalize();
         this.outputRoot = outputRoot.toAbsolutePath().normalize();
+        this.outputHook = outputHook;
     }
 
     public Result compile(Path sourceFile, Path outputDirectory) throws IOException, InterruptedException {
@@ -39,8 +49,15 @@ public final class UiCompiler {
         validateOutput(input, output);
         String source = Files.readString(input);
         UiModel.ParsedSource parsed = UiParser.parse(input, source);
-        Path staging = createStagingDirectory(output);
-        try {
+        Object rootKey = fileKey(outputRoot);
+        try (var rootStream = Files.newDirectoryStream(outputRoot)) {
+            if (!(rootStream instanceof java.nio.file.SecureDirectoryStream<Path> root)) {
+                throw new IOException("Filesystem does not support secure output handling: " + outputRoot);
+            }
+            outputHook.run("before-staging");
+            ensureRootIdentity(rootKey);
+            Path staging = createStagingDirectory(output);
+            try {
             Path dealSource = staging.resolve("deal-src").resolve(input.getFileName().toString());
             Files.createDirectories(dealSource.getParent());
             Files.writeString(dealSource, parsed.dealSource());
@@ -67,15 +84,20 @@ public final class UiCompiler {
             String uiClass = moduleClass + "Ui";
             Path generatedUiJava = jvmOutput.resolve(uiClass + ".java");
             Files.writeString(generatedUiJava, new UiJavaGenerator().generate(checked, moduleClass, uiClass));
-            publish(staging, output);
+            outputHook.run("before-publication");
+            ensureRootIdentity(rootKey);
+            publish(root, staging.getFileName(), output.getFileName());
             return new Result(input, output,
                 output.resolve("deal-src").resolve(input.getFileName().toString()),
                 output.resolve("generated").resolve(moduleClass + ".java"),
                 output.resolve("generated").resolve(uiClass + ".java"), output.resolve("ui.ir.txt"),
                 moduleClass, uiClass, checked);
-        } catch (IOException | InterruptedException | RuntimeException failure) {
-            deleteTree(staging);
-            throw failure;
+            } catch (IOException | InterruptedException | RuntimeException failure) {
+                outputHook.run("before-cleanup");
+                ensureRootIdentity(rootKey);
+                deleteTree(root, staging.getFileName());
+                throw failure;
+            }
         }
     }
 
@@ -134,26 +156,28 @@ public final class UiCompiler {
         return Files.createTempDirectory(outputRoot, ".deal-ui-stage-");
     }
 
-    private void publish(Path staging, Path output) throws IOException {
-        try (var root = Files.newDirectoryStream(outputRoot)) {
-            if (!(root instanceof java.nio.file.SecureDirectoryStream<Path> secure)) {
-                throw new IOException("Filesystem does not support secure output publication: " + outputRoot);
-            }
-            secure.move(staging.getFileName(), secure, output.getFileName());
+    private Object fileKey(Path path) throws IOException {
+        return Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class,
+            LinkOption.NOFOLLOW_LINKS).fileKey();
+    }
+
+    private void ensureRootIdentity(Object expected) throws IOException {
+        Object current = fileKey(outputRoot);
+        if (expected == null || !expected.equals(current)) {
+            throw new IOException("Compiler output root identity changed during compilation: " + outputRoot);
         }
     }
 
-    private void deleteTree(Path directory) throws IOException {
-        Path name = directory.getFileName();
-        if (!directory.getParent().equals(outputRoot) || !name.toString().startsWith(".deal-ui-stage-")) {
-            throw new IOException("Refusing to clean non-staging path: " + directory);
+    private void publish(java.nio.file.SecureDirectoryStream<Path> root, Path staging, Path output)
+            throws IOException {
+        root.move(staging, root, output);
+    }
+
+    private void deleteTree(java.nio.file.SecureDirectoryStream<Path> root, Path name) throws IOException {
+        if (!name.toString().startsWith(".deal-ui-stage-")) {
+            throw new IOException("Refusing to clean non-staging name: " + name);
         }
-        try (var root = Files.newDirectoryStream(outputRoot)) {
-            if (!(root instanceof java.nio.file.SecureDirectoryStream<Path> secure)) {
-                throw new IOException("Filesystem does not support secure staging cleanup: " + outputRoot);
-            }
-            deleteSecureDirectory(secure, name);
-        }
+        deleteSecureDirectory(root, name);
     }
 
     private void deleteSecureDirectory(java.nio.file.SecureDirectoryStream<Path> parent, Path name)
