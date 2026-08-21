@@ -42,4 +42,5 @@ the matching OpenJDK desktop package into `.deps/` and assembles a repository-lo
 runtime without changing the system installation. A graphical desktop is required
 for `run`; automated tests use headless Swing component construction and real button
 dispatch. `scripts/verify-visible.sh` owns the museum-specific visual scenario;
-the generic CLI contains no application-specific interaction assumptions.
+the generic CLI contains no application-specific interaction assumptions. Each CLI
+invocation uses a fresh private output root and never replaces an existing output.
