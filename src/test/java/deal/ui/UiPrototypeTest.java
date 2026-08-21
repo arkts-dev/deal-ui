@@ -83,6 +83,10 @@ public final class UiPrototypeTest {
         UiModel.ParsedSource ignoredDuplicate = UiParser.parse(source,
             sourceText().replace("// @ui-root", "/* // @ui-root */\n// @ui-root"));
         check(ignoredDuplicate.view().name().equals("MuseumCard"), "block-comment root text is ignored");
+        String templatePrefix = "let marker: string = `ignored\n// @ui-root\n${\"value\"}\n`;\n";
+        UiModel.ParsedSource ignoredTemplate = UiParser.parse(source, templatePrefix + sourceText());
+        check(ignoredTemplate.view().name().equals("MuseumCard"), "template root text is ignored");
+        expectDiagnostic("UI1007", templatePrefix + sourceText().replace("// @ui-root\n", ""));
         expectLineEndingSpan(sourceText().replace("\n", "\r\n"), "CRLF");
         expectLineEndingSpan(sourceText().replace("\n", "\r"), "CR");
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));

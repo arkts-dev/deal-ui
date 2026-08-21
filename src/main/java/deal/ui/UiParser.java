@@ -247,18 +247,15 @@ public final class UiParser {
                 continue;
             }
             if (current == '"' || current == '\'') {
-                char quote = current;
-                offset++;
-                while (offset < source.length()) {
-                    char value = source.charAt(offset++);
-                    if (value == '\\' && offset < source.length()) offset++;
-                    else if (value == quote) break;
-                    else if (value == '\r' || value == '\n') {
-                        int[] next = advance(source, offset - 1, line, 1);
-                        offset = next[0];
-                        line = next[1];
-                    }
-                }
+                int[] next = skipQuoted(source, offset, line, current);
+                offset = next[0];
+                line = next[1];
+                continue;
+            }
+            if (current == '`') {
+                int[] next = skipTemplate(source, offset, line);
+                offset = next[0];
+                line = next[1];
                 continue;
             }
             offset++;
@@ -267,6 +264,40 @@ public final class UiParser {
             throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required", file, 1, 1);
         }
         return new Token(Kind.IDENTIFIER, "@ui-root", foundStart, foundEnd, foundLine, 1, foundLine, 12);
+    }
+
+    private static int[] skipQuoted(String source, int offset, int line, char quote) {
+        offset++;
+        while (offset < source.length()) {
+            char value = source.charAt(offset++);
+            if (value == '\\' && offset < source.length()) offset++;
+            else if (value == quote) break;
+            else if (value == '\r' || value == '\n') {
+                int[] next = advance(source, offset - 1, line, 1);
+                offset = next[0];
+                line = next[1];
+            }
+        }
+        return new int[]{offset, line};
+    }
+
+    private static int[] skipTemplate(String source, int offset, int line) {
+        offset++;
+        while (offset < source.length()) {
+            char value = source.charAt(offset);
+            if (value == '\\') {
+                offset = Math.min(source.length(), offset + 2);
+            } else if (value == '`') {
+                return new int[]{offset + 1, line};
+            } else if (value == '\r' || value == '\n') {
+                int[] next = advance(source, offset, line, 1);
+                offset = next[0];
+                line = next[1];
+            } else {
+                offset++;
+            }
+        }
+        return new int[]{offset, line};
     }
 
     private static int[] advance(String source, int offset, int line, int column) {
