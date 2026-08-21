@@ -203,31 +203,65 @@ public final class UiParser {
     private static Token findRootDirective(Path file, String source) {
         int foundStart = -1;
         int foundEnd = -1;
+        int foundLine = 1;
         int offset = 0;
         int line = 1;
-        int foundLine = 1;
-        while (offset <= source.length()) {
-            int end = offset;
-            while (end < source.length() && source.charAt(end) != '\n' && source.charAt(end) != '\r') end++;
-            String value = source.substring(offset, end).trim();
-            if (value.equals("// @ui-root")) {
-                if (foundStart >= 0) {
-                    throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required",
-                        file, line, 1);
+        while (offset < source.length()) {
+            char current = source.charAt(offset);
+            if (current == '\r' || current == '\n') {
+                int[] next = advance(source, offset, line, 1);
+                offset = next[0];
+                line = next[1];
+                continue;
+            }
+            if (current == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
+                offset += 2;
+                while (offset < source.length()) {
+                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
+                            && source.charAt(offset + 1) == '/') {
+                        offset += 2;
+                        break;
+                    }
+                    int[] next = advance(source, offset, line, 1);
+                    offset = next[0];
+                    line = next[1];
                 }
-                foundStart = offset;
-                foundEnd = end;
-                if (foundEnd < source.length() && source.charAt(foundEnd) == '\r') foundEnd++;
-                if (foundEnd < source.length() && source.charAt(foundEnd) == '\n') foundEnd++;
-                foundLine = line;
+                continue;
             }
-            if (end == source.length()) {
-                break;
+            if (current == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
+                int start = offset;
+                int end = offset + 2;
+                while (end < source.length() && source.charAt(end) != '\r' && source.charAt(end) != '\n') end++;
+                if (source.substring(start, end).trim().equals("// @ui-root")) {
+                    if (foundStart >= 0) {
+                        throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required",
+                            file, line, 1);
+                    }
+                    foundStart = start;
+                    foundEnd = end;
+                    if (foundEnd < source.length() && source.charAt(foundEnd) == '\r') foundEnd++;
+                    if (foundEnd < source.length() && source.charAt(foundEnd) == '\n') foundEnd++;
+                    foundLine = line;
+                }
+                offset = end;
+                continue;
             }
-            offset = end;
-            if (offset < source.length() && source.charAt(offset) == '\r') offset++;
-            if (offset < source.length() && source.charAt(offset) == '\n') offset++;
-            line++;
+            if (current == '"' || current == '\'') {
+                char quote = current;
+                offset++;
+                while (offset < source.length()) {
+                    char value = source.charAt(offset++);
+                    if (value == '\\' && offset < source.length()) offset++;
+                    else if (value == quote) break;
+                    else if (value == '\r' || value == '\n') {
+                        int[] next = advance(source, offset - 1, line, 1);
+                        offset = next[0];
+                        line = next[1];
+                    }
+                }
+                continue;
+            }
+            offset++;
         }
         if (foundStart < 0) {
             throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required", file, 1, 1);

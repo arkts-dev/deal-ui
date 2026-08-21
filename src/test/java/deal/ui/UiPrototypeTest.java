@@ -79,6 +79,10 @@ public final class UiPrototypeTest {
             sourceText().replace("  Card {", "  /* layout */ Card {"));
         check(blockComment.view().children().size() == 1, "block comments are UI whitespace");
         expectDiagnostic("UI1001", sourceText().replace("  Card {", "  /* unterminated Card {"));
+        expectDiagnostic("UI1007", sourceText().replace("// @ui-root", "/*\n// @ui-root\n*/"));
+        UiModel.ParsedSource ignoredDuplicate = UiParser.parse(source,
+            sourceText().replace("// @ui-root", "/* // @ui-root */\n// @ui-root"));
+        check(ignoredDuplicate.view().name().equals("MuseumCard"), "block-comment root text is ignored");
         expectLineEndingSpan(sourceText().replace("\n", "\r\n"), "CRLF");
         expectLineEndingSpan(sourceText().replace("\n", "\r"), "CR");
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));
