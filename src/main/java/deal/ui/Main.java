@@ -45,7 +45,11 @@ public final class Main {
                     if (++i >= args.length) {
                         throw new IllegalArgumentException("--output requires a path");
                     }
-                    output = Path.of(args[i]);
+                    Path requested = Path.of(args[i]);
+                    if (requested.getNameCount() != 1) {
+                        throw new IllegalArgumentException("--output requires a safe output name, not a path");
+                    }
+                    output = requested;
                 }
                 case "--fs-root" -> {
                     if (++i >= args.length) {
@@ -71,7 +75,7 @@ public final class Main {
             .toAbsolutePath().normalize();
         java.nio.file.Files.setPosixFilePermissions(outputRoot,
             java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
-        if (output == null) output = outputRoot.resolve("ui-" + System.nanoTime());
+        output = outputRoot.resolve(output == null ? "ui-" + System.nanoTime() : output.toString());
         UiCompiler compiler = new UiCompiler(fsRoot, outputRoot);
         UiCompiler.Result result = compiler.compile(source, output);
         switch (command) {
@@ -116,6 +120,6 @@ public final class Main {
     }
 
     private static void usage() {
-        System.err.println("Usage: deal-ui <check|dump-ir|build|run> <source.deal> [--output <dir>] [--fs-root <path>]");
+        System.err.println("Usage: deal-ui <check|dump-ir|build|run> <source.deal> [--output <name>] [--fs-root <path>]");
     }
 }
