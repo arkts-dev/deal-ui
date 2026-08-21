@@ -43,4 +43,5 @@ runtime without changing the system installation. A graphical desktop is require
 for `run`; automated tests use headless Swing component construction and real button
 dispatch. `scripts/verify-visible.sh` owns the museum-specific visual scenario;
 the generic CLI contains no application-specific interaction assumptions. Each CLI
-invocation uses a fresh private output root and never replaces an existing output.
+invocation uses a fresh private output root, writes to a fresh child, and never
+replaces or recursively deletes an existing output.
