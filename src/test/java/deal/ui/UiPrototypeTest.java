@@ -20,8 +20,10 @@ public final class UiPrototypeTest {
     public static void main(String[] args) throws Exception {
         Path root = Path.of("").toAbsolutePath();
         Path source = root.resolve("examples/museum/museum.deal");
-        Path output = root.resolve("build/test-museum");
-        UiCompiler compiler = new UiCompiler(fsRoot());
+        Path outputRoot = root.resolve("build/test-outputs");
+        recreateEmpty(outputRoot);
+        Path output = outputRoot.resolve("museum");
+        UiCompiler compiler = new UiCompiler(fsRoot(), outputRoot);
         UiCompiler.Result result = compiler.compile(source, output);
         compiler.build(result, root.resolve("build/classes"));
 
@@ -74,28 +76,25 @@ public final class UiPrototypeTest {
         expectDiagnostic("UI1001", sourceText().replace("Text(value: state.title)", "Text(state.title)"));
         expectDiagnostic("UI1007", sourceText().replace("// @ui-root\n", ""));
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));
-        expectUnsafeOutput(source, root);
-        expectUnsafeOutput(source, source.getParent());
-        expectUnsafeOutput(source, fsRoot());
-        Path unowned = Files.createTempDirectory("deal-ui-user-data-");
-        Path userFile = unowned.resolve("important.txt");
+        expectUnsafeOutput(source, root, outputRoot);
+        expectUnsafeOutput(source, source.getParent(), outputRoot);
+        expectUnsafeOutput(source, fsRoot(), outputRoot);
+        Path occupied = outputRoot.resolve("occupied");
+        Files.createDirectory(occupied);
+        Path userFile = occupied.resolve("important.txt");
         Files.writeString(userFile, "retain");
-        expectUnsafeOutput(source, unowned);
-        check(Files.readString(userFile).equals("retain"), "unowned directory contents are retained");
-        Files.delete(userFile);
-        Files.delete(unowned);
-        Path symlink = root.resolve("output-link");
-        Files.deleteIfExists(symlink);
+        expectUnsafeOutput(source, occupied, outputRoot);
+        check(Files.readString(userFile).equals("retain"), "existing output contents are retained");
+        Path symlink = outputRoot.resolve("output-link");
         Files.createSymbolicLink(symlink, root.resolve("build"));
-        expectUnsafeOutput(source, symlink.resolve("nested"));
-        Files.deleteIfExists(symlink);
+        expectUnsafeOutput(source, symlink, outputRoot);
 
         System.out.println("Passed: " + passed);
     }
 
-    private static void expectUnsafeOutput(Path source, Path output) throws Exception {
+    private static void expectUnsafeOutput(Path source, Path output, Path outputRoot) throws Exception {
         try {
-            new UiCompiler(fsRoot()).compile(source, output);
+            new UiCompiler(fsRoot(), outputRoot).compile(source, output);
             throw new AssertionError("Expected unsafe output rejection: " + output);
         } catch (java.io.IOException failure) {
             check(failure.getMessage().contains("Unsafe"), "unsafe output is rejected: " + output);
@@ -108,7 +107,7 @@ public final class UiPrototypeTest {
             Files.writeString(file, source);
             try {
                 Path parent = Files.createTempDirectory("deal-ui-invalid-build-");
-                new UiCompiler(fsRoot()).compile(file, parent.resolve("output"));
+                new UiCompiler(fsRoot(), parent).compile(file, parent.resolve("output"));
                 throw new AssertionError("Expected authoritative DEAL compiler failure");
             } catch (java.io.IOException failure) {
                 check(failure.getMessage().contains("DEAL JVM compilation failed"),
@@ -189,6 +188,15 @@ public final class UiPrototypeTest {
         String configured = System.getenv("DEAL_FS_ROOT");
         return configured == null || configured.isBlank()
             ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(configured);
+    }
+
+    private static void recreateEmpty(Path directory) throws Exception {
+        if (Files.exists(directory)) {
+            try (var paths = Files.walk(directory)) {
+                for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(path);
+            }
+        }
+        Files.createDirectories(directory);
     }
 
     private static void check(boolean condition, String message) {

@@ -37,7 +37,7 @@ public final class Main {
         }
         String command = args[0];
         Path source = null;
-        Path output = Path.of("build/ui");
+        Path output = Path.of("build/deal-ui-outputs/ui");
         Path fsRoot = defaultFsRoot();
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
@@ -67,7 +67,9 @@ public final class Main {
         if (source == null) {
             throw new IllegalArgumentException("Missing UI source file");
         }
-        UiCompiler compiler = new UiCompiler(fsRoot);
+        Path outputRoot = Path.of("build/deal-ui-outputs").toAbsolutePath().normalize();
+        java.nio.file.Files.createDirectories(outputRoot);
+        UiCompiler compiler = new UiCompiler(fsRoot, outputRoot);
         UiCompiler.Result result = compiler.compile(source, output);
         switch (command) {
             case "check" -> System.out.println("UI validation successful: " + result.sourceFile());

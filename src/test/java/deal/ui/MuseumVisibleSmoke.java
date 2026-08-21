@@ -1,6 +1,7 @@
 package deal.ui;
 
 import java.net.URLClassLoader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class MuseumVisibleSmoke {
@@ -8,8 +9,10 @@ public final class MuseumVisibleSmoke {
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of("").toAbsolutePath();
-        Path output = root.resolve("build/visible-smoke");
-        UiCompiler compiler = new UiCompiler(fsRoot());
+        Path outputRoot = root.resolve("build/visible-outputs");
+        Files.createDirectories(outputRoot);
+        Path output = outputRoot.resolve("museum-" + System.nanoTime());
+        UiCompiler compiler = new UiCompiler(fsRoot(), outputRoot);
         UiCompiler.Result result = compiler.compile(root.resolve("examples/museum/museum.deal"), output);
         compiler.build(result, root.resolve("build/classes"));
         try (var loader = new URLClassLoader(new java.net.URL[]{output.resolve("classes").toUri().toURL()},

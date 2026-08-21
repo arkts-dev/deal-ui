@@ -3,4 +3,5 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 "$ROOT/scripts/compile.sh"
-"$ROOT/bin/deal-ui" build "$ROOT/examples/museum/museum.deal" --output "$ROOT/build/museum"
+OUTPUT="$ROOT/build/deal-ui-outputs/museum-$(date +%s%N)"
+"$ROOT/bin/deal-ui" build "$ROOT/examples/museum/museum.deal" --output "$OUTPUT"
