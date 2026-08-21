@@ -57,6 +57,8 @@ public final class UiCompiler {
             outputHook.run("before-staging");
             ensureRootIdentity(rootKey);
             Path staging = createStagingDirectory(output);
+            outputHook.run("after-staging");
+            ensureRootIdentity(rootKey);
             try {
             Path dealSource = staging.resolve("deal-src").resolve(input.getFileName().toString());
             Files.createDirectories(dealSource.getParent());

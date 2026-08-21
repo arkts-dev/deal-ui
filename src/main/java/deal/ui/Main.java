@@ -67,9 +67,8 @@ public final class Main {
         if (source == null) {
             throw new IllegalArgumentException("Missing UI source file");
         }
-        Path outputRoot = Path.of(System.getProperty("java.io.tmpdir"),
-            "deal-ui-" + ProcessHandle.current().info().user().orElseThrow()).toAbsolutePath().normalize();
-        java.nio.file.Files.createDirectories(outputRoot);
+        Path outputRoot = java.nio.file.Files.createTempDirectory("deal-ui-" + ProcessHandle.current().pid() + "-")
+            .toAbsolutePath().normalize();
         java.nio.file.Files.setPosixFilePermissions(outputRoot,
             java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
         if (output == null) output = outputRoot.resolve("ui-" + System.nanoTime());

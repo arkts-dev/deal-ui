@@ -89,6 +89,7 @@ public final class UiPrototypeTest {
         Files.createSymbolicLink(symlink, root.resolve("build"));
         expectUnsafeOutput(source, symlink, outputRoot);
         expectRootSubstitution(source, root, "before-staging");
+        expectRootSubstitution(source, root, "after-staging");
         expectRootSubstitution(source, root, "before-publication");
         expectRootSubstitution(source, root, "before-cleanup");
 
