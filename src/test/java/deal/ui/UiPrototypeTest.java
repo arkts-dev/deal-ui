@@ -77,10 +77,17 @@ public final class UiPrototypeTest {
         expectUnsafeOutput(source, root);
         expectUnsafeOutput(source, source.getParent());
         expectUnsafeOutput(source, fsRoot());
+        Path unowned = Files.createTempDirectory("deal-ui-user-data-");
+        Path userFile = unowned.resolve("important.txt");
+        Files.writeString(userFile, "retain");
+        expectUnsafeOutput(source, unowned);
+        check(Files.readString(userFile).equals("retain"), "unowned directory contents are retained");
+        Files.delete(userFile);
+        Files.delete(unowned);
         Path symlink = root.resolve("output-link");
         Files.deleteIfExists(symlink);
         Files.createSymbolicLink(symlink, root.resolve("build"));
-        expectUnsafeOutput(source, symlink);
+        expectUnsafeOutput(source, symlink.resolve("nested"));
         Files.deleteIfExists(symlink);
 
         System.out.println("Passed: " + passed);
@@ -100,7 +107,8 @@ public final class UiPrototypeTest {
         try {
             Files.writeString(file, source);
             try {
-                new UiCompiler(fsRoot()).compile(file, Files.createTempDirectory("deal-ui-invalid-build-"));
+                Path parent = Files.createTempDirectory("deal-ui-invalid-build-");
+                new UiCompiler(fsRoot()).compile(file, parent.resolve("output"));
                 throw new AssertionError("Expected authoritative DEAL compiler failure");
             } catch (java.io.IOException failure) {
                 check(failure.getMessage().contains("DEAL JVM compilation failed"),

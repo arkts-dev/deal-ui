@@ -4,7 +4,9 @@ import deal.codegen.jvm.JvmBackend;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -14,6 +16,7 @@ public final class UiCompiler {
                          Path generatedJava, Path generatedUiJava, Path uiIr,
                          String moduleClass, String uiClass, UiModel.CheckedProgram program) {}
 
+    private static final String OWNER_MARKER = ".deal-ui-output";
     private final Path fsRoot;
 
     public UiCompiler(Path fsRoot) {
@@ -37,35 +40,45 @@ public final class UiCompiler {
         validateOutput(input, output);
         String source = Files.readString(input);
         UiModel.ParsedSource parsed = UiParser.parse(input, source);
-        recreateDirectory(output);
-        Path dealSource = output.resolve("deal-src").resolve(input.getFileName().toString());
-        Files.createDirectories(dealSource.getParent());
-        Files.writeString(dealSource, parsed.dealSource());
-        Path jvmOutput = output.resolve("generated");
-        Files.createDirectories(jvmOutput);
-        run(List.of(
-            javaExecutable(),
-            "-cp", fsRoot.resolve("build").toString(),
-            "deal.Main",
-            "compile", dealSource.toString(),
-            "--backend", "jvm",
-            "--output", jvmOutput.toString(),
-            "--dump-ir"
-        ), fsRoot, "DEAL JVM compilation");
-        String modulePath = stripDealSuffix(dealSource.getFileName().toString());
-        String moduleClass = JvmBackend.classNameFor(modulePath);
-        Path generatedJava = jvmOutput.resolve(moduleClass + ".java");
-        if (!Files.isRegularFile(generatedJava)) {
-            throw new IOException("DEAL JVM backend did not emit expected artifact: " + generatedJava);
+        Path staging = createStagingDirectory(output);
+        try {
+            Path dealSource = staging.resolve("deal-src").resolve(input.getFileName().toString());
+            Files.createDirectories(dealSource.getParent());
+            Files.writeString(dealSource, parsed.dealSource());
+            Path jvmOutput = staging.resolve("generated");
+            Files.createDirectories(jvmOutput);
+            run(List.of(
+                javaExecutable(),
+                "-cp", fsRoot.resolve("build").toString(),
+                "deal.Main",
+                "compile", dealSource.toString(),
+                "--backend", "jvm",
+                "--output", jvmOutput.toString(),
+                "--dump-ir"
+            ), fsRoot, "DEAL JVM compilation");
+            String modulePath = stripDealSuffix(dealSource.getFileName().toString());
+            String moduleClass = JvmBackend.classNameFor(modulePath);
+            Path generatedJava = jvmOutput.resolve(moduleClass + ".java");
+            if (!Files.isRegularFile(generatedJava)) {
+                throw new IOException("DEAL JVM backend did not emit expected artifact: " + generatedJava);
+            }
+            UiModel.CheckedProgram checked = new UiChecker().check(input, parsed);
+            Path uiIr = staging.resolve("ui.ir.txt");
+            Files.writeString(uiIr, new UiIrDumper().dump(checked));
+            String uiClass = moduleClass + "Ui";
+            Path generatedUiJava = jvmOutput.resolve(uiClass + ".java");
+            Files.writeString(generatedUiJava, new UiJavaGenerator().generate(checked, moduleClass, uiClass));
+            Files.writeString(staging.resolve(OWNER_MARKER), "DEAL UI compiler output\n");
+            publish(staging, output);
+            return new Result(input, output,
+                output.resolve("deal-src").resolve(input.getFileName().toString()),
+                output.resolve("generated").resolve(moduleClass + ".java"),
+                output.resolve("generated").resolve(uiClass + ".java"), output.resolve("ui.ir.txt"),
+                moduleClass, uiClass, checked);
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            deleteTree(staging);
+            throw failure;
         }
-        UiModel.CheckedProgram checked = new UiChecker().check(input, parsed);
-        Path uiIr = output.resolve("ui.ir.txt");
-        Files.writeString(uiIr, new UiIrDumper().dump(checked));
-        String uiClass = moduleClass + "Ui";
-        Path generatedUiJava = jvmOutput.resolve(uiClass + ".java");
-        Files.writeString(generatedUiJava, new UiJavaGenerator().generate(checked, moduleClass, uiClass));
-        return new Result(input, output, dealSource, generatedJava, generatedUiJava, uiIr,
-            moduleClass, uiClass, checked);
     }
 
     public void build(Result result, Path runtimeClasses) throws IOException, InterruptedException {
@@ -102,44 +115,77 @@ public final class UiCompiler {
 
     private void validateOutput(Path source, Path output) throws IOException {
         Path sourceReal = source.toRealPath();
-        Path sourceParent = sourceReal.getParent();
         Path fsReal = fsRoot.toRealPath();
-        Path cwdReal = Path.of("").toAbsolutePath().normalize().toRealPath();
         Path outputAbsolute = output.toAbsolutePath().normalize();
-        Path existing = outputAbsolute;
-        while (existing != null && !Files.exists(existing)) existing = existing.getParent();
-        if (existing == null) throw new IOException("Output has no existing filesystem ancestor: " + output);
-        if (Files.isSymbolicLink(existing)) {
-            throw new IOException("Unsafe symbolic-link output path: " + existing);
-        }
-        Path existingReal = existing.toRealPath();
-        Path resolved = existing.getNameCount() == outputAbsolute.getNameCount()
-            ? existingReal
-            : existingReal.resolve(outputAbsolute.subpath(existing.getNameCount(),
-                outputAbsolute.getNameCount())).normalize();
-        if (resolved.getParent() == null || resolved.equals(cwdReal) || resolved.equals(fsReal)
-                || resolved.startsWith(fsReal) || sourceReal.startsWith(resolved)
-                || (sourceParent != null && sourceParent.startsWith(resolved))
-                || Files.exists(resolved.resolve(".git"))) {
-            throw new IOException("Unsafe output directory overlaps source, repository, compiler, or filesystem root: "
+        if (outputAbsolute.getParent() == null || sourceReal.startsWith(outputAbsolute)
+                || outputAbsolute.startsWith(fsReal)) {
+            throw new IOException("Unsafe output directory overlaps source, compiler, or filesystem root: "
                 + outputAbsolute);
         }
-        Path cursor = outputAbsolute;
-        while (cursor != null && !cursor.equals(existing)) {
-            if (Files.isSymbolicLink(cursor)) {
-                throw new IOException("Unsafe symbolic-link output path: " + cursor);
+        rejectSymbolicLinks(outputAbsolute);
+        if (Files.exists(outputAbsolute, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isDirectory(outputAbsolute, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(outputAbsolute.resolve(OWNER_MARKER), LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Unsafe unowned output directory: " + outputAbsolute);
             }
-            cursor = cursor.getParent();
         }
     }
 
-    private void recreateDirectory(Path directory) throws IOException {
-        if (Files.exists(directory)) {
-            try (var paths = Files.walk(directory)) {
-                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+    private void rejectSymbolicLinks(Path path) throws IOException {
+        Path cursor = path.getRoot();
+        for (Path part : path) {
+            cursor = cursor.resolve(part);
+            if (Files.isSymbolicLink(cursor)) {
+                throw new IOException("Unsafe symbolic-link output path: " + cursor);
+            }
+            if (!Files.exists(cursor, LinkOption.NOFOLLOW_LINKS)) break;
+        }
+    }
+
+    private Path createStagingDirectory(Path output) throws IOException {
+        Path parent = output.getParent();
+        if (parent == null) throw new IOException("Output directory requires a parent: " + output);
+        Files.createDirectories(parent);
+        rejectSymbolicLinks(parent);
+        return Files.createTempDirectory(parent, ".deal-ui-stage-");
+    }
+
+    private void publish(Path staging, Path output) throws IOException {
+        validateOwnedDestination(output);
+        Path backup = null;
+        if (Files.exists(output, LinkOption.NOFOLLOW_LINKS)) {
+            backup = output.resolveSibling(".deal-ui-backup-" + java.util.UUID.randomUUID());
+            Files.move(output, backup, StandardCopyOption.ATOMIC_MOVE);
+            if (!Files.isRegularFile(backup.resolve(OWNER_MARKER), LinkOption.NOFOLLOW_LINKS)) {
+                Files.move(backup, output, StandardCopyOption.ATOMIC_MOVE);
+                throw new IOException("Output ownership changed during publication: " + output);
             }
         }
-        Files.createDirectories(directory);
+        try {
+            Files.move(staging, output, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException failure) {
+            if (backup != null && !Files.exists(output, LinkOption.NOFOLLOW_LINKS)) {
+                Files.move(backup, output, StandardCopyOption.ATOMIC_MOVE);
+            }
+            throw failure;
+        }
+        if (backup != null) deleteTree(backup);
+    }
+
+    private void validateOwnedDestination(Path output) throws IOException {
+        rejectSymbolicLinks(output);
+        if (Files.exists(output, LinkOption.NOFOLLOW_LINKS)
+                && (!Files.isDirectory(output, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(output.resolve(OWNER_MARKER), LinkOption.NOFOLLOW_LINKS))) {
+            throw new IOException("Unsafe unowned output directory: " + output);
+        }
+    }
+
+    private void deleteTree(Path directory) throws IOException {
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return;
+        try (var paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+        }
     }
 
     private String stripDealSuffix(String name) {
