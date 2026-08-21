@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -136,31 +135,44 @@ public final class UiCompiler {
     }
 
     private void publish(Path staging, Path output) throws IOException {
-        Files.move(staging, output, StandardCopyOption.ATOMIC_MOVE);
+        try (var root = Files.newDirectoryStream(outputRoot)) {
+            if (!(root instanceof java.nio.file.SecureDirectoryStream<Path> secure)) {
+                throw new IOException("Filesystem does not support secure output publication: " + outputRoot);
+            }
+            secure.move(staging.getFileName(), secure, output.getFileName());
+        }
     }
 
     private void deleteTree(Path directory) throws IOException {
-        if (!directory.getParent().equals(outputRoot)
-                || !directory.getFileName().toString().startsWith(".deal-ui-stage-")) {
+        Path name = directory.getFileName();
+        if (!directory.getParent().equals(outputRoot) || !name.toString().startsWith(".deal-ui-stage-")) {
             throw new IOException("Refusing to clean non-staging path: " + directory);
         }
-        try (var stream = Files.newDirectoryStream(directory)) {
-            for (Path child : stream) {
-                if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) deleteStageChild(child);
-                else Files.delete(child);
+        try (var root = Files.newDirectoryStream(outputRoot)) {
+            if (!(root instanceof java.nio.file.SecureDirectoryStream<Path> secure)) {
+                throw new IOException("Filesystem does not support secure staging cleanup: " + outputRoot);
             }
+            deleteSecureDirectory(secure, name);
         }
-        Files.delete(directory);
     }
 
-    private void deleteStageChild(Path directory) throws IOException {
-        try (var stream = Files.newDirectoryStream(directory)) {
-            for (Path child : stream) {
-                if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) deleteStageChild(child);
-                else Files.delete(child);
+    private void deleteSecureDirectory(java.nio.file.SecureDirectoryStream<Path> parent, Path name)
+            throws IOException {
+        try (var child = parent.newDirectoryStream(name, LinkOption.NOFOLLOW_LINKS)) {
+            if (!(child instanceof java.nio.file.SecureDirectoryStream<Path> secureChild)) {
+                throw new IOException("Filesystem does not support secure nested cleanup: " + name);
+            }
+            List<Path> entries = new ArrayList<>();
+            for (Path entry : secureChild) entries.add(entry.getFileName());
+            for (Path entry : entries) {
+                try {
+                    deleteSecureDirectory(secureChild, entry);
+                } catch (java.nio.file.NotDirectoryException failure) {
+                    secureChild.deleteFile(entry);
+                }
             }
         }
-        Files.delete(directory);
+        parent.deleteDirectory(name);
     }
 
     private String stripDealSuffix(String name) {
