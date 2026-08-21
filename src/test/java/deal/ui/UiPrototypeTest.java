@@ -87,6 +87,10 @@ public final class UiPrototypeTest {
         UiModel.ParsedSource ignoredTemplate = UiParser.parse(source, templatePrefix + sourceText());
         check(ignoredTemplate.view().name().equals("MuseumCard"), "template root text is ignored");
         expectDiagnostic("UI1007", templatePrefix + sourceText().replace("// @ui-root\n", ""));
+        String nestedTemplate = "let marker: string = `outer ${`inner\n// @ui-root\n${{value: \"`\"}}`} tail`;\n";
+        UiModel.ParsedSource ignoredNestedTemplate = UiParser.parse(source, nestedTemplate + sourceText());
+        check(ignoredNestedTemplate.view().name().equals("MuseumCard"),
+            "nested-template root text is ignored");
         expectLineEndingSpan(sourceText().replace("\n", "\r\n"), "CRLF");
         expectLineEndingSpan(sourceText().replace("\n", "\r"), "CR");
         expectCompilerFailure(sourceText().replace("expanded: boolean = false", "expanded: string = false"));

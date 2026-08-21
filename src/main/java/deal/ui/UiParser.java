@@ -289,6 +289,55 @@ public final class UiParser {
                 offset = Math.min(source.length(), offset + 2);
             } else if (value == '`') {
                 return new int[]{offset + 1, line};
+            } else if (value == '$' && offset + 1 < source.length() && source.charAt(offset + 1) == '{') {
+                int[] next = skipInterpolation(source, offset + 2, line);
+                offset = next[0];
+                line = next[1];
+            } else if (value == '\r' || value == '\n') {
+                int[] next = advance(source, offset, line, 1);
+                offset = next[0];
+                line = next[1];
+            } else {
+                offset++;
+            }
+        }
+        return new int[]{offset, line};
+    }
+
+    private static int[] skipInterpolation(String source, int offset, int line) {
+        int depth = 1;
+        while (offset < source.length() && depth > 0) {
+            char value = source.charAt(offset);
+            if (value == '"' || value == '\'') {
+                int[] next = skipQuoted(source, offset, line, value);
+                offset = next[0];
+                line = next[1];
+            } else if (value == '`') {
+                int[] next = skipTemplate(source, offset, line);
+                offset = next[0];
+                line = next[1];
+            } else if (value == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
+                offset += 2;
+                while (offset < source.length() && source.charAt(offset) != '\r'
+                        && source.charAt(offset) != '\n') offset++;
+            } else if (value == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
+                offset += 2;
+                while (offset < source.length()) {
+                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
+                            && source.charAt(offset + 1) == '/') {
+                        offset += 2;
+                        break;
+                    }
+                    int[] next = advance(source, offset, line, 1);
+                    offset = next[0];
+                    line = next[1];
+                }
+            } else if (value == '{') {
+                depth++;
+                offset++;
+            } else if (value == '}') {
+                depth--;
+                offset++;
             } else if (value == '\r' || value == '\n') {
                 int[] next = advance(source, offset, line, 1);
                 offset = next[0];
