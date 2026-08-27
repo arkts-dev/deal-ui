@@ -65,7 +65,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     public void apply(List<UiBridge.Patch> patches, UiBridge.Node next) {
         onEdt(() -> {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
-            validatePatches(patches);
+            stagePatches(patches);
             for (UiBridge.Patch patch : patches) applyPatch(patch);
             for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
             tree = Objects.requireNonNull(next);
@@ -106,8 +106,13 @@ public final class SwingUiRuntime implements AutoCloseable {
         frame.setContentPane(root);
     }
 
-    private void validatePatches(List<UiBridge.Patch> patches) {
-        for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) bindings.require(patch.node().component());
+    private void stagePatches(List<UiBridge.Patch> patches) {
+        for (UiBridge.Patch patch : patches) {
+            if (patch.kind().equals("dispose")) continue;
+            UiRendererBindings.Binding binding = bindings.require(patch.node().component());
+            JComponent staged = binding.factory().get();
+            binding.configurator().apply(staged, patch.node(), bridge, dispatch::accept, bindings);
+        }
     }
 
     private void applyPatch(UiBridge.Patch patch) {
