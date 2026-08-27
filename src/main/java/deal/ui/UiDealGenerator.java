@@ -6,11 +6,12 @@ import java.util.List;
 import java.util.Map;
 
 final class UiDealGenerator {
-    record Output(String source, String appAugmentation, Map<Integer, UiModel.Action> actions, Map<String, Integer> actionIds, Map<String, Integer> effectIds) {}
+    record GeneratedAction(UiModel.Action action, UiModel.TypeRef payloadType) {}
+    record Output(String source, String appAugmentation, Map<Integer, GeneratedAction> actions, Map<String, Integer> actionIds, Map<String, Integer> effectIds) {}
 
     private final UiModel.CheckedProgram program;
     private final java.nio.file.Path frameworkRoot;
-    private final Map<Integer, UiModel.Action> actions = new LinkedHashMap<>();
+    private final Map<Integer, GeneratedAction> actions = new LinkedHashMap<>();
     private final Map<String, Integer> actionIds = new LinkedHashMap<>();
     private final Map<String, Integer> effectIds = new LinkedHashMap<>();
     private int actionSlot;
@@ -100,7 +101,8 @@ final class UiDealGenerator {
                     String value;
                     if (argument.getValue() instanceof UiModel.Action action) {
                         int slot = actionSlot++;
-                        actions.put(slot, action);
+                        UiModel.Event event = event(program.components().get(call.name()), argument.getKey());
+                        actions.put(slot, new GeneratedAction(action, event.payload()));
                         value = "core.actionProp(\"" + argument.getKey() + "\", " + slot + ")";
                     } else {
                         UiModel.TypeRef type = expressionType(argument.getValue());
@@ -137,11 +139,11 @@ final class UiDealGenerator {
     }
 
     private void generateActionFactories(StringBuilder out) {
-        for (Map.Entry<Integer, UiModel.Action> entry : actions.entrySet()) {
-            UiModel.Action action = entry.getValue();
+        for (Map.Entry<Integer, GeneratedAction> entry : actions.entrySet()) {
+            UiModel.Action action = entry.getValue().action();
             int id = actionIds.get(simple(action.name()));
-            UiModel.TypeRef payloadType = payloadType(action);
-            out.append("export function action_").append(entry.getKey()).append("(payload: ").append(dealType(payloadType)).append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
+            UiModel.TypeRef payloadType = entry.getValue().payloadType();
+            out.append("export function action_").append(entry.getKey()).append("(payload: ").append(dealType(payloadType == null ? new UiModel.TypeRef("string", false, false) : payloadType)).append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
             boolean first = true;
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
@@ -248,9 +250,9 @@ final class UiDealGenerator {
         throw new IllegalStateException("Action expression is not a value expression");
     }
 
-    private UiModel.TypeRef payloadType(UiModel.Action action) {
-        for (UiModel.Expr field : action.fields().values()) if (containsPayload(field)) return expressionType(field);
-        return new UiModel.TypeRef("string", false, false);
+    private UiModel.Event event(UiModel.Component component, String prop) {
+        for (UiModel.Contract contract : component.contracts()) if (contract instanceof UiModel.Event event && event.prop().equals(prop)) return event;
+        throw new IllegalStateException("Missing checked event contract " + component.name() + "." + prop);
     }
 
     private String payloadExpr(UiModel.Expr expression) {

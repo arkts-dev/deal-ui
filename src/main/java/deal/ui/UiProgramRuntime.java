@@ -26,14 +26,26 @@ public final class UiProgramRuntime implements AutoCloseable {
         this.bridge = bridge;
         this.transitions = transitions;
         this.effects = effects;
-        state = bridge.initialState();
-        store = bridge.initialStore();
-        renderer = new deal.ui.runtime.SwingUiRuntime(title, bindings, bridge, this::dispatch);
-        renderer.onCloseRequest(this::close);
-        UiBridge.Transition initial = bridge.initial(state, store);
-        state = initial.state();
-        tree = initial.tree();
-        store = initial.store();
+        UiBridge.StoreValue createdStore = null;
+        deal.ui.runtime.SwingUiRuntime createdRenderer = null;
+        try {
+            state = bridge.initialState();
+            createdStore = bridge.initialStore();
+            store = createdStore;
+            createdRenderer = new deal.ui.runtime.SwingUiRuntime(title, bindings, bridge, this::dispatch);
+            createdRenderer.onCloseRequest(this::close);
+            UiBridge.Transition initial = bridge.initial(state, store);
+            state = initial.state();
+            tree = initial.tree();
+            store = initial.store();
+            renderer = createdRenderer;
+        } catch (RuntimeException | Error failure) {
+            if (createdStore != null) try { bridge.dispose(createdStore); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
+            try { transitions.shutdownNow(); } catch (RuntimeException shutdownFailure) { failure.addSuppressed(shutdownFailure); }
+            try { effects.shutdownNow(); } catch (RuntimeException shutdownFailure) { failure.addSuppressed(shutdownFailure); }
+            if (createdRenderer != null) try { createdRenderer.close(); } catch (RuntimeException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
     }
 
     public void dispatch(UiBridge.ActionValue action) {
@@ -66,6 +78,7 @@ public final class UiProgramRuntime implements AutoCloseable {
     private void drain() {
         while (true) {
             UiBridge.Dequeue dequeue;
+            RuntimeException terminalFailure = null;
             synchronized (this) {
                 if (disposed) return;
                 try {
@@ -77,13 +90,11 @@ public final class UiProgramRuntime implements AutoCloseable {
                         return;
                     }
                 } catch (RuntimeException failure) {
-                    pending = 0;
-                    try { store = bridge.dispose(store); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
-                    reportFailure(failure);
-                    notifyAll();
-                    return;
+                    dequeue = null;
+                    terminalFailure = failure;
                 }
             }
+            if (terminalFailure != null) { terminate(terminalFailure); return; }
             apply(dequeue.action());
         }
     }
@@ -134,7 +145,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             pending++;
         }
         try { transitions.submit(() -> acceptCompletion(action)); }
-        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; store = bridge.dispose(store); reportFailure(failure); notifyAll(); } }
+        catch (java.util.concurrent.RejectedExecutionException failure) { terminate(failure); }
     }
 
     private void acceptCompletion(UiBridge.ActionValue action) {
@@ -175,7 +186,23 @@ public final class UiProgramRuntime implements AutoCloseable {
     }
 
     public synchronized void onError(java.util.function.Consumer<RuntimeException> handler) { errorHandler = java.util.Objects.requireNonNull(handler); }
-    private void reportFailure(RuntimeException failure) { asynchronousFailure = failure; errorHandler.accept(failure); }
+    private void reportFailure(RuntimeException failure) {
+        asynchronousFailure = failure;
+        try { errorHandler.accept(failure); } catch (RuntimeException handlerFailure) { failure.addSuppressed(handlerFailure); }
+    }
+    private void terminate(RuntimeException failure) {
+        synchronized (this) {
+            if (disposed) { if (asynchronousFailure == null) reportFailure(failure); return; }
+            disposed = true;
+            pending = 0;
+            try { store = bridge.dispose(store); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
+            reportFailure(failure);
+            notifyAll();
+        }
+        try { transitions.shutdownNow(); } catch (RuntimeException shutdownFailure) { failure.addSuppressed(shutdownFailure); }
+        try { effects.shutdownNow(); } catch (RuntimeException shutdownFailure) { failure.addSuppressed(shutdownFailure); }
+        try { renderer.close(); } catch (RuntimeException closeFailure) { failure.addSuppressed(closeFailure); }
+    }
 
     public void show() { UiBridge.Node value; synchronized (this) { value = tree; } renderer.show(value); }
     public void click(String text) { renderer.click(text); }

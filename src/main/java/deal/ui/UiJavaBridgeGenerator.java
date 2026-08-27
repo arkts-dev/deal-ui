@@ -52,6 +52,7 @@ final class UiJavaBridgeGenerator {
         generateActions(out);
         generateEffects(out);
         generateSnapshot(out);
+        out.append("  private static <T> T invalidPayload(int slot, String expected, Object payload) { throw new IllegalArgumentException(\"Action slot \" + slot + \" requires \" + expected + \" payload, got \" + (payload == null ? \"null\" : payload.getClass().getName())); }\n");
         generateConversions(out);
         out.append("}\n");
         return out.toString();
@@ -59,7 +60,7 @@ final class UiJavaBridgeGenerator {
 
     private void generateActions(StringBuilder out) {
         out.append("  @Override public ActionValue action(int slot, Object payload) { return new ActionValue(switch (slot) {\n");
-        for (Map.Entry<Integer, UiModel.Action> entry : generated.actions().entrySet()) out.append("    case ").append(entry.getKey()).append(" -> ").append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getValue())).append(");\n");
+        for (Map.Entry<Integer, UiDealGenerator.GeneratedAction> entry : generated.actions().entrySet()) out.append("    case ").append(entry.getKey()).append(" -> ").append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getKey(), entry.getValue().payloadType())).append(");\n");
         out.append("    default -> throw new IllegalArgumentException(\"Unknown generated action slot: \" + slot);\n  }); }\n");
     }
 
@@ -106,18 +107,17 @@ final class UiJavaBridgeGenerator {
         }
         throw new IllegalStateException("Swing renderer capability required for " + component.name());
     }
-    private String payloadConversion(UiModel.Action action) {
-        UiModel.TypeRef type = null;
-        for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) if (containsPayload(field.getValue())) type = program.deal().classes().get(simple(action.name())).fields().get(field.getKey()).type();
-        if (type == null || simple(type.name()).equals("string")) return "payload == null ? \"\" : String.valueOf(payload)";
+    private String payloadConversion(int slot, UiModel.TypeRef type) {
+        if (type == null) return "payload == null ? \"\" : invalidPayload(" + slot + ", \"no\", payload)";
+        String invalid = "invalidPayload(" + slot + ", \"" + type.name() + "\", payload)";
         return switch (simple(type.name())) {
-            case "int" -> "payload instanceof Number number ? number.longValue() : Long.parseLong(String.valueOf(payload))";
-            case "number" -> "payload instanceof Number number ? number.doubleValue() : Double.parseDouble(String.valueOf(payload))";
-            case "boolean" -> "payload instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(payload))";
-            default -> "payload";
+            case "string" -> "payload instanceof String text ? text : " + invalid;
+            case "int" -> "payload instanceof Long number ? number : " + invalid;
+            case "number" -> "payload instanceof Double number ? number : " + invalid;
+            case "boolean" -> "payload instanceof Boolean bool ? bool : " + invalid;
+            default -> "payload != null && payload.getClass().getName().endsWith(\"$C_" + simple(type.name()) + "\") ? payload : " + invalid;
         };
     }
-    private boolean containsPayload(UiModel.Expr expression) { if (expression instanceof UiModel.PathExpr path) return path.parts().get(0).equals("payload"); if (expression instanceof UiModel.Unary unary) return containsPayload(unary.operand()); if (expression instanceof UiModel.Binary binary) return containsPayload(binary.left()) || containsPayload(binary.right()); return false; }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
 
     private String tokenValue(UiModel.Token token) {

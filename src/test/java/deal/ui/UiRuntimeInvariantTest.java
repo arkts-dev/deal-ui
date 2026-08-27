@@ -24,6 +24,9 @@ public final class UiRuntimeInvariantTest {
         rejectedEffectSubmissionBalancesIdle();
         queuePolicyFailuresBalanceIdle();
         completionPolicyFailuresBalanceIdle();
+        dequeueAndFinishFailuresTerminateRuntime();
+        rejectedCompletionSubmissionTerminatesRuntime();
+        initializationFailureCleansOwnedResources();
         windowCloseDisposesRuntimeOnce();
         System.out.println("Runtime invariants passed: " + passed);
     }
@@ -151,6 +154,50 @@ public final class UiRuntimeInvariantTest {
         }
     }
 
+    private static void dequeueAndFinishFailuresTerminateRuntime() throws Exception {
+        for (boolean dequeue : List.of(true, false)) {
+            ManualExecutor transitions = new ManualExecutor();
+            ManualExecutor effects = new ManualExecutor();
+            ProtocolBridge bridge = new ProtocolBridge();
+            bridge.failDequeue = dequeue;
+            bridge.failFinish = !dequeue;
+            UiProgramRuntime runtime = runtime(bridge, transitions, effects);
+            runtime.dispatch(action("A"));
+            transitions.runAll();
+            expectFailure(runtime, dequeue ? "dequeue failure" : "finish failure");
+            check(runtime.disposed() && bridge.disposeCalls == 1, "queue policy failure terminates and disposes exactly once");
+            check(transitions.isShutdown() && effects.isShutdown(), "queue policy failure shuts down executors");
+            try { runtime.dispatch(action("B")); throw new AssertionError("Expected disposed runtime"); } catch (IllegalStateException expected) { passed++; }
+            runtime.close();
+            check(bridge.disposeCalls == 1, "terminal runtime remains idempotent");
+        }
+    }
+
+    private static void rejectedCompletionSubmissionTerminatesRuntime() throws Exception {
+        ManualExecutor transitions = new ManualExecutor();
+        ManualExecutor effects = new ManualExecutor();
+        ProtocolBridge bridge = new ProtocolBridge();
+        UiProgramRuntime runtime = runtime(bridge, transitions, effects);
+        runtime.dispatch(action("E1"));
+        transitions.runAll();
+        transitions.shutdown();
+        effects.runAll();
+        expectFailure(runtime, "RejectedExecutionException");
+        check(runtime.disposed() && bridge.disposeCalls == 1, "rejected completion submission terminates runtime");
+        check(effects.isShutdown(), "rejected completion submission shuts down effects");
+    }
+
+    private static void initializationFailureCleansOwnedResources() {
+        ManualExecutor transitions = new ManualExecutor();
+        ManualExecutor effects = new ManualExecutor();
+        ProtocolBridge bridge = new ProtocolBridge();
+        bridge.failInitial = true;
+        try { runtime(bridge, transitions, effects); throw new AssertionError("Expected initial failure"); }
+        catch (IllegalStateException failure) { check(failure.getMessage().equals("initial failure"), "initial failure is preserved"); }
+        check(bridge.disposeCalls == 1, "failed initialization disposes initialized store");
+        check(transitions.isShutdown() && effects.isShutdown(), "failed initialization shuts down executors");
+    }
+
     private static void windowCloseDisposesRuntimeOnce() {
         ProtocolBridge bridge = new ProtocolBridge();
         UiProgramRuntime runtime = runtime(bridge, new ManualExecutor(), new ManualExecutor());
@@ -180,22 +227,26 @@ public final class UiRuntimeInvariantTest {
         private int acceptedCompletions;
         private boolean failEnqueue;
         private boolean failComplete;
+        private boolean failDequeue;
+        private boolean failFinish;
+        private boolean failInitial;
         private int disposeCalls;
 
         @Override public String title() { return "Invariant"; }
         @Override public UiRendererBindings rendererBindings() { throw new UnsupportedOperationException(); }
         @Override public StateValue initialState() { return new StateValue(new TestState("")); }
         @Override public StoreValue initialStore() { return new StoreValue(new TestStore(List.of(), false, false)); }
-        @Override public Transition initial(StateValue state, StoreValue store) { return transitionValue((TestState) state.abi(), store, null, node("text", ""), -1, null); }
+        @Override public Transition initial(StateValue state, StoreValue store) { if (failInitial) throw new IllegalStateException("initial failure"); return transitionValue((TestState) state.abi(), store, null, node("text", ""), -1, null); }
         @Override public Enqueue enqueue(StoreValue store, ActionValue action) { if (failEnqueue) throw new IllegalStateException("enqueue failure"); return admit(store, action); }
         @Override public Dequeue dequeue(StoreValue value) {
+            if (failDequeue) throw new IllegalStateException("dequeue failure");
             TestStore store = (TestStore) value.abi();
             if (store.queue().isEmpty()) return new Dequeue(value, UiRuntimeInvariantTest.action("NONE"), false);
             List<TestAction> queue = new ArrayList<>(store.queue());
             TestAction action = queue.removeFirst();
             return new Dequeue(new StoreValue(new TestStore(List.copyOf(queue), true, store.disposed())), new ActionValue(action), true);
         }
-        @Override public StoreValue finish(StoreValue value) { TestStore store = (TestStore) value.abi(); return new StoreValue(new TestStore(store.queue(), false, store.disposed())); }
+        @Override public StoreValue finish(StoreValue value) { if (failFinish) throw new IllegalStateException("finish failure"); TestStore store = (TestStore) value.abi(); return new StoreValue(new TestStore(store.queue(), false, store.disposed())); }
         @Override public StoreValue reject(StoreValue value) { return value; }
         @Override public StoreValue dispose(StoreValue value) { disposeCalls++; TestStore store = (TestStore) value.abi(); return new StoreValue(new TestStore(List.of(), false, true)); }
         @Override public Completion complete(StoreValue store, ActionValue action) { if (failComplete) throw new IllegalStateException("completion failure"); completionAdmissions++; Enqueue enqueue = admit(store, action); if (enqueue.accepted()) acceptedCompletions++; return new Completion(enqueue.store(), enqueue.accepted(), enqueue.startDrain()); }

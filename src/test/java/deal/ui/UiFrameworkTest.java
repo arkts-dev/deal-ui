@@ -74,7 +74,43 @@ public final class UiFrameworkTest {
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
+        typedPayloadContracts(root, outputs, compiler);
         System.out.println("Passed: " + passed);
+    }
+
+    private static void typedPayloadContracts(Path root, Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("typed");
+        Files.createDirectories(fixture);
+        Path logic = fixture.resolve("typed.deal");
+        Path pack = fixture.resolve("typed.dealui-pack");
+        Path view = fixture.resolve("typed.dealui");
+        Files.writeString(logic, "export class State { text: string = \"\"; count: int = 0; amount: number = 0.0; flag: boolean = false; }\nexport class SetText { value: string = \"\"; }\nexport class SetCount { value: int = 0; }\nexport class SetAmount { value: number = 0.0; }\nexport class SetFlag { value: boolean = false; }\nexport class Clear {}\nexport class Completed {}\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function setText(state: State, action: SetText): State { return { text: action.value, count: state.count, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setCount(state: State, action: SetCount): State { return { text: state.text, count: action.value, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setAmount(state: State, action: SetAmount): State { return { text: state.text, count: state.count, amount: action.value, flag: state.flag }; }\n// @ui-update\nexport function setFlag(state: State, action: SetFlag): State { return { text: state.text, count: state.count, amount: state.amount, flag: action.value }; }\n// @ui-update\nexport function clear(state: State, action: Clear): State { return {}; }\n// @ui-effect\nexport async function complete(state: State, action: Clear): Completed { return {}; }\n// @ui-update\nexport function completed(state: State, action: Completed): State { return state; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { onText?: Action; onInt?: Action; onNumber?: Action; onBool?: Action; onClear?: Action; }\nexport component Host(props: Props): View { event onText(payload: string); event onInt(payload: int); event onNumber(payload: number); event onBool(payload: boolean); event onClear; capability \"renderer.swing.card\"; }\n");
+        Files.writeString(view, "import * as app from \"./typed\";\nimport * as ui from \"./typed.dealui-pack\";\n// @ui-root\nexport view Typed(state: app.State): View { ui.Host(onText: action app.SetText { value: payload }, onInt: action app.SetCount { value: payload }, onNumber: action app.SetAmount { value: payload }, onBool: action app.SetFlag { value: payload }, onClear: action app.Clear {}) }\n");
+        UiCompiler.Result result = compiler.compile(view, outputs.resolve("typed-output"));
+        compiler.build(result, root.resolve("build/classes"));
+        String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
+        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean"), "generated action factories preserve event payload types");
+        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiBridge bridge = Main.bridge(result, loader);
+            UiBridge.Node tree = bridge.initial(bridge.initialState(), bridge.initialStore()).tree();
+            int textSlot = tree.props().get("onText").actionSlot();
+            int intSlot = tree.props().get("onInt").actionSlot();
+            int numberSlot = tree.props().get("onNumber").actionSlot();
+            int boolSlot = tree.props().get("onBool").actionSlot();
+            int clearSlot = tree.props().get("onClear").actionSlot();
+            check(bridge.action(textSlot, "text") != null && bridge.action(intSlot, 1L) != null && bridge.action(numberSlot, 1.5) != null && bridge.action(boolSlot, true) != null && bridge.action(clearSlot, null) != null, "generated bridge accepts exact typed payloads");
+            expectPayloadFailure(() -> bridge.action(textSlot, 1L), "string");
+            expectPayloadFailure(() -> bridge.action(intSlot, "1"), "int");
+            expectPayloadFailure(() -> bridge.action(numberSlot, 1L), "number");
+            expectPayloadFailure(() -> bridge.action(boolSlot, "true"), "boolean");
+            expectPayloadFailure(() -> bridge.action(clearSlot, ""), "no");
+        }
+    }
+
+    private static void expectPayloadFailure(Runnable operation, String expected) {
+        try { operation.run(); throw new AssertionError("Expected " + expected + " payload rejection"); }
+        catch (IllegalArgumentException failure) { check(failure.getMessage().contains(expected), expected + " payload rejects coercion"); }
     }
 
     private static void expect(String code, String view) throws Exception { expect(code, view, deal(Path.of("").toAbsolutePath())); }

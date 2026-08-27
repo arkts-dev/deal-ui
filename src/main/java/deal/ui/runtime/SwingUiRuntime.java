@@ -221,7 +221,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             button.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", button.getText())));
             for (var listener : button.getActionListeners()) button.removeActionListener(listener);
             UiBridge.Prop action = node.props().get("onClick");
-            if (action != null) button.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), "")));
+            if (action != null) button.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), null)));
         }
     }
 
