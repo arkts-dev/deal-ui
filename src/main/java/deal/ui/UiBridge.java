@@ -4,9 +4,10 @@ import java.util.List;
 import java.util.Map;
 
 public interface UiBridge {
-    record StateValue(Object abi) { public StateValue { java.util.Objects.requireNonNull(abi); } }
-    record StoreValue(Object abi) { public StoreValue { java.util.Objects.requireNonNull(abi); } }
-    record ActionValue(Object abi) { public ActionValue { java.util.Objects.requireNonNull(abi); } }
+    sealed interface AbiValue permits StateValue, StoreValue, ActionValue { Object abi(); }
+    record StateValue(Object abi) implements AbiValue { public StateValue { java.util.Objects.requireNonNull(abi); } }
+    record StoreValue(Object abi) implements AbiValue { public StoreValue { java.util.Objects.requireNonNull(abi); } }
+    record ActionValue(Object abi) implements AbiValue { public ActionValue { java.util.Objects.requireNonNull(abi); } }
     record Key(String kind, long intValue, String stringValue) {}
     record Identity(String structural, Key key) {}
     record Prop(String name, String kind, Object value, int actionSlot) {}

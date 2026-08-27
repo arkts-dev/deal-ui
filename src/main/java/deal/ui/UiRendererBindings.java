@@ -13,6 +13,7 @@ import java.util.function.Supplier;
 
 public final class UiRendererBindings {
     @FunctionalInterface public interface Configurator { void apply(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings); }
+    public static Binding binding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, factory, configurator); }
     public record Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposer) {
         public Binding(String component, Supplier<JComponent> factory, Configurator configurator) { this(component, factory, configurator, ignored -> {}); }
     }

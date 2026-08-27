@@ -28,7 +28,7 @@ final class UiJavaBridgeGenerator {
         for (Map.Entry<String, UiModel.Component> component : program.components().entrySet()) {
             if (!first) out.append(", ");
             first = false;
-            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", new deal.ui.UiRendererBindings.Binding(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory(component.getValue())).append(", deal.ui.UiRendererBindings::configure))");
+            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings.binding(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory(component.getValue())).append(", deal.ui.UiRendererBindings::configure))");
         }
         out.append("), java.util.Map.ofEntries(");
         first = true;
