@@ -1,0 +1,39 @@
+import * as app from "./gallery";
+import * as ui from "./platform-ui.dealui-pack";
+
+view Header(title: string): View {
+  ui.Text(value: title)
+}
+
+// @ui-root
+export view Gallery(state: app.GalleryState): View {
+  ui.Card() {
+    ui.Column(spacing: ui.spaceMd) {
+      Header(title: state.title)
+      ui.Input(
+        value: state.title,
+        accessibilityLabel: "Gallery title",
+        onSubmit: action app.SetTitle { value: payload }
+      )
+      ui.IntText(value: state.count)
+      When(state.expanded) {
+        ui.Text(value: "Details are visible")
+      } Else {
+        ui.Text(value: "Details are hidden")
+      }
+      ui.Button(
+        text: "Toggle details",
+        accessibilityLabel: "Toggle gallery details",
+        onClick: action app.ToggleDetails {}
+      )
+      ui.Button(
+        text: "Increment",
+        accessibilityLabel: "Increment counter",
+        onClick: action app.IncrementRequested {}
+      )
+      ForEach(state.items, item: app.Item, key: item.id) {
+        ui.Text(value: item.title)
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+import * as core from "./core";
+
+export class Patch {
+  kind: string = "retain";
+  structural: string = "";
+  keyKind: string = "none";
+  keyInt: int = 0;
+  keyString: string = "";
+  parentStructural: string = "";
+  parentKeyKind: string = "none";
+  parentKeyInt: int = 0;
+  parentKeyString: string = "";
+  rootParent: boolean = false;
+  index: int = 0;
+  node: core.ViewNode = {};
+}
+
+export class Plan { patches: Patch[] = []; }
+
+export function identityEquals(left: core.ViewNode, right: core.ViewNode): boolean {
+  if (left.structural !== right.structural || left.keyKind !== right.keyKind) {
+    return false;
+  }
+  if (left.keyKind === "int") {
+    return left.keyInt === right.keyInt;
+  }
+  if (left.keyKind === "string") {
+    return left.keyString === right.keyString;
+  }
+  return true;
+}
+
+function append(patches: Patch[], kind: string, node: core.ViewNode, parent: core.ViewNode, rootParent: boolean, index: int): null {
+  patches[patches.length] = {
+    kind: kind,
+    structural: node.structural,
+    keyKind: node.keyKind,
+    keyInt: node.keyInt,
+    keyString: node.keyString,
+    parentStructural: parent.structural,
+    parentKeyKind: parent.keyKind,
+    parentKeyInt: parent.keyInt,
+    parentKeyString: parent.keyString,
+    rootParent: rootParent,
+    index: index,
+    node: node
+  };
+  return null;
+}
+
+function contains(nodes: core.ViewNode[], value: core.ViewNode): boolean {
+  for (let node: core.ViewNode of nodes) {
+    if (identityEquals(node, value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
+  let index: int = 0;
+  for (let node: core.ViewNode of next) {
+    let retained: boolean = false;
+    for (let old: core.ViewNode of previous) {
+      if (identityEquals(old, node) && old.component === node.component) {
+        retained = true;
+        append(patches, "update", node, parent, false, index);
+        reconcileChildren(old.children, node.children, node, patches);
+      }
+    }
+    if (!retained) {
+      append(patches, "create", node, parent, false, index);
+    }
+    index = index + 1;
+  }
+  for (let old: core.ViewNode of previous) {
+    if (!contains(next, old)) {
+      append(patches, "dispose", old, parent, false, 0);
+    }
+  }
+  return null;
+}
+
+export function plan(previous: core.ViewNode | null, next: core.ViewNode): Plan {
+  let patches: Patch[] = [];
+  let root: core.ViewNode = {};
+  if (previous === null) {
+    append(patches, "create", next, root, true, 0);
+    return { patches: patches };
+  }
+  let old: core.ViewNode = next;
+  if (previous !== null) {
+    old = previous;
+  }
+  if (!identityEquals(old, next) || old.component !== next.component) {
+    append(patches, "dispose", old, root, true, 0);
+    append(patches, "create", next, root, true, 0);
+    return { patches: patches };
+  }
+  append(patches, "update", next, root, true, 0);
+  reconcileChildren(old.children, next.children, next, patches);
+  return { patches: patches };
+}

@@ -1,0 +1,26 @@
+export class EffectDescriptor {
+  effectId: int = -1;
+  actionSlot: int = -1;
+  committedRevision: int = 0;
+}
+
+export class CompletionDescriptor {
+  accepted: boolean = false;
+  actionSlot: int = -1;
+}
+
+export function none(): EffectDescriptor {
+  return {};
+}
+
+export function start(effectId: int, actionSlot: int, committedRevision: int): EffectDescriptor {
+  return {
+    effectId: effectId,
+    actionSlot: actionSlot,
+    committedRevision: committedRevision
+  };
+}
+
+export function completion(disposed: boolean, actionSlot: int): CompletionDescriptor {
+  return { accepted: !disposed, actionSlot: actionSlot };
+}

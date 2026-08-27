@@ -7,512 +7,366 @@ import java.util.List;
 import java.util.Map;
 
 public final class UiParser {
-    private enum Kind {
-        IDENTIFIER,
-        STRING,
-        TRUE,
-        FALSE,
-        EXPORT,
-        VIEW,
-        ACTION,
-        LBRACE,
-        RBRACE,
-        LPAREN,
-        RPAREN,
-        COLON,
-        COMMA,
-        DOT,
-        BANG,
-        EOF
-    }
-
-    private record Token(Kind kind, String text, int startOffset, int endOffset,
-                         int line, int column, int endLine, int endColumn) {}
+    private enum K { ID, STRING, INT, NUMBER, SYMBOL, EOF }
+    private record T(K kind, String text, int line, int column) {}
 
     private final Path file;
-    private final String source;
-    private final List<Token> tokens;
+    private final List<T> tokens;
     private int position;
 
     private UiParser(Path file, String source) {
         this.file = file;
-        this.source = source;
-        Token rootDirective = findRootDirective(file, source);
-        this.tokens = tokenize(file, source, rootDirective.endOffset());
+        tokens = lex(source);
     }
 
-    public static UiModel.ParsedSource parse(Path file, String source) {
-        return new UiParser(file, source).parseSource();
+    public static UiModel.ViewModule parseViews(Path file, String source) {
+        return new UiParser(file, source).views(source);
     }
 
-    private UiModel.ParsedSource parseSource() {
-        Token rootDirective = findRootDirective(file, source);
-        int declarationStart = rootDirective.endOffset();
-        while (declarationStart < source.length() && Character.isWhitespace(source.charAt(declarationStart))) {
-            declarationStart++;
-        }
-        while (position < tokens.size() && peek().startOffset() < declarationStart) {
-            position++;
-        }
-        Token first = peek();
-        expect(Kind.EXPORT, "Expected 'export view' after // @ui-root");
-        expect(Kind.VIEW, "Expected 'view' after 'export'");
-        Token name = expect(Kind.IDENTIFIER, "Expected view name");
-        expect(Kind.LPAREN, "Expected '(' after view name");
-        Token stateParameter = expect(Kind.IDENTIFIER, "Expected root state parameter name");
-        expect(Kind.COLON, "Expected ':' after root state parameter");
-        Token stateType = expect(Kind.IDENTIFIER, "Expected root state type");
-        expect(Kind.RPAREN, "Expected ')' after root state parameter");
-        expect(Kind.COLON, "Expected ':' before view return type");
-        Token returnType = expect(Kind.IDENTIFIER, "Expected View return type");
-        if (!returnType.text().equals("View")) {
-            throw error("UI1002", "Root view return type must be View", returnType);
-        }
-        List<UiModel.Node> children = parseBody();
-        Token end = previous();
-        if (peek().kind() != Kind.EOF) {
-            throw error("UI1003", "Only one root view is allowed and no declarations may follow it", peek());
-        }
-        UiModel.View view = new UiModel.View(name.text(), stateParameter.text(), stateType.text(), children,
-            span(first, end));
-        String dealSource = source.substring(0, rootDirective.startOffset())
-            + whitespacePreservingLines(source.substring(rootDirective.startOffset()));
-        return new UiModel.ParsedSource(source, dealSource, view);
+    public static UiModel.PackModule parsePack(Path file, String source) {
+        return new UiParser(file, source).pack(source);
     }
 
-    private List<UiModel.Node> parseBody() {
-        expect(Kind.LBRACE, "Expected '{'");
-        List<UiModel.Node> nodes = new ArrayList<>();
-        while (peek().kind() != Kind.RBRACE) {
-            if (peek().kind() == Kind.EOF) {
-                throw error("UI1004", "Unterminated UI body", peek());
-            }
-            nodes.add(parseNode());
-        }
-        expect(Kind.RBRACE, "Expected '}'");
-        return List.copyOf(nodes);
-    }
-
-    private UiModel.Node parseNode() {
-        Token name = expect(Kind.IDENTIFIER, "Expected component or When");
-        if (name.text().equals("When")) {
-            expect(Kind.LPAREN, "Expected '(' after When");
-            UiModel.Expression condition = parseExpression();
-            expect(Kind.RPAREN, "Expected ')' after When condition");
-            List<UiModel.Node> children = parseBody();
-            return new UiModel.When(condition, children, span(name, previous()));
-        }
-        Map<String, UiModel.Expression> props = new LinkedHashMap<>();
-        if (match(Kind.LPAREN)) {
-            if (peek().kind() != Kind.RPAREN) {
+    private UiModel.ViewModule views(String source) {
+        List<UiModel.Import> imports = imports();
+        List<UiModel.View> views = new ArrayList<>();
+        while (!at(K.EOF)) {
+            boolean root = match("@ui-root");
+            boolean exported = match("export");
+            T start = require("view");
+            String name = id();
+            require("(");
+            List<UiModel.Parameter> parameters = new ArrayList<>();
+            if (!at(")")) {
                 do {
-                    Token prop = expect(Kind.IDENTIFIER, "Expected named property");
-                    expect(Kind.COLON, "Expected ':' after property name");
-                    if (props.containsKey(prop.text())) {
-                        throw error("UI1005", "Duplicate property '" + prop.text() + "'", prop);
+                    String parameter = id();
+                    require(":");
+                    parameters.add(new UiModel.Parameter(parameter, type()));
+                } while (match(",") && !at(")"));
+            }
+            require(")");
+            require(":");
+            require("View");
+            views.add(new UiModel.View(exported, root, name, parameters, nodes(), span(start)));
+        }
+        if (views.isEmpty()) fail("UI1001", "At least one view is required", peek());
+        return new UiModel.ViewModule(imports, views, source);
+    }
+
+    private UiModel.PackModule pack(String source) {
+        List<UiModel.Import> imports = imports();
+        Map<String, UiModel.PackClass> classes = new LinkedHashMap<>();
+        Map<String, UiModel.Component> components = new LinkedHashMap<>();
+        Map<String, UiModel.Token> tokens = new LinkedHashMap<>();
+        while (!at(K.EOF)) {
+            require("export");
+            T start = peek();
+            if (match("class")) {
+                String name = id();
+                require("{");
+                List<UiModel.Field> fields = new ArrayList<>();
+                while (!match("}")) {
+                    T field = peek();
+                    String fieldName = id();
+                    boolean optional = match("?");
+                    require(":");
+                    UiModel.TypeRef type = type(optional);
+                    UiModel.Expr value = match("=") ? packDefault() : null;
+                    match(";");
+                    fields.add(new UiModel.Field(fieldName, type, value, span(field)));
+                }
+                duplicate(classes, name, new UiModel.PackClass(name, fields, span(start)));
+            } else if (match("component")) {
+                String name = id();
+                require("(");
+                require("props");
+                require(":");
+                String props = qualified();
+                require(")");
+                require(":");
+                require("View");
+                List<UiModel.Contract> contracts = new ArrayList<>();
+                if (match("{")) {
+                    while (!match("}")) {
+                        if (match("children")) {
+                            boolean required = match("required");
+                            if (!required) match("optional");
+                            contracts.add(new UiModel.Children(required));
+                        } else if (match("event")) {
+                            String prop = id();
+                            UiModel.TypeRef payload = null;
+                            if (match("(")) {
+                                require("payload");
+                                require(":");
+                                payload = type();
+                                require(")");
+                            }
+                            contracts.add(new UiModel.Event(prop, payload));
+                        } else if (match("accessibility")) {
+                            contracts.add(new UiModel.Accessibility(id()));
+                        } else if (match("token")) {
+                            contracts.add(new UiModel.TokenProp(id()));
+                        } else if (match("capability")) {
+                            contracts.add(new UiModel.Capability(string()));
+                        } else fail("UI1002", "Expected component contract", peek());
+                        require(";");
                     }
-                    props.put(prop.text(), parseExpression());
-                } while (match(Kind.COMMA));
+                } else require(";");
+                duplicate(components, name, new UiModel.Component(name, props, contracts, span(start)));
+            } else if (match("token")) {
+                String name = id();
+                require(":");
+                UiModel.TypeRef type = type();
+                UiModel.Expr value = match("=") ? packDefault() : null;
+                require(";");
+                duplicate(tokens, name, new UiModel.Token(name, type, value, span(start)));
+            } else fail("UI1003", "Expected pack class, component, or token", peek());
+        }
+        return new UiModel.PackModule(imports, classes, components, tokens, source);
+    }
+
+    private List<UiModel.Import> imports() {
+        List<UiModel.Import> result = new ArrayList<>();
+        while (at("import")) {
+            T start = take();
+            require("*");
+            require("as");
+            String alias = id();
+            require("from");
+            String specifier = string();
+            match(";");
+            result.add(new UiModel.Import(alias, specifier, span(start)));
+        }
+        return List.copyOf(result);
+    }
+
+    private List<UiModel.Node> nodes() {
+        require("{");
+        List<UiModel.Node> result = new ArrayList<>();
+        while (!match("}")) result.add(node());
+        return List.copyOf(result);
+    }
+
+    private UiModel.Node node() {
+        T start = peek();
+        if (match("When")) {
+            require("(");
+            UiModel.Expr condition = expression();
+            require(")");
+            List<UiModel.Node> yes = nodes();
+            List<UiModel.Node> no = match("Else") ? nodes() : List.of();
+            return new UiModel.When(condition, yes, no, span(start));
+        }
+        if (match("ForEach")) {
+            require("(");
+            UiModel.PathExpr source = path();
+            require(",");
+            String item = id();
+            require(":");
+            UiModel.TypeRef itemType = type();
+            require(",");
+            require("key");
+            require(":");
+            UiModel.PathExpr key = path();
+            require(")");
+            return new UiModel.ForEach(source, new UiModel.Parameter(item, itemType), key, nodes(), span(start));
+        }
+        String name = qualified();
+        require("(");
+        Map<String, UiModel.Expr> arguments = new LinkedHashMap<>();
+        if (!at(")")) {
+            do {
+                String argument = id();
+                require(":");
+                if (arguments.putIfAbsent(argument, expression()) != null) fail("UI1004", "Duplicate argument '" + argument + "'", start);
+            } while (match(",") && !at(")"));
+        }
+        require(")");
+        List<UiModel.Node> children = at("{") ? nodes() : List.of();
+        match(";");
+        return new UiModel.Call(name, arguments, children, span(start));
+    }
+
+    private UiModel.Expr expression() { return binary(1); }
+
+    private UiModel.Expr binary(int level) {
+        if (level == 7) return unary();
+        UiModel.Expr left = binary(level + 1);
+        while (precedence(peek().text()) == level) {
+            T operator = take();
+            left = new UiModel.Binary(operator.text(), left, binary(level + 1), span(operator));
+        }
+        return left;
+    }
+
+    private int precedence(String operator) {
+        return switch (operator) {
+            case "||" -> 1;
+            case "&&" -> 2;
+            case "===", "!==" -> 3;
+            case "<", "<=", ">", ">=" -> 4;
+            case "+", "-" -> 5;
+            case "*", "/", "%" -> 6;
+            default -> 0;
+        };
+    }
+
+    private UiModel.Expr unary() {
+        T start = peek();
+        if (match("!") || match("-")) return new UiModel.Unary(previous().text(), unary(), span(start));
+        if (match("(")) {
+            UiModel.Expr value = expression();
+            require(")");
+            return value;
+        }
+        if (match("has")) {
+            require("(");
+            UiModel.PathExpr value = path();
+            require(")");
+            return new UiModel.Has(value, span(start));
+        }
+        if (match("action")) {
+            String name = qualified();
+            require("{");
+            Map<String, UiModel.Expr> fields = new LinkedHashMap<>();
+            while (!match("}")) {
+                String field = id();
+                require(":");
+                if (fields.putIfAbsent(field, expression()) != null) fail("UI1005", "Duplicate action field '" + field + "'", start);
+                match(",");
             }
-            expect(Kind.RPAREN, "Expected ')' after component properties");
+            return new UiModel.Action(name, fields, span(start));
         }
-        List<UiModel.Node> children = List.of();
-        if (peek().kind() == Kind.LBRACE) {
-            children = parseBody();
-        }
-        return new UiModel.Component(name.text(), props, children, span(name, previous()));
+        if (match("null")) return new UiModel.Literal(null, "null", span(start));
+        if (match("true") || match("false")) return new UiModel.Literal(previous().text().equals("true"), "boolean", span(start));
+        if (at(K.STRING)) return new UiModel.Literal(string(), "string", span(start));
+        if (at(K.INT)) return new UiModel.Literal(Long.parseLong(take().text()), "int", span(start));
+        if (at(K.NUMBER)) return new UiModel.Literal(Double.parseDouble(take().text()), "number", span(start));
+        return path();
     }
 
-    private UiModel.Expression parseExpression() {
-        if (match(Kind.BANG)) {
-            Token start = previous();
-            UiModel.Expression operand = parseExpression();
-            return new UiModel.NotExpression(operand, span(start, tokenFor(operand.span())));
+    private UiModel.Expr packDefault() {
+        T start = peek();
+        if (match("-")) {
+            T number = take();
+            if (number.kind() == K.INT) return new UiModel.Literal(-Long.parseLong(number.text()), "int", span(start));
+            if (number.kind() == K.NUMBER) return new UiModel.Literal(-Double.parseDouble(number.text()), "number", span(start));
+            fail("UI1006", "Expected numeric pack default", number);
         }
-        if (match(Kind.STRING)) {
-            Token token = previous();
-            return new UiModel.StringLiteral(token.text(), span(token, token));
+        if (match("[")) {
+            List<UiModel.Expr> values = new ArrayList<>();
+            if (!at("]")) do values.add(packDefault()); while (match(",") && !at("]"));
+            require("]");
+            return new UiModel.Literal(List.copyOf(values), "array", span(start));
         }
-        if (match(Kind.TRUE) || match(Kind.FALSE)) {
-            Token token = previous();
-            return new UiModel.BooleanLiteral(token.kind() == Kind.TRUE, span(token, token));
+        if (match("{")) {
+            Map<String, UiModel.Expr> values = new LinkedHashMap<>();
+            if (!at("}")) do { String name = id(); require(":"); values.put(name, packDefault()); } while (match(",") && !at("}"));
+            require("}");
+            return new UiModel.Literal(Map.copyOf(values), "object", span(start));
         }
-        if (match(Kind.ACTION)) {
-            Token start = previous();
-            Token type = expect(Kind.IDENTIFIER, "Expected action class name");
-            expect(Kind.LBRACE, "Expected '{' after action class name");
-            Map<String, UiModel.Expression> fields = new LinkedHashMap<>();
-            while (peek().kind() != Kind.RBRACE) {
-                Token field = expect(Kind.IDENTIFIER, "Expected action field name");
-                expect(Kind.COLON, "Expected ':' after action field name");
-                if (fields.containsKey(field.text())) {
-                    throw error("UI1006", "Duplicate action field '" + field.text() + "'", field);
-                }
-                fields.put(field.text(), parseExpression());
-                match(Kind.COMMA);
-            }
-            Token end = expect(Kind.RBRACE, "Expected '}' after action fields");
-            return new UiModel.ActionLiteral(type.text(), fields, span(start, end));
-        }
-        Token root = expect(Kind.IDENTIFIER, "Expected UI expression");
-        expect(Kind.DOT, "State references must be direct paths such as state.title");
-        Token field = expect(Kind.IDENTIFIER, "Expected state field name after '.'");
-        return new UiModel.StatePath(root.text(), field.text(), span(root, field));
+        return unary();
     }
 
-    private Token tokenFor(UiModel.SourceSpan span) {
-        for (Token token : tokens) {
-            if (token.endLine() == span.endLine() && token.endColumn() == span.endColumn()) {
-                return token;
-            }
-        }
-        return previous();
+    private UiModel.PathExpr path() {
+        T start = peek();
+        List<String> parts = new ArrayList<>();
+        parts.add(id());
+        while (match(".")) parts.add(id());
+        return new UiModel.PathExpr(parts, span(start));
     }
 
-    private Token expect(Kind kind, String message) {
-        if (peek().kind() != kind) {
-            throw error("UI1001", message, peek());
-        }
-        return tokens.get(position++);
+    private UiModel.TypeRef type() { return type(false); }
+    private UiModel.TypeRef type(boolean optional) {
+        String name = qualified();
+        boolean array = match("[") && requireAndTrue("]");
+        return new UiModel.TypeRef(name, optional, array);
     }
-
-    private boolean match(Kind kind) {
-        if (peek().kind() != kind) {
-            return false;
-        }
-        position++;
-        return true;
+    private boolean requireAndTrue(String text) { require(text); return true; }
+    private String qualified() {
+        StringBuilder value = new StringBuilder(id());
+        while (match(".")) value.append('.').append(id());
+        return value.toString();
     }
-
-    private Token peek() {
-        return tokens.get(Math.min(position, tokens.size() - 1));
+    private String id() {
+        if (!at(K.ID)) fail("UI1007", "Expected identifier", peek());
+        return take().text();
     }
-
-    private Token previous() {
-        return tokens.get(Math.max(0, position - 1));
+    private String string() {
+        if (!at(K.STRING)) fail("UI1008", "Expected string literal", peek());
+        return take().text();
     }
+    private UiModel.Span span(T token) { return new UiModel.Span(file, token.line(), token.column()); }
+    private T peek() { return tokens.get(position); }
+    private T previous() { return tokens.get(position - 1); }
+    private T take() { return tokens.get(position++); }
+    private boolean at(K kind) { return peek().kind() == kind; }
+    private boolean at(String text) { return peek().text().equals(text); }
+    private boolean match(String text) { if (!at(text)) return false; position++; return true; }
+    private T require(String text) { if (!at(text)) fail("UI1009", "Expected '" + text + "'", peek()); return take(); }
+    private void fail(String code, String message, T token) { throw new UiDiagnostic(code, message, file, token.line(), token.column()); }
+    private <V> void duplicate(Map<String, V> map, String name, V value) { if (map.putIfAbsent(name, value) != null) fail("UI1010", "Duplicate declaration '" + name + "'", previous()); }
 
-    private UiDiagnostic error(String code, String message, Token token) {
-        return new UiDiagnostic(code, message, span(token, token));
-    }
-
-    private UiModel.SourceSpan span(Token start, Token end) {
-        return new UiModel.SourceSpan(file, start.line(), start.column(), end.endLine(), end.endColumn());
-    }
-
-    private static Token findRootDirective(Path file, String source) {
-        int foundStart = -1;
-        int foundEnd = -1;
-        int foundLine = 1;
-        int offset = 0;
-        int line = 1;
-        while (offset < source.length()) {
-            char current = source.charAt(offset);
-            if (current == '\r' || current == '\n') {
-                int[] next = advance(source, offset, line, 1);
-                offset = next[0];
-                line = next[1];
+    private static List<T> lex(String source) {
+        List<T> result = new ArrayList<>();
+        int i = 0, line = 1, column = 1;
+        while (i < source.length()) {
+            char c = source.charAt(i);
+            if (Character.isWhitespace(c)) { if (c == '\n') { line++; column = 1; } else column++; i++; continue; }
+            if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '/') {
+                int start = i, startColumn = column;
+                while (i < source.length() && source.charAt(i) != '\n') { i++; column++; }
+                String comment = source.substring(start, i).trim();
+                if (comment.equals("// @ui-root")) result.add(new T(K.ID, "@ui-root", line, startColumn));
                 continue;
             }
-            if (current == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
-                offset += 2;
-                while (offset < source.length()) {
-                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
-                            && source.charAt(offset + 1) == '/') {
-                        offset += 2;
-                        break;
-                    }
-                    int[] next = advance(source, offset, line, 1);
-                    offset = next[0];
-                    line = next[1];
-                }
-                continue;
-            }
-            if (current == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
-                int start = offset;
-                int end = offset + 2;
-                while (end < source.length() && source.charAt(end) != '\r' && source.charAt(end) != '\n') end++;
-                if (source.substring(start, end).trim().equals("// @ui-root")) {
-                    if (foundStart >= 0) {
-                        throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required",
-                            file, line, 1);
-                    }
-                    foundStart = start;
-                    foundEnd = end;
-                    if (foundEnd < source.length() && source.charAt(foundEnd) == '\r') foundEnd++;
-                    if (foundEnd < source.length() && source.charAt(foundEnd) == '\n') foundEnd++;
-                    foundLine = line;
-                }
-                offset = end;
-                continue;
-            }
-            if (current == '"' || current == '\'') {
-                int[] next = skipQuoted(source, offset, line, current);
-                offset = next[0];
-                line = next[1];
-                continue;
-            }
-            if (current == '`') {
-                int[] next = skipTemplate(source, offset, line);
-                offset = next[0];
-                line = next[1];
-                continue;
-            }
-            offset++;
-        }
-        if (foundStart < 0) {
-            throw new UiDiagnostic("UI1007", "Exactly one // @ui-root directive is required", file, 1, 1);
-        }
-        return new Token(Kind.IDENTIFIER, "@ui-root", foundStart, foundEnd, foundLine, 1, foundLine, 12);
-    }
-
-    private static int[] skipQuoted(String source, int offset, int line, char quote) {
-        offset++;
-        while (offset < source.length()) {
-            char value = source.charAt(offset++);
-            if (value == '\\' && offset < source.length()) offset++;
-            else if (value == quote) break;
-            else if (value == '\r' || value == '\n') {
-                int[] next = advance(source, offset - 1, line, 1);
-                offset = next[0];
-                line = next[1];
-            }
-        }
-        return new int[]{offset, line};
-    }
-
-    private static int[] skipTemplate(String source, int offset, int line) {
-        offset++;
-        while (offset < source.length()) {
-            char value = source.charAt(offset);
-            if (value == '\\') {
-                offset = Math.min(source.length(), offset + 2);
-            } else if (value == '`') {
-                return new int[]{offset + 1, line};
-            } else if (value == '$' && offset + 1 < source.length() && source.charAt(offset + 1) == '{') {
-                int[] next = skipInterpolation(source, offset + 2, line);
-                offset = next[0];
-                line = next[1];
-            } else if (value == '\r' || value == '\n') {
-                int[] next = advance(source, offset, line, 1);
-                offset = next[0];
-                line = next[1];
-            } else {
-                offset++;
-            }
-        }
-        return new int[]{offset, line};
-    }
-
-    private static int[] skipInterpolation(String source, int offset, int line) {
-        int depth = 1;
-        while (offset < source.length() && depth > 0) {
-            char value = source.charAt(offset);
-            if (value == '"' || value == '\'') {
-                int[] next = skipQuoted(source, offset, line, value);
-                offset = next[0];
-                line = next[1];
-            } else if (value == '`') {
-                int[] next = skipTemplate(source, offset, line);
-                offset = next[0];
-                line = next[1];
-            } else if (value == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
-                offset += 2;
-                while (offset < source.length() && source.charAt(offset) != '\r'
-                        && source.charAt(offset) != '\n') offset++;
-            } else if (value == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
-                offset += 2;
-                while (offset < source.length()) {
-                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
-                            && source.charAt(offset + 1) == '/') {
-                        offset += 2;
-                        break;
-                    }
-                    int[] next = advance(source, offset, line, 1);
-                    offset = next[0];
-                    line = next[1];
-                }
-            } else if (value == '{') {
-                depth++;
-                offset++;
-            } else if (value == '}') {
-                depth--;
-                offset++;
-            } else if (value == '\r' || value == '\n') {
-                int[] next = advance(source, offset, line, 1);
-                offset = next[0];
-                line = next[1];
-            } else {
-                offset++;
-            }
-        }
-        return new int[]{offset, line};
-    }
-
-    private static int[] advance(String source, int offset, int line, int column) {
-        char current = source.charAt(offset++);
-        if (current == '\r') {
-            if (offset < source.length() && source.charAt(offset) == '\n') offset++;
-            return new int[]{offset, line + 1, 1};
-        }
-        if (current == '\n') return new int[]{offset, line + 1, 1};
-        return new int[]{offset, line, column + 1};
-    }
-
-    private static String whitespacePreservingLines(String value) {
-        StringBuilder result = new StringBuilder(value.length());
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            result.append(c == '\n' || c == '\r' ? c : ' ');
-        }
-        return result.toString();
-    }
-
-    private static List<Token> tokenize(Path file, String source, int startOffset) {
-        List<Token> result = new ArrayList<>();
-        int offset = startOffset;
-        int line = 1;
-        int column = 1;
-        for (int i = 0; i < startOffset; i++) {
-            char current = source.charAt(i);
-            if (current == '\r') {
-                if (i + 1 < startOffset && source.charAt(i + 1) == '\n') i++;
-                line++;
-                column = 1;
-            } else if (current == '\n') {
-                line++;
-                column = 1;
-            } else {
-                column++;
-            }
-        }
-        while (offset < source.length()) {
-            char c = source.charAt(offset);
-            if (Character.isWhitespace(c)) {
-                int[] position = advance(source, offset, line, column);
-                offset = position[0];
-                line = position[1];
-                column = position[2];
-                continue;
-            }
-            if (c == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '/') {
-                while (offset < source.length() && source.charAt(offset) != '\n' && source.charAt(offset) != '\r') {
-                    offset++;
-                    column++;
-                }
-                continue;
-            }
-            if (c == '/' && offset + 1 < source.length() && source.charAt(offset + 1) == '*') {
-                int commentLine = line;
-                int commentColumn = column;
-                offset += 2;
-                column += 2;
+            if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '*') {
+                i += 2; column += 2;
                 boolean closed = false;
-                while (offset < source.length()) {
-                    if (offset + 1 < source.length() && source.charAt(offset) == '*'
-                            && source.charAt(offset + 1) == '/') {
-                        offset += 2;
-                        column += 2;
-                        closed = true;
-                        break;
-                    }
-                    int[] position = advance(source, offset, line, column);
-                    offset = position[0];
-                    line = position[1];
-                    column = position[2];
-                }
-                if (!closed) {
-                    throw new UiDiagnostic("UI1001", "Unterminated block comment", file,
-                        commentLine, commentColumn);
-                }
+                while (i < source.length()) { if (i + 1 < source.length() && source.charAt(i) == '*' && source.charAt(i + 1) == '/') { i += 2; column += 2; closed = true; break; } if (source.charAt(i) == '\n') { line++; column = 1; i++; } else { i++; column++; } }
+                if (!closed) throw new UiDiagnostic("UI1011", "Unterminated comment", Path.of("<source>"), line, column);
                 continue;
             }
-            int start = offset;
-            int startLine = line;
-            int startColumn = column;
-            Kind kind;
-            String text;
+            int startLine = line, startColumn = column;
             if (Character.isLetter(c) || c == '_') {
-                offset++;
+                int start = i++;
                 column++;
-                while (offset < source.length()) {
-                    char next = source.charAt(offset);
-                    if (!Character.isLetterOrDigit(next) && next != '_') {
-                        break;
-                    }
-                    offset++;
-                    column++;
-                }
-                text = source.substring(start, offset);
-                kind = switch (text) {
-                    case "export" -> Kind.EXPORT;
-                    case "view" -> Kind.VIEW;
-                    case "action" -> Kind.ACTION;
-                    case "true" -> Kind.TRUE;
-                    case "false" -> Kind.FALSE;
-                    default -> Kind.IDENTIFIER;
-                };
-            } else if (c == '"' || c == '\'') {
-                char quote = c;
-                offset++;
-                column++;
-                StringBuilder decoded = new StringBuilder();
-                boolean closed = false;
-                while (offset < source.length()) {
-                    char next = source.charAt(offset++);
-                    column++;
-                    if (next == quote) {
-                        closed = true;
-                        break;
-                    }
-                    if (next == '\n' || next == '\r') {
-                        throw new UiDiagnostic("UI1008", "String literal may not contain a raw line break",
-                            file, startLine, startColumn);
-                    }
-                    if (next == '\\') {
-                        if (offset >= source.length()) {
-                            break;
-                        }
-                        char escape = source.charAt(offset++);
-                        column++;
-                        decoded.append(switch (escape) {
-                            case 'n' -> '\n';
-                            case 't' -> '\t';
-                            case '\\' -> '\\';
-                            case '"' -> '"';
-                            case '\'' -> '\'';
-                            default -> throw new UiDiagnostic("UI1008", "Unsupported string escape '\\" + escape + "'",
-                                file, line, column - 2);
-                        });
-                    } else {
-                        decoded.append(next);
-                    }
-                }
-                if (!closed) {
-                    throw new UiDiagnostic("UI1008", "Unterminated string literal", file, startLine, startColumn);
-                }
-                text = decoded.toString();
-                kind = Kind.STRING;
-            } else {
-                offset++;
-                column++;
-                text = Character.toString(c);
-                kind = switch (c) {
-                    case '{' -> Kind.LBRACE;
-                    case '}' -> Kind.RBRACE;
-                    case '(' -> Kind.LPAREN;
-                    case ')' -> Kind.RPAREN;
-                    case ':' -> Kind.COLON;
-                    case ',' -> Kind.COMMA;
-                    case '.' -> Kind.DOT;
-                    case '!' -> Kind.BANG;
-                    default -> throw new UiDiagnostic("UI1009", "Unexpected character '" + c + "' in UI source",
-                        file, startLine, startColumn);
-                };
+                while (i < source.length() && (Character.isLetterOrDigit(source.charAt(i)) || source.charAt(i) == '_')) { i++; column++; }
+                result.add(new T(K.ID, source.substring(start, i), startLine, startColumn));
+                continue;
             }
-            result.add(new Token(kind, text, start, offset, startLine, startColumn, line, column - 1));
+            if (Character.isDigit(c)) {
+                int start = i++;
+                column++;
+                while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
+                K kind = K.INT;
+                if (i < source.length() && source.charAt(i) == '.') { kind = K.NUMBER; i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
+                result.add(new T(kind, source.substring(start, i), startLine, startColumn));
+                continue;
+            }
+            if (c == '"') {
+                i++; column++;
+                StringBuilder value = new StringBuilder();
+                boolean closed = false;
+                while (i < source.length()) {
+                    char d = source.charAt(i++); column++;
+                    if (d == '"') { closed = true; break; }
+                    if (d == '\\') { if (i >= source.length()) break; char e = source.charAt(i++); column++; value.append(switch (e) { case 'n' -> '\n'; case 'r' -> '\r'; case 't' -> '\t'; case '"' -> '"'; case '\\' -> '\\'; default -> throw new UiDiagnostic("UI1012", "Unsupported escape", Path.of("<source>"), startLine, startColumn); }); }
+                    else value.append(d);
+                }
+                if (!closed) throw new UiDiagnostic("UI1012", "Unterminated string", Path.of("<source>"), startLine, startColumn);
+                result.add(new T(K.STRING, value.toString(), startLine, startColumn));
+                continue;
+            }
+            String two = i + 1 < source.length() ? source.substring(i, i + 2) : "";
+            if (List.of("||", "&&", "===", "!==", "<=", ">=").contains(two) || (i + 2 < source.length() && List.of("===", "!==").contains(source.substring(i, i + 3)))) {
+                String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
+                result.add(new T(K.SYMBOL, op, startLine, startColumn)); i += op.length(); column += op.length(); continue;
+            }
+            if ("{}()[]:,.?;=+-*/%!<>".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn)); i++; column++; continue; }
+            throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
-        result.add(new Token(Kind.EOF, "", source.length(), source.length(), line, column, line, column));
+        result.add(new T(K.EOF, "", line, column));
         return List.copyOf(result);
     }
 }

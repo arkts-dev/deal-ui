@@ -1,0 +1,78 @@
+export class Item {
+  id: int = 0;
+  title: string = "";
+}
+
+export class GalleryState {
+  title: string = "Gallery";
+  count: int = 0;
+  expanded: boolean = false;
+  items: Item[] = [];
+}
+
+export function initialState(): GalleryState {
+  let first: Item = { id: 1, title: "The Starry Night" };
+  let items: Item[] = [first];
+  return {
+    title: "Gallery",
+    count: 0,
+    expanded: false,
+    items: items
+  };
+}
+
+export class SetTitle {
+  value: string = "";
+}
+
+export class ToggleDetails {}
+
+export class IncrementRequested {}
+
+export class IncrementCompleted {
+  value: int = 0;
+}
+
+// @ui-update
+export function setTitle(state: GalleryState, action: SetTitle): GalleryState {
+  return {
+    title: action.value,
+    count: state.count,
+    expanded: state.expanded,
+    items: state.items
+  };
+}
+
+// @ui-update
+export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState {
+  return {
+    title: state.title,
+    count: state.count,
+    expanded: !state.expanded,
+    items: state.items
+  };
+}
+
+// @ui-update
+export function beginIncrement(state: GalleryState, action: IncrementRequested): GalleryState {
+  return state;
+}
+
+// @ui-effect
+export async function increment(state: GalleryState, action: IncrementRequested): IncrementCompleted {
+  return { value: state.count + 1 };
+}
+
+// @ui-update
+export function completeIncrement(state: GalleryState, action: IncrementCompleted): GalleryState {
+  return {
+    title: state.title,
+    count: action.value,
+    expanded: state.expanded,
+    items: state.items
+  };
+}
+
+export function main(): null {
+  return null;
+}

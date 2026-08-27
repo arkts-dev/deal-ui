@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 "$ROOT/scripts/compile.sh"
-"$ROOT/bin/deal-ui" build "$ROOT/examples/museum/museum.deal"
+"$ROOT/bin/deal-ui" build "$ROOT/examples/museum/gallery.dealui"

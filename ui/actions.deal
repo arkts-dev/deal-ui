@@ -1,0 +1,23 @@
+export class Route {
+  actionId: int = -1;
+  updateId: int = -1;
+  effectId: int = -1;
+  completionActionId: int = -1;
+}
+
+export function noRoute(): Route {
+  return {};
+}
+
+export function route(actionId: int, updateId: int, effectId: int, completionActionId: int): Route {
+  return {
+    actionId: actionId,
+    updateId: updateId,
+    effectId: effectId,
+    completionActionId: completionActionId
+  };
+}
+
+export function hasEffect(value: Route): boolean {
+  return value.effectId >= 0;
+}

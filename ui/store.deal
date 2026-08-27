@@ -1,0 +1,73 @@
+export class StoreLifecycle {
+  disposed: boolean = false;
+  draining: boolean = false;
+  revision: int = 0;
+  queued: int = 0;
+}
+
+export class QueueTransition {
+  accepted: boolean = false;
+  startDrain: boolean = false;
+  next: StoreLifecycle = {};
+}
+
+export function enqueue(current: StoreLifecycle): QueueTransition {
+  if (current.disposed) {
+    return { accepted: false, startDrain: false, next: current };
+  }
+  let shouldStart: boolean = !current.draining;
+  return {
+    accepted: true,
+    startDrain: shouldStart,
+    next: {
+      disposed: false,
+      draining: true,
+      revision: current.revision,
+      queued: current.queued + 1
+    }
+  };
+}
+
+export function commit(current: StoreLifecycle): StoreLifecycle {
+  return {
+    disposed: current.disposed,
+    draining: true,
+    revision: current.revision + 1,
+    queued: current.queued - 1
+  };
+}
+
+export function reject(current: StoreLifecycle): StoreLifecycle {
+  let queued: int = current.queued;
+  if (queued > 0) {
+    queued = queued - 1;
+  }
+  return {
+    disposed: current.disposed,
+    draining: queued > 0,
+    revision: current.revision,
+    queued: queued
+  };
+}
+
+export function finish(current: StoreLifecycle): StoreLifecycle {
+  return {
+    disposed: current.disposed,
+    draining: current.queued > 0,
+    revision: current.revision,
+    queued: current.queued
+  };
+}
+
+export function dispose(current: StoreLifecycle): StoreLifecycle {
+  return {
+    disposed: true,
+    draining: false,
+    revision: current.revision,
+    queued: 0
+  };
+}
+
+export function acceptsCompletion(current: StoreLifecycle): boolean {
+  return !current.disposed;
+}

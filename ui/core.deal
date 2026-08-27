@@ -1,0 +1,47 @@
+export class Key {
+  kind: string = "none";
+  intValue: int = 0;
+  stringValue: string = "";
+}
+
+export class Prop {
+  name: string = "";
+  kind: string = "string";
+  stringValue: string = "";
+  intValue: int = 0;
+  numberValue: number = 0.0;
+  booleanValue: boolean = false;
+  actionSlot: int = -1;
+}
+
+export class ViewNode {
+  component: string = "";
+  structural: string = "";
+  keyKind: string = "none";
+  keyInt: int = 0;
+  keyString: string = "";
+  props: Prop[] = [];
+  children: ViewNode[] = [];
+}
+
+export function noKey(): Key { return {}; }
+export function intKey(value: int): Key { return { kind: "int", intValue: value }; }
+export function stringKey(value: string): Key { return { kind: "string", stringValue: value }; }
+export function stringProp(name: string, value: string): Prop { return { name: name, kind: "string", stringValue: value }; }
+export function intProp(name: string, value: int): Prop { return { name: name, kind: "int", intValue: value }; }
+export function numberProp(name: string, value: number): Prop { return { name: name, kind: "number", numberValue: value }; }
+export function booleanProp(name: string, value: boolean): Prop { return { name: name, kind: "boolean", booleanValue: value }; }
+export function tokenProp(name: string, value: string): Prop { return { name: name, kind: "token", stringValue: value }; }
+export function actionProp(name: string, slot: int): Prop { return { name: name, kind: "action", actionSlot: slot }; }
+
+export function node(component: string, structural: string, key: Key, props: Prop[], children: ViewNode[]): ViewNode {
+  return {
+    component: component,
+    structural: structural,
+    keyKind: key.kind,
+    keyInt: key.intValue,
+    keyString: key.stringValue,
+    props: props,
+    children: children
+  };
+}
