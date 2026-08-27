@@ -59,14 +59,14 @@ final class UiDealGenerator {
     }
 
     private void generateView(StringBuilder out, UiModel.View view, String app) {
-        out.append("export function view_").append(view.name()).append("(");
+        out.append("export function view_").append(view.name()).append("(identityPrefix: string");
         for (int i = 0; i < view.parameters().size(); i++) {
-            if (i > 0) out.append(", ");
+            out.append(", ");
             UiModel.Parameter parameter = view.parameters().get(i);
             out.append(parameter.name()).append(": ").append(qualifiedType(parameter.type(), app));
         }
         out.append("): core.ViewNode {\n  let nodes: core.ViewNode[] = [];\n");
-        emitNodes(out, view.nodes(), "nodes", view.name(), "core.noKey()", app, 1);
+        emitNodes(out, view.nodes(), "nodes", "\" + identityPrefix + \"", "core.noKey()", app, 1);
         out.append("  return nodes[0];\n}\n\n");
     }
 
@@ -78,9 +78,9 @@ final class UiDealGenerator {
             if (node instanceof UiModel.Call call) {
                 UiModel.View view = program.views().get(simple(call.name()));
                 if (view != null && !program.components().containsKey(call.name())) {
-                    out.append(pad).append(target).append("[").append(target).append(".length] = view_").append(view.name()).append("(");
+                    out.append(pad).append(target).append("[").append(target).append(".length] = view_").append(view.name()).append("(\"").append(structural).append("\"");
                     for (int i = 0; i < view.parameters().size(); i++) {
-                        if (i > 0) out.append(", ");
+                        out.append(", ");
                         out.append(expr(call.arguments().get(view.parameters().get(i).name()), app));
                     }
                     out.append(");\n");
@@ -151,9 +151,10 @@ final class UiDealGenerator {
 
     private void generateRouting(StringBuilder out, String app) {
         out            .append("export function initialStore(): UiStore { return {}; }\n")
-            .append("export function initial(state: app.").append(program.rootStateType()).append(", current: UiStore): Transition { let tree: core.ViewNode = view_").append(program.title()).append("(state); return { tree: tree, plan: reconcile.plan(null, tree), store: current, effect: effects.none() }; }\n")
+            .append("export function initial(state: app.").append(program.rootStateType()).append(", current: UiStore): Transition { let tree: core.ViewNode = view_").append(program.title()).append("(\"").append(program.title()).append("\", state); return { tree: tree, plan: reconcile.plan(null, tree), store: current, effect: effects.none() }; }\n")
             .append("export function enqueue(current: UiStore, action: UiAction): EnqueueResult { let decision: store.QueueDecision = store.enqueueDecision(current.lifecycle); if (!decision.accepted) { return { store: current }; } let queue: UiAction[] = []; for (let queued: UiAction of current.queue) { queue[queue.length] = queued; } queue[queue.length] = action; return { store: { lifecycle: store.beginDrain(current.lifecycle), queue: queue }, accepted: true, startDrain: decision.startDrain }; }\n")
             .append("export function dequeue(current: UiStore): DequeueResult { if (current.queue.length === 0) { return { store: current }; } let action: UiAction = current.queue[0]; let queue: UiAction[] = []; for (let i: int = 1; i < current.queue.length; i = i + 1) { queue[queue.length] = current.queue[i]; } return { store: { lifecycle: current.lifecycle, queue: queue }, action: action, present: true }; }\n")
+            .append("export function complete(current: UiStore, action: UiAction): EnqueueResult { let descriptor: effects.CompletionDescriptor = effects.completion(current.lifecycle.disposed, action.slot); if (!descriptor.accepted) { return { store: current }; } return enqueue(current, action); }\n")
             .append("export function finish(current: UiStore): UiStore { return { lifecycle: store.finish(current.lifecycle), queue: current.queue }; }\n")
             .append("export function reject(current: UiStore): UiStore { return { lifecycle: store.reject(current.lifecycle), queue: current.queue }; }\n")
             .append("export function dispose(current: UiStore): UiStore { let queue: UiAction[] = []; return { lifecycle: store.dispose(current.lifecycle), queue: queue }; }\n\n")
@@ -177,7 +178,7 @@ final class UiDealGenerator {
             .append("export function transitionFromCandidate(candidate: app.").append(program.rootStateType()).append(", previous: core.ViewNode | null, current: UiStore, action: UiAction): Transition {\n")
             .append("  let routeValue: actions.Route = route(action);\n")
             .append("  let nextStore: UiStore = { lifecycle: store.commit(current.lifecycle), queue: current.queue };\n")
-            .append("  let tree: core.ViewNode = view_").append(program.title()).append("(candidate);\n")
+            .append("  let tree: core.ViewNode = view_").append(program.title()).append("(\"").append(program.title()).append("\", candidate);\n")
             .append("  let planValue: reconcile.Plan = reconcile.plan(previous, tree);\n")
             .append("  let effect: effects.EffectDescriptor = effects.none();\n")
             .append("  if (actions.hasEffect(routeValue)) { effect = effects.start(routeValue.effectId, action.slot, nextStore.lifecycle.revision); }\n")

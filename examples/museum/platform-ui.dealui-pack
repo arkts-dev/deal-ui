@@ -29,32 +29,32 @@ export class ColumnProps {
 export class EmptyProps {}
 
 export component Text(props: TextProps): View {
-  capability "renderer.swing.TEXT";
+  capability "renderer.swing.text";
 }
 export component IntText(props: IntTextProps): View {
-  capability "renderer.swing.INT_TEXT";
+  capability "renderer.swing.intText";
 }
 export component Spinner(props: EmptyProps): View {
-  capability "renderer.swing.SPINNER";
+  capability "renderer.swing.spinner";
 }
 export component Input(props: InputProps): View {
   event onSubmit(payload: string);
   accessibility accessibilityLabel;
-  capability "renderer.swing.INPUT";
+  capability "renderer.swing.input";
 }
 export component Card(props: EmptyProps): View {
   children optional;
-  capability "renderer.swing.CARD";
+  capability "renderer.swing.card";
 }
 export component Button(props: ButtonProps): View {
   event onClick;
   accessibility accessibilityLabel;
-  capability "renderer.swing.BUTTON";
+  capability "renderer.swing.button";
 }
 export component Column(props: ColumnProps): View {
   children optional;
   token spacing;
-  capability "renderer.swing.COLUMN";
+  capability "renderer.swing.column";
 }
 
 export token spaceMd: Space = { value: 14 };

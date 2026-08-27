@@ -31,7 +31,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class SwingUiRuntime implements AutoCloseable {
-    @FunctionalInterface public interface Dispatch { void accept(Object action); }
+    @FunctionalInterface public interface Dispatch { void accept(UiBridge.ActionValue action); }
 
     private final String title;
     private final UiRendererBindings bindings;
@@ -70,6 +70,8 @@ public final class SwingUiRuntime implements AutoCloseable {
             if (frame != null) frame.pack();
         });
     }
+
+    public void restore(UiBridge.Node previous) { onEdt(() -> { disposeRetained(); rebuild(previous); }); }
 
     public JComponent componentForTesting(UiBridge.Node next) {
         AtomicReference<JComponent> result = new AtomicReference<>();
@@ -213,7 +215,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         }
     }
 
-    private Object action(int slot, String payload) { return bridge.action(slot, payload); }
+    private UiBridge.ActionValue action(int slot, String payload) { return bridge.action(slot, payload); }
     private Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
     private Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
     private void dispose(UiBridge.Identity identity) {
@@ -224,6 +226,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             container.removeAll();
         }
         if (removed.getParent() != null) removed.getParent().remove(removed);
+        bindings.dispose(removed);
         disposedComponents++;
     }
 
@@ -233,7 +236,14 @@ public final class SwingUiRuntime implements AutoCloseable {
             for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested);
             container.removeAll();
         }
+        bindings.dispose(component);
         disposedComponents++;
+    }
+
+    private void disposeRetained() {
+        java.util.List<JComponent> roots = retained.values().stream().filter(component -> component.getParent() == null || !retained.containsValue(component.getParent())).toList();
+        for (JComponent component : roots) disposeComponent(component);
+        retained.clear();
     }
     private JButton find(Component component, String text) { if (component instanceof JButton button && button.getText().equals(text)) return button; if (component instanceof java.awt.Container container) for (Component child : container.getComponents()) { JButton result = find(child, text); if (result != null) return result; } return null; }
     private void captureNow(Path destination) {
@@ -250,5 +260,5 @@ public final class SwingUiRuntime implements AutoCloseable {
         catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new IllegalStateException("Interrupted waiting for renderer", failure); }
         catch (InvocationTargetException failure) { Throwable cause = failure.getCause(); if (cause instanceof RuntimeException runtime) throw runtime; if (cause instanceof Error error) throw error; throw new IllegalStateException(cause); }
     }
-    @Override public void close() { onEdt(() -> { closed = true; retained.clear(); tree = null; if (frame != null) frame.dispose(); frame = null; root = null; }); }
+    @Override public void close() { onEdt(() -> { if (closed) return; closed = true; disposeRetained(); tree = null; if (frame != null) frame.dispose(); frame = null; root = null; }); }
 }

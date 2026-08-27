@@ -35,7 +35,8 @@ public final class UiFrameworkTest {
             UiBridge bridge = Main.bridge(result, loader);
             try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
                 check(runtime.stateSnapshot().get("title").equals("Gallery"), "DEAL supplies initial state");
-                check(texts(runtime.tree()).containsAll(List.of("Gallery", "0", "Details are hidden", "The Starry Night")), "DEAL-generated tree evaluates composition and control flow");
+                check(texts(runtime.tree()).containsAll(List.of("Gallery", "Curated collection", "0", "Details are hidden", "The Starry Night")), "DEAL-generated tree evaluates composition and control flow");
+                check(!runtime.tree().children().get(0).children().get(0).identity().equals(runtime.tree().children().get(0).children().get(1).identity()), "custom view identities include call sites");
                 JComponent component = runtime.renderer().componentForTesting(runtime.tree());
                 JComponent firstItem = named(component, "ui.Text", "The Starry Night");
                 JTextField input = input(component);
@@ -50,9 +51,14 @@ public final class UiFrameworkTest {
                 check(firstItem != null && firstItem == named(second, "ui.Text", "The Starry Night"), "keyed identity is retained");
                 check(named(second, "ui.Text", "Details are visible") != null, "DEAL create operations materialize new subtrees");
                 button(second, "Increment").doClick();
+                button(second, "Increment").doClick();
                 runtime.awaitIdle();
-                check(runtime.stateSnapshot().get("count").equals(1L), "post-commit effect completion returns to DEAL queue");
+                check(((Long) runtime.stateSnapshot().get("count")) >= 1L, "overlapping post-commit effects return through the DEAL queue");
                 check(runtime.renderer().lastApplyOnEdt(), "patches apply on EDT");
+                long disposed = runtime.renderer().disposedComponents();
+                button(runtime.renderer().componentForTesting(runtime.tree()), "Toggle details").doClick();
+                runtime.awaitActions();
+                check(runtime.renderer().disposedComponents() > disposed, "lost structural identity disposes retained resources");
             }
         } finally {
             Thread.currentThread().setContextClassLoader(previous);

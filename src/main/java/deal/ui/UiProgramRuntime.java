@@ -6,19 +6,25 @@ import java.util.concurrent.Executors;
 
 public final class UiProgramRuntime implements AutoCloseable {
     private final UiBridge bridge;
-    private final ExecutorService transitions = Executors.newSingleThreadExecutor();
-    private final ExecutorService effects = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService transitions;
+    private final ExecutorService effects;
     private final deal.ui.runtime.SwingUiRuntime renderer;
-    private Object state;
+    private UiBridge.StateValue state;
     private UiBridge.Node tree;
-    private Object store;
+    private UiBridge.StoreValue store;
     private boolean disposed;
     private long pending;
     private long runningEffects;
     private RuntimeException asynchronousFailure;
 
     public UiProgramRuntime(UiBridge bridge, String title, UiRendererBindings bindings) {
+        this(bridge, title, bindings, Executors.newSingleThreadExecutor(), Executors.newVirtualThreadPerTaskExecutor());
+    }
+
+    UiProgramRuntime(UiBridge bridge, String title, UiRendererBindings bindings, ExecutorService transitions, ExecutorService effects) {
         this.bridge = bridge;
+        this.transitions = transitions;
+        this.effects = effects;
         state = bridge.initialState();
         store = bridge.initialStore();
         renderer = new deal.ui.runtime.SwingUiRuntime(title, bindings, bridge, this::dispatch);
@@ -28,15 +34,16 @@ public final class UiProgramRuntime implements AutoCloseable {
         store = initial.store();
     }
 
-    public void dispatch(Object action) {
+    public void dispatch(UiBridge.ActionValue action) {
         synchronized (this) {
             if (disposed) throw new IllegalStateException("Store is disposed");
             pending++;
         }
-        transitions.submit(() -> accept(action));
+        try { transitions.submit(() -> accept(action)); }
+        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; notifyAll(); } throw failure; }
     }
 
-    private void accept(Object action) {
+    private void accept(UiBridge.ActionValue action) {
         UiBridge.Enqueue enqueue;
         synchronized (this) {
             if (disposed) { pending--; notifyAll(); return; }
@@ -64,11 +71,11 @@ public final class UiProgramRuntime implements AutoCloseable {
         }
     }
 
-    private void apply(Object action) {
+    private void apply(UiBridge.ActionValue action) {
         UiBridge.Transition transition;
-        Object priorState;
+        UiBridge.StateValue priorState;
         UiBridge.Node priorTree;
-        Object priorStore;
+        UiBridge.StoreValue priorStore;
         synchronized (this) {
             priorState = state;
             priorTree = tree;
@@ -85,35 +92,44 @@ public final class UiProgramRuntime implements AutoCloseable {
             }
             return;
         }
+        try {
+            renderer.apply(transition.patches(), transition.tree());
+        } catch (RuntimeException failure) {
+            try { renderer.restore(priorTree); } catch (RuntimeException restoreFailure) { failure.addSuppressed(restoreFailure); }
+            synchronized (this) { store = bridge.reject(store); asynchronousFailure = failure; pending--; notifyAll(); }
+            return;
+        }
         synchronized (this) {
-            if (disposed) {
-                pending--;
-                notifyAll();
-                return;
-            }
+            if (disposed) { pending--; notifyAll(); return; }
             state = transition.state();
             tree = transition.tree();
             store = transition.store();
             if (transition.effectId() >= 0) runningEffects++;
-        }
-        try {
-            renderer.apply(transition.patches(), transition.tree());
-        } catch (RuntimeException failure) {
-            synchronized (this) { asynchronousFailure = failure; }
-        } finally {
-            synchronized (this) { pending--; notifyAll(); }
+            pending--;
+            notifyAll();
         }
         if (transition.effectId() >= 0) schedule(transition.effectId(), transition.effectState(), transition.effectAction());
     }
 
-    private void schedule(int effectId, Object effectState, Object effectAction) {
+    private void submitCompletion(UiBridge.ActionValue action) {
+        boolean startDrain;
+        synchronized (this) {
+            UiBridge.Completion completion = bridge.complete(store, action);
+            store = completion.store();
+            if (!completion.accepted()) return;
+            pending++;
+            startDrain = completion.startDrain();
+        }
+        if (!startDrain) return;
+        try { transitions.submit(this::drain); }
+        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; notifyAll(); } }
+    }
+
+    private void schedule(int effectId, UiBridge.StateValue effectState, UiBridge.ActionValue effectAction) {
         effects.submit(() -> {
             try {
-                Object completion = bridge.runEffect(effectId, effectState, effectAction);
-                synchronized (UiProgramRuntime.this) {
-                    if (disposed) return;
-                }
-                dispatch(completion);
+                UiBridge.ActionValue completion = bridge.runEffect(effectId, effectState, effectAction);
+                submitCompletion(completion);
             } catch (RuntimeException failure) {
                 synchronized (UiProgramRuntime.this) { asynchronousFailure = failure; }
             } finally {

@@ -8,10 +8,13 @@ import javax.swing.JProgressBar;
 import javax.swing.JTextField;
 import java.awt.Color;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public final class UiRendererBindings {
-    public record Binding(String component, Supplier<JComponent> factory) {}
+    public record Binding(String component, Supplier<JComponent> factory, Consumer<JComponent> disposer) {
+        public Binding(String component, Supplier<JComponent> factory) { this(component, factory, ignored -> {}); }
+    }
 
     private final Map<String, Binding> components;
     private final Map<String, Object> tokens;
@@ -35,6 +38,7 @@ public final class UiRendererBindings {
         if (value instanceof Number number) return number.intValue();
         throw new IllegalStateException("Spacing token is not numeric: " + token);
     }
+    public void dispose(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) binding.disposer().accept(component); }
     public Color background() { return background; }
     public Color accent() { return accent; }
     public static JComponent column() { JPanel panel = new JPanel(); panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)); return panel; }

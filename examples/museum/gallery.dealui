@@ -10,6 +10,7 @@ export view Gallery(state: app.GalleryState): View {
   ui.Card() {
     ui.Column(spacing: ui.spaceMd) {
       Header(title: state.title)
+      Header(title: "Curated collection")
       ui.Input(
         value: state.title,
         accessibilityLabel: "Gallery title",
