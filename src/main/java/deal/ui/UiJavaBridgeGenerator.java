@@ -114,14 +114,28 @@ final class UiJavaBridgeGenerator {
     }
     private String payloadConversion(int slot, UiModel.TypeRef type) {
         if (type == null) throw new IllegalArgumentException("Payload conversion requires an event payload contract");
-        String invalid = "invalidPayload(" + slot + ", \"" + type.name() + "\", payload)";
-        return switch (simple(type.name())) {
+        String expected = type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : "");
+        String invalid = "invalidPayload(" + slot + ", \"" + expected + "\", payload)";
+        String conversion;
+        if (type.array()) {
+            String arrayType;
+            if (type.dimensions() > 1) arrayType = ui + ".__RefArray";
+            else arrayType = switch (simple(type.name())) {
+                case "string" -> ui + ".__StringArray";
+                case "int" -> ui + ".__IntArray";
+                case "number" -> ui + ".__NumberArray";
+                case "boolean" -> ui + ".__BooleanArray";
+                default -> app + ".$Array$" + simple(type.name());
+            };
+            conversion = "payload instanceof " + arrayType + " values ? values : " + invalid;
+        } else conversion = switch (simple(type.name())) {
             case "string" -> "payload instanceof String text ? text : " + invalid;
             case "int" -> "payload instanceof Long number ? number : " + invalid;
             case "number" -> "payload instanceof Double number ? number : " + invalid;
             case "boolean" -> "payload instanceof Boolean bool ? bool : " + invalid;
-            default -> "payload != null && payload.getClass().getName().endsWith(\"$C_" + simple(type.name()) + "\") ? payload : " + invalid;
+            default -> "payload instanceof " + app + ".$C_" + simple(type.name()) + " value ? value : " + invalid;
         };
+        return type.optional() ? "payload == null ? null : (" + conversion + ")" : conversion;
     }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
 

@@ -275,9 +275,9 @@ final class UiDealGenerator {
     private String qualifiedType(UiModel.TypeRef type, String app) {
         String name = type.name();
         if (!name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
-        return name + (type.array() ? "[]" : "") + (type.optional() ? " | null" : "");
+        return name + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : "");
     }
-    private String dealType(UiModel.TypeRef type) { return type.name() + (type.array() ? "[]" : "") + (type.optional() ? " | null" : ""); }
+    private String dealType(UiModel.TypeRef type) { return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : ""); }
     private String defaultValue(UiModel.TypeRef type) {
         if (type.optional()) return "null";
         if (type.array()) return "[]";

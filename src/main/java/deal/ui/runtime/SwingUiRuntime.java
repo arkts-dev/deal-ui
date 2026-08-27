@@ -65,6 +65,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     public void apply(List<UiBridge.Patch> patches, UiBridge.Node next) {
         onEdt(() -> {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
+            validatePatches(patches);
             for (UiBridge.Patch patch : patches) applyPatch(patch);
             for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
             tree = Objects.requireNonNull(next);
@@ -72,7 +73,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         });
     }
 
-    public void restore(UiBridge.Node previous) { onEdt(() -> { disposeRetained(); rebuild(previous); }); }
+    public void restore(UiBridge.Node previous) { onEdt(() -> { tree = previous; if (root != null) { JComponent component = retained.get(previous.identity()); if (component != null && component.getParent() != root) { root.removeAll(); root.add(component, BorderLayout.CENTER); root.revalidate(); root.repaint(); } } }); }
 
     public JComponent componentForTesting(UiBridge.Node next) {
         AtomicReference<JComponent> result = new AtomicReference<>();
@@ -103,6 +104,10 @@ public final class SwingUiRuntime implements AutoCloseable {
         root.setBorder(BorderFactory.createEmptyBorder(28, 28, 28, 28));
         root.setBackground(bindings.background());
         frame.setContentPane(root);
+    }
+
+    private void validatePatches(List<UiBridge.Patch> patches) {
+        for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) bindings.require(patch.node().component());
     }
 
     private void applyPatch(UiBridge.Patch patch) {

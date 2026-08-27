@@ -10,7 +10,10 @@ public final class UiModel {
 
     public record Span(Path file, int line, int column) {}
     public record Import(String alias, String specifier, Span span) {}
-    public record TypeRef(String name, boolean optional, boolean array) {}
+    public record TypeRef(String name, boolean optional, int dimensions) {
+        public TypeRef(String name, boolean optional, boolean array) { this(name, optional, array ? 1 : 0); }
+        public boolean array() { return dimensions > 0; }
+    }
     public record Parameter(String name, TypeRef type) {}
 
     public sealed interface Expr permits Literal, PathExpr, Unary, Binary, Has, Action {

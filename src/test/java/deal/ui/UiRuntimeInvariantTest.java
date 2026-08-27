@@ -1,5 +1,6 @@
 package deal.ui;
 
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import java.awt.Color;
 import java.util.ArrayDeque;
@@ -100,11 +101,15 @@ public final class UiRuntimeInvariantTest {
             runtime.awaitIdle();
             check(runtime.tree().props().get("value").value().equals(runtime.stateSnapshot().get("value")), "every commit produces equivalent root output");
             UiBridge.Node prior = runtime.tree();
+            JComponent priorComponent = runtime.renderer().componentForTesting(prior);
+            long priorDisposals = runtime.renderer().disposedComponents();
             runtime.dispatch(action("RENDER_FAIL"));
             transitions.runAll();
             expectFailure(runtime, "No renderer binding");
             check(runtime.stateSnapshot().get("value").equals("A"), "renderer failure retains prior committed state");
             check(runtime.tree().equals(prior), "renderer failure retains prior root tree");
+            check(runtime.renderer().componentForTesting(prior) == priorComponent, "renderer failure retains native component identity");
+            check(runtime.renderer().disposedComponents() == priorDisposals, "renderer failure disposes no retained resources");
         }
     }
 

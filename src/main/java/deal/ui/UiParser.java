@@ -279,10 +279,11 @@ public final class UiParser {
     private UiModel.TypeRef type() { return type(false); }
     private UiModel.TypeRef type(boolean optional) {
         String name = qualified();
-        boolean array = match("[") && requireAndTrue("]");
-        return new UiModel.TypeRef(name, optional, array);
+        int dimensions = 0;
+        while (match("[")) { require("]"); dimensions++; }
+        if (match("|")) { require("null"); optional = true; }
+        return new UiModel.TypeRef(name, optional, dimensions);
     }
-    private boolean requireAndTrue(String text) { require(text); return true; }
     private String qualified() {
         StringBuilder value = new StringBuilder(id());
         while (match(".")) value.append('.').append(id());
@@ -363,7 +364,7 @@ public final class UiParser {
                 String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
                 result.add(new T(K.SYMBOL, op, startLine, startColumn)); i += op.length(); column += op.length(); continue;
             }
-            if ("{}()[]:,.?;=+-*/%!<>".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn)); i++; column++; continue; }
+            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn)); i++; column++; continue; }
             throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
         result.add(new T(K.EOF, "", line, column));

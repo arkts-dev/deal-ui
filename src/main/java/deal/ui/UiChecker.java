@@ -6,6 +6,7 @@ import deal.ast.ClassField;
 import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
 import deal.ast.NamedType;
+import deal.ast.NullableType;
 import deal.ast.ProgramNode;
 import deal.ast.QualifiedType;
 import deal.ast.StatementNode;
@@ -357,7 +358,8 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef type(TypeNode type, boolean optional) {
-        if (type instanceof ArrayType array) { UiModel.TypeRef element = type(array.elementType(), optional); return new UiModel.TypeRef(element.name(), optional, true); }
+        if (type instanceof NullableType nullable) return type(nullable.innerType(), true);
+        if (type instanceof ArrayType array) { UiModel.TypeRef element = type(array.elementType(), optional); return new UiModel.TypeRef(element.name(), element.optional(), element.dimensions() + 1); }
         return new UiModel.TypeRef(typeName(type), optional, false);
     }
     private String typeName(TypeNode type) {
