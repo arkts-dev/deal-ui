@@ -143,7 +143,9 @@ final class UiDealGenerator {
             UiModel.Action action = entry.getValue().action();
             int id = actionIds.get(simple(action.name()));
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
-            out.append("export function action_").append(entry.getKey()).append("(payload: ").append(dealType(payloadType == null ? new UiModel.TypeRef("string", false, false) : payloadType)).append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
+            out.append("export function action_").append(entry.getKey()).append("(");
+            if (payloadType != null) out.append("payload: ").append(dealType(payloadType));
+            out.append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
             boolean first = true;
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {

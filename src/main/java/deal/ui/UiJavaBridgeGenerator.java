@@ -60,7 +60,12 @@ final class UiJavaBridgeGenerator {
 
     private void generateActions(StringBuilder out) {
         out.append("  @Override public ActionValue action(int slot, Object payload) { return new ActionValue(switch (slot) {\n");
-        for (Map.Entry<Integer, UiDealGenerator.GeneratedAction> entry : generated.actions().entrySet()) out.append("    case ").append(entry.getKey()).append(" -> ").append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getKey(), entry.getValue().payloadType())).append(");\n");
+        for (Map.Entry<Integer, UiDealGenerator.GeneratedAction> entry : generated.actions().entrySet()) {
+            out.append("    case ").append(entry.getKey()).append(" -> ");
+            if (entry.getValue().payloadType() == null) out.append("payload == null ? ").append(ui).append(".action$u").append(entry.getKey()).append("() : invalidPayload(").append(entry.getKey()).append(", \"no\", payload)");
+            else out.append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getKey(), entry.getValue().payloadType())).append(")");
+            out.append(";\n");
+        }
         out.append("    default -> throw new IllegalArgumentException(\"Unknown generated action slot: \" + slot);\n  }); }\n");
     }
 
@@ -108,7 +113,7 @@ final class UiJavaBridgeGenerator {
         throw new IllegalStateException("Swing renderer capability required for " + component.name());
     }
     private String payloadConversion(int slot, UiModel.TypeRef type) {
-        if (type == null) return "payload == null ? \"\" : invalidPayload(" + slot + ", \"no\", payload)";
+        if (type == null) throw new IllegalArgumentException("Payload conversion requires an event payload contract");
         String invalid = "invalidPayload(" + slot + ", \"" + type.name() + "\", payload)";
         return switch (simple(type.name())) {
             case "string" -> "payload instanceof String text ? text : " + invalid;

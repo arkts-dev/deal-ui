@@ -90,7 +90,7 @@ public final class UiFrameworkTest {
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("typed-output"));
         compiler.build(result, root.resolve("build/classes"));
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
-        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean"), "generated action factories preserve event payload types");
+        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(): UiAction"), "generated action factories preserve event payload contracts");
         try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiBridge bridge = Main.bridge(result, loader);
             UiBridge.Node tree = bridge.initial(bridge.initialState(), bridge.initialStore()).tree();
