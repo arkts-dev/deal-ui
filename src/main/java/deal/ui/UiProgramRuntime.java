@@ -138,12 +138,21 @@ public final class UiProgramRuntime implements AutoCloseable {
     private void acceptCompletion(UiBridge.ActionValue action) {
         UiBridge.Completion completion;
         synchronized (this) {
-            completion = bridge.complete(store, action);
-            store = completion.store();
-            if (!completion.accepted()) { pending--; notifyAll(); return; }
+            if (disposed) { retirePending(); return; }
+            try {
+                completion = bridge.complete(store, action);
+                store = completion.store();
+            } catch (RuntimeException failure) {
+                retirePending();
+                asynchronousFailure = failure;
+                return;
+            }
+            if (!completion.accepted()) { retirePending(); return; }
         }
         if (completion.startDrain()) drain();
     }
+
+    private void retirePending() { if (pending > 0) pending--; notifyAll(); }
 
     private void schedule(int effectId, UiBridge.StateValue effectState, UiBridge.ActionValue effectAction) {
         try { effects.submit(() -> {
@@ -168,9 +177,9 @@ public final class UiProgramRuntime implements AutoCloseable {
     public deal.ui.runtime.SwingUiRuntime renderer() { return renderer; }
     public synchronized Map<String, Object> stateSnapshot() { return bridge.stateSnapshot(state); }
     public synchronized UiBridge.Node tree() { return tree; }
-    public void awaitActions() throws InterruptedException { synchronized (this) { while (pending > 0) wait(); } }
+    public void awaitActions() throws InterruptedException { synchronized (this) { while (!disposed && pending > 0) wait(); } }
     public synchronized void awaitIdle() throws InterruptedException {
-        while (pending > 0 || runningEffects > 0) wait();
+        while (!disposed && (pending > 0 || runningEffects > 0)) wait();
         if (asynchronousFailure != null) { RuntimeException failure = asynchronousFailure; asynchronousFailure = null; throw failure; }
     }
 
@@ -180,7 +189,6 @@ public final class UiProgramRuntime implements AutoCloseable {
             if (disposed) return;
             disposed = true;
             store = bridge.dispose(store);
-            pending = 0;
             notifyAll();
         }
         transitions.shutdownNow();

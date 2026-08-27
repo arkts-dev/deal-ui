@@ -23,6 +23,7 @@ public final class UiRuntimeInvariantTest {
         rejectedSubmissionBalancesPending();
         rejectedEffectSubmissionBalancesIdle();
         queuePolicyFailuresBalanceIdle();
+        completionPolicyFailuresBalanceIdle();
         System.out.println("Runtime invariants passed: " + passed);
     }
 
@@ -135,6 +136,20 @@ public final class UiRuntimeInvariantTest {
         }
     }
 
+    private static void completionPolicyFailuresBalanceIdle() throws Exception {
+        ManualExecutor transitions = new ManualExecutor();
+        ManualExecutor effects = new ManualExecutor();
+        ProtocolBridge bridge = new ProtocolBridge();
+        bridge.failComplete = true;
+        try (UiProgramRuntime runtime = runtime(bridge, transitions, effects)) {
+            runtime.dispatch(action("E1"));
+            transitions.runAll();
+            effects.runAll();
+            transitions.runAll();
+            expectFailure(runtime, "completion failure");
+        }
+    }
+
     private static UiProgramRuntime runtime(ProtocolBridge bridge, ManualExecutor transitions, ManualExecutor effects) {
         UiRendererBindings bindings = new UiRendererBindings(Map.of("text", new UiRendererBindings.Binding("text", JLabel::new, UiRendererBindings::configure)), Map.of(), Color.WHITE, Color.BLACK);
         return new UiProgramRuntime(bridge, "Invariant", bindings, transitions, effects);
@@ -154,6 +169,7 @@ public final class UiRuntimeInvariantTest {
         private int completionAdmissions;
         private int acceptedCompletions;
         private boolean failEnqueue;
+        private boolean failComplete;
 
         @Override public String title() { return "Invariant"; }
         @Override public UiRendererBindings rendererBindings() { throw new UnsupportedOperationException(); }
@@ -171,7 +187,7 @@ public final class UiRuntimeInvariantTest {
         @Override public StoreValue finish(StoreValue value) { TestStore store = (TestStore) value.abi(); return new StoreValue(new TestStore(store.queue(), false, store.disposed())); }
         @Override public StoreValue reject(StoreValue value) { return value; }
         @Override public StoreValue dispose(StoreValue value) { TestStore store = (TestStore) value.abi(); return new StoreValue(new TestStore(List.of(), false, true)); }
-        @Override public Completion complete(StoreValue store, ActionValue action) { completionAdmissions++; Enqueue enqueue = admit(store, action); if (enqueue.accepted()) acceptedCompletions++; return new Completion(enqueue.store(), enqueue.accepted(), enqueue.startDrain()); }
+        @Override public Completion complete(StoreValue store, ActionValue action) { if (failComplete) throw new IllegalStateException("completion failure"); completionAdmissions++; Enqueue enqueue = admit(store, action); if (enqueue.accepted()) acceptedCompletions++; return new Completion(enqueue.store(), enqueue.accepted(), enqueue.startDrain()); }
         @Override public Transition transition(StateValue stateValue, Node previous, StoreValue store, ActionValue actionValue) {
             TestState state = (TestState) stateValue.abi();
             TestAction action = (TestAction) actionValue.abi();
