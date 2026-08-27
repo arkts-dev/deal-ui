@@ -127,17 +127,22 @@ public final class UiProgramRuntime implements AutoCloseable {
     }
 
     private void submitCompletion(UiBridge.ActionValue action) {
-        boolean startDrain;
         synchronized (this) {
-            UiBridge.Completion completion = bridge.complete(store, action);
-            store = completion.store();
-            if (!completion.accepted()) return;
+            if (disposed) return;
             pending++;
-            startDrain = completion.startDrain();
         }
-        if (!startDrain) return;
-        try { transitions.submit(this::drain); }
+        try { transitions.submit(() -> acceptCompletion(action)); }
         catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; store = bridge.dispose(store); asynchronousFailure = failure; notifyAll(); } }
+    }
+
+    private void acceptCompletion(UiBridge.ActionValue action) {
+        UiBridge.Completion completion;
+        synchronized (this) {
+            completion = bridge.complete(store, action);
+            store = completion.store();
+            if (!completion.accepted()) { pending--; notifyAll(); return; }
+        }
+        if (completion.startDrain()) drain();
     }
 
     private void schedule(int effectId, UiBridge.StateValue effectState, UiBridge.ActionValue effectAction) {

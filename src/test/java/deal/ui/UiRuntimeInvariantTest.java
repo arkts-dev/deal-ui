@@ -83,7 +83,7 @@ public final class UiRuntimeInvariantTest {
         runtime.close();
         effects.runAll();
         transitions.runAll();
-        check(bridge.completionAdmissions == 1 && bridge.acceptedCompletions == 0, "DEAL completion admission rejects disposed stores: " + bridge.completionAdmissions + "/" + bridge.acceptedCompletions);
+        check(bridge.completionAdmissions == 0 && bridge.acceptedCompletions == 0, "disposed stores discard effect completions before admission");
     }
 
     private static void equivalentRootsAndRendererFailureRetainCommit() throws Exception {
