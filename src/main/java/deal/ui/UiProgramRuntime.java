@@ -75,7 +75,8 @@ public final class UiProgramRuntime implements AutoCloseable {
                         return;
                     }
                 } catch (RuntimeException failure) {
-                    pending = Math.max(0, pending - 1);
+                    pending = 0;
+                    try { store = bridge.dispose(store); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
                     asynchronousFailure = failure;
                     notifyAll();
                     return;

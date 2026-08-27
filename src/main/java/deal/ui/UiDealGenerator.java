@@ -27,7 +27,7 @@ final class UiDealGenerator {
         String app = moduleName(program.dealSource());
         StringBuilder out = new StringBuilder();
         out.append("import * as app from \"./").append(app).append("\";\n\n")
-            .append("export class UiAction {\n  slot: int = -1;\n  payload: string = \"\";\n");
+            .append("export class UiAction {\n  slot: int = -1;\n");
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  nominal").append(entry.getValue()).append("?: app.").append(entry.getKey()).append(";\n");
         out.append("}\n\nexport class UiStore {\n  lifecycle: store.StoreLifecycle = {};\n  queue: UiAction[] = [];\n}\n\nexport class EnqueueResult {\n  store: UiStore = {};\n  accepted: boolean = false;\n  startDrain: boolean = false;\n}\n\nexport class DequeueResult {\n  store: UiStore = {};\n  action: UiAction = {};\n  present: boolean = false;\n}\n\nexport class Transition {\n  tree: core.ViewNode = {};\n  plan: reconcile.Plan = {};\n  store: UiStore = {};\n  effect: effects.EffectDescriptor = {};\n}\n\n");
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
@@ -138,7 +138,8 @@ final class UiDealGenerator {
         for (Map.Entry<Integer, UiModel.Action> entry : actions.entrySet()) {
             UiModel.Action action = entry.getValue();
             int id = actionIds.get(simple(action.name()));
-            out.append("export function action_").append(entry.getKey()).append("(payload: string): UiAction {\n  return { slot: ").append(entry.getKey()).append(", payload: payload, nominal").append(id).append(": {");
+            UiModel.TypeRef payloadType = payloadType(action);
+            out.append("export function action_").append(entry.getKey()).append("(payload: ").append(dealType(payloadType)).append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
             boolean first = true;
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
@@ -214,6 +215,7 @@ final class UiDealGenerator {
     private UiModel.TypeRef expressionType(UiModel.Expr expression) {
         if (expression instanceof UiModel.Literal literal) return new UiModel.TypeRef(literal.type(), false, false);
         if (expression instanceof UiModel.PathExpr path) {
+            if (path.parts().get(0).equals("payload")) return new UiModel.TypeRef("string", false, false);
             UiModel.Token token = program.tokens().get(String.join(".", path.parts()));
             if (token != null) return token.type();
             if (path.parts().get(0).equals("state")) return pathType(new UiModel.TypeRef(program.rootStateType(), false, false), path.parts().subList(1, path.parts().size()));
@@ -239,6 +241,11 @@ final class UiDealGenerator {
         if (expression instanceof UiModel.Unary unary) return unary.operator() + "(" + expr(unary.operand(), app) + ")";
         if (expression instanceof UiModel.Binary binary) return "(" + expr(binary.left(), app) + " " + binary.operator() + " " + expr(binary.right(), app) + ")";
         throw new IllegalStateException("Action expression is not a value expression");
+    }
+
+    private UiModel.TypeRef payloadType(UiModel.Action action) {
+        for (UiModel.Expr field : action.fields().values()) if (containsPayload(field)) return expressionType(field);
+        return new UiModel.TypeRef("string", false, false);
     }
 
     private String payloadExpr(UiModel.Expr expression) {

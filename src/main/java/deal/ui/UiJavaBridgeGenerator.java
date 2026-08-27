@@ -58,8 +58,8 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateActions(StringBuilder out) {
-        out.append("  @Override public ActionValue action(int slot, Object payload) { String text = payload == null ? \"\" : String.valueOf(payload); return new ActionValue(switch (slot) {\n");
-        for (Integer slot : generated.actions().keySet()) out.append("    case ").append(slot).append(" -> ").append(ui).append(".action$u").append(slot).append("(text);\n");
+        out.append("  @Override public ActionValue action(int slot, Object payload) { return new ActionValue(switch (slot) {\n");
+        for (Map.Entry<Integer, UiModel.Action> entry : generated.actions().entrySet()) out.append("    case ").append(entry.getKey()).append(" -> ").append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getValue())).append(");\n");
         out.append("    default -> throw new IllegalArgumentException(\"Unknown generated action slot: \" + slot);\n  }); }\n");
     }
 
@@ -78,7 +78,7 @@ final class UiJavaBridgeGenerator {
             UiModel.Handler handler = program.effects().get(entry.getKey());
             int completionId = generated.actionIds().get(handler.returnType());
             UiModel.DealClass completion = program.deal().classes().get(handler.returnType());
-            out.append("  private Object completion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L, \"\"");
+            out.append("  private Object completion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L");
             for (Map.Entry<String, Integer> action : generated.actionIds().entrySet()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
             out.append("); }\n");
         }
@@ -111,6 +111,20 @@ final class UiJavaBridgeGenerator {
         }
         throw new IllegalStateException("Swing renderer capability required for " + component.name());
     }
+    private String payloadConversion(UiModel.Action action) {
+        UiModel.TypeRef type = null;
+        for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) if (containsPayload(field.getValue())) type = program.deal().classes().get(simple(action.name())).fields().get(field.getKey()).type();
+        if (type == null || simple(type.name()).equals("string")) return "payload == null ? \"\" : String.valueOf(payload)";
+        return switch (simple(type.name())) {
+            case "int" -> "payload instanceof Number number ? number.longValue() : Long.parseLong(String.valueOf(payload))";
+            case "number" -> "payload instanceof Number number ? number.doubleValue() : Double.parseDouble(String.valueOf(payload))";
+            case "boolean" -> "payload instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(payload))";
+            default -> "payload";
+        };
+    }
+    private boolean containsPayload(UiModel.Expr expression) { if (expression instanceof UiModel.PathExpr path) return path.parts().get(0).equals("payload"); if (expression instanceof UiModel.Unary unary) return containsPayload(unary.operand()); if (expression instanceof UiModel.Binary binary) return containsPayload(binary.left()) || containsPayload(binary.right()); return false; }
+    private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
+
     private String tokenValue(UiModel.Token token) {
         if (token.value() instanceof UiModel.Literal literal && literal.value() instanceof Map<?, ?> map) {
             UiModel.Expr value = (UiModel.Expr) map.get("value");

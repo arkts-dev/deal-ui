@@ -369,8 +369,13 @@ public final class UiChecker {
     private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic.code(), diagnostic.message(), Path.of(diagnostic.range().file()), diagnostic.range().startLine(), diagnostic.range().startColumn()); }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
     private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {
-        if (nodes.size() != 1 || nodes.get(0) instanceof UiModel.ForEach) error("UI2037", "View must produce exactly one root node", span);
-        if (nodes.get(0) instanceof UiModel.When when && (when.thenNodes().size() != 1 || when.elseNodes().size() != 1)) error("UI2037", "Every root branch must produce exactly one node", when.span());
+        if (nodes.size() != 1) error("UI2037", "View must produce exactly one root node", span);
+        UiModel.Node root = nodes.get(0);
+        if (root instanceof UiModel.ForEach) error("UI2037", "View root cannot be repeated", root.span());
+        if (root instanceof UiModel.When when) {
+            requireSingleRoot(when.thenNodes(), when.span());
+            requireSingleRoot(when.elseNodes(), when.span());
+        }
     }
 
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
