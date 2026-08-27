@@ -180,7 +180,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
     private boolean compatible(JComponent component, String binding) { return component != null && component.getName().equals(binding); }
 
-    public static void configureComponent(JComponent component, UiBridge.Node node, UiBridge bridge, java.util.function.Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) {
+    public static void configureHostComponent(JComponent component, UiBridge.Node node, UiBridge bridge, java.util.function.Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) {
         String binding = node.component();
         component.setName(binding);
         if (component instanceof JPanel panel) {

@@ -49,5 +49,5 @@ public final class UiRendererBindings {
     public static JComponent button() { return new JButton(); }
     public static JComponent input() { return new JTextField(); }
     public static JComponent spinner() { JProgressBar progress = new JProgressBar(); progress.setIndeterminate(true); return progress; }
-    public static void configure(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) { deal.ui.runtime.SwingUiRuntime.configureComponent(component, node, bridge, dispatch, bindings); }
+    public static void configure(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) { deal.ui.runtime.SwingUiRuntime.configureHostComponent(component, node, bridge, dispatch, bindings); }
 }
