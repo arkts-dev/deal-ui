@@ -1,0 +1,4 @@
+Canonical design: /home/igelhaus/coding/deal/deal-ui-framework-design.md
+DEAL specification: /home/igelhaus/coding/deal/fs/docs/spec-v1.2.md
+Verification record: /home/igelhaus/coding/deal/ui/build/review-evidence/verification.log
+Framework DEAL modules are flattened for fs JVM compilation because the JVM backend restricts cross-module class fields.
