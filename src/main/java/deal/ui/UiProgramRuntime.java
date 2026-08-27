@@ -137,7 +137,7 @@ public final class UiProgramRuntime implements AutoCloseable {
         }
         if (!startDrain) return;
         try { transitions.submit(this::drain); }
-        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; notifyAll(); } }
+        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; store = bridge.dispose(store); asynchronousFailure = failure; notifyAll(); } }
     }
 
     private void schedule(int effectId, UiBridge.StateValue effectState, UiBridge.ActionValue effectAction) {

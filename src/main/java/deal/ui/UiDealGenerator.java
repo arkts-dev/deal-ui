@@ -170,8 +170,11 @@ final class UiDealGenerator {
             out.append("  let nominal").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (nominal").append(entry.getValue()).append(" !== null) { return actions.route(").append(entry.getValue()).append(", ").append(entry.getValue()).append(", ").append(effect).append(", ").append(completion).append("); }\n");
         }
         out.append("  return actions.noRoute();\n}\n\n")
+            .append("export function validateAction(action: UiAction): actions.Route { let matches: int = 0;\n");
+        for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  let valid").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (valid").append(entry.getValue()).append(" !== null) { matches = matches + 1; }\n");
+        out.append("  let routeValue: actions.Route = route(action); if (matches !== 1 || routeValue.actionId < 0) { throw { code: \"UI3004\", message: \"Malformed nominal action\" }; } return routeValue;\n}\n\n")
             .append("export function nextState(state: app.").append(program.rootStateType()).append(", action: UiAction): app.").append(program.rootStateType()).append(" {\n")
-            .append("  let routeValue: actions.Route = route(action);\n  let candidate: app.").append(program.rootStateType()).append(" = state;\n");
+            .append("  let routeValue: actions.Route = validateAction(action);\n  let candidate: app.").append(program.rootStateType()).append(" = state;\n");
         boolean first = true;
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
             UiModel.Handler handler = program.updates().get(entry.getKey());
@@ -181,7 +184,7 @@ final class UiDealGenerator {
         out.append("  else { throw { code: \"UI3001\", message: \"Unknown closed action\" }; }\n")
             .append("  return candidate;\n}\n\n")
             .append("export function transitionFromCandidate(candidate: app.").append(program.rootStateType()).append(", previous: core.ViewNode | null, current: UiStore, action: UiAction): Transition {\n")
-            .append("  let routeValue: actions.Route = route(action);\n")
+            .append("  let routeValue: actions.Route = validateAction(action);\n")
             .append("  let nextStore: UiStore = { lifecycle: store.commit(current.lifecycle), queue: current.queue };\n")
             .append("  let tree: core.ViewNode = view_").append(program.title()).append("(\"").append(program.title()).append("\", candidate);\n")
             .append("  let planValue: reconcile.Plan = reconcile.plan(previous, tree);\n")
