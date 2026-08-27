@@ -195,7 +195,10 @@ public final class SwingUiRuntime implements AutoCloseable {
         } else if (component instanceof JLabel label) {
             label.setText(String.valueOf(value(node, "value")));
             label.setForeground(new Color(0x172033));
-            label.setFont(label.getFont().deriveFont(Font.PLAIN, value(node, "value") instanceof Number ? 36f : 18f));
+            String text = label.getText();
+            float size = value(node, "value") instanceof Number ? 40f : text.equals(text.toUpperCase(java.util.Locale.ROOT)) && text.length() < 24 ? 13f : text.length() < 28 ? 28f : 17f;
+            int style = size >= 28f || size == 13f ? Font.BOLD : Font.PLAIN;
+            label.setFont(label.getFont().deriveFont(style, size));
             label.getAccessibleContext().setAccessibleName(label.getText());
         } else if (component instanceof JTextField input) {
             input.setText(String.valueOf(value(node, "value")));
@@ -212,7 +215,9 @@ public final class SwingUiRuntime implements AutoCloseable {
             button.setForeground(Color.WHITE);
             button.setBackground(bindings.accent());
             button.setOpaque(true);
-            button.setBorder(BorderFactory.createEmptyBorder(11, 18, 11, 18));
+            button.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(0x5148E5)), BorderFactory.createEmptyBorder(12, 20, 12, 20)));
+            button.setFocusPainted(false);
+            button.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
             button.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", button.getText())));
             for (var listener : button.getActionListeners()) button.removeActionListener(listener);
             UiBridge.Prop action = node.props().get("onClick");

@@ -16,6 +16,7 @@ public final class UiProgramRuntime implements AutoCloseable {
     private long pending;
     private long runningEffects;
     private RuntimeException asynchronousFailure;
+    private java.util.function.Consumer<RuntimeException> errorHandler = failure -> {};
 
     public UiProgramRuntime(UiBridge bridge, String title, UiRendererBindings bindings) {
         this(bridge, title, bindings, Executors.newSingleThreadExecutor(), Executors.newVirtualThreadPerTaskExecutor());
@@ -53,7 +54,7 @@ public final class UiProgramRuntime implements AutoCloseable {
                 store = enqueue.store();
             } catch (RuntimeException failure) {
                 pending--;
-                asynchronousFailure = failure;
+                reportFailure(failure);
                 notifyAll();
                 return;
             }
@@ -78,7 +79,7 @@ public final class UiProgramRuntime implements AutoCloseable {
                 } catch (RuntimeException failure) {
                     pending = 0;
                     try { store = bridge.dispose(store); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
-                    asynchronousFailure = failure;
+                    reportFailure(failure);
                     notifyAll();
                     return;
                 }
@@ -103,7 +104,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             synchronized (this) {
                 try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); }
                 retirePending();
-                asynchronousFailure = failure;
+                reportFailure(failure);
                 notifyAll();
             }
             return;
@@ -112,7 +113,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             renderer.apply(transition.patches(), transition.tree());
         } catch (RuntimeException failure) {
             try { renderer.restore(priorTree); } catch (RuntimeException restoreFailure) { failure.addSuppressed(restoreFailure); }
-            synchronized (this) { try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); } asynchronousFailure = failure; retirePending(); }
+            synchronized (this) { try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); } reportFailure(failure); retirePending(); }
             return;
         }
         synchronized (this) {
@@ -133,7 +134,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             pending++;
         }
         try { transitions.submit(() -> acceptCompletion(action)); }
-        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; store = bridge.dispose(store); asynchronousFailure = failure; notifyAll(); } }
+        catch (java.util.concurrent.RejectedExecutionException failure) { synchronized (this) { pending--; store = bridge.dispose(store); reportFailure(failure); notifyAll(); } }
     }
 
     private void acceptCompletion(UiBridge.ActionValue action) {
@@ -145,7 +146,7 @@ public final class UiProgramRuntime implements AutoCloseable {
                 store = completion.store();
             } catch (RuntimeException failure) {
                 retirePending();
-                asynchronousFailure = failure;
+                reportFailure(failure);
                 return;
             }
             if (!completion.accepted()) { retirePending(); return; }
@@ -161,7 +162,7 @@ public final class UiProgramRuntime implements AutoCloseable {
                 UiBridge.ActionValue completion = bridge.runEffect(effectId, effectState, effectAction);
                 submitCompletion(completion);
             } catch (RuntimeException failure) {
-                synchronized (UiProgramRuntime.this) { asynchronousFailure = failure; }
+                synchronized (UiProgramRuntime.this) { reportFailure(failure); }
             } finally {
                 synchronized (UiProgramRuntime.this) {
                     runningEffects--;
@@ -169,9 +170,12 @@ public final class UiProgramRuntime implements AutoCloseable {
                 }
             }
         }); } catch (java.util.concurrent.RejectedExecutionException failure) {
-            synchronized (this) { runningEffects--; asynchronousFailure = failure; notifyAll(); }
+            synchronized (this) { runningEffects--; reportFailure(failure); notifyAll(); }
         }
     }
+
+    public synchronized void onError(java.util.function.Consumer<RuntimeException> handler) { errorHandler = java.util.Objects.requireNonNull(handler); }
+    private void reportFailure(RuntimeException failure) { asynchronousFailure = failure; errorHandler.accept(failure); }
 
     public void show() { UiBridge.Node value; synchronized (this) { value = tree; } renderer.show(value); }
     public void click(String text) { renderer.click(text); }
