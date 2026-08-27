@@ -123,7 +123,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     private void stageDisposal(JComponent component, java.util.Set<JComponent> staged) {
         if (component == null || !staged.add(component)) return;
         if (component instanceof java.awt.Container container) for (Component child : container.getComponents()) if (child instanceof JComponent nested) stageDisposal(nested, staged);
-        bindings.dispose(component);
+        bindings.prepareDisposal(component);
     }
 
     private void stageNode(UiBridge.Node node, java.util.List<JComponent> staged) {
@@ -265,7 +265,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             container.removeAll();
         }
         if (removed.getParent() != null) removed.getParent().remove(removed);
-        if (!preflightDisposals.contains(removed)) bindings.dispose(removed);
+        bindings.dispose(removed);
         disposedComponents++;
     }
 
@@ -276,7 +276,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested, preflightDisposals);
             container.removeAll();
         }
-        if (!preflightDisposals.contains(component)) bindings.dispose(component);
+        bindings.dispose(component);
         disposedComponents++;
     }
 

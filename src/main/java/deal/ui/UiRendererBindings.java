@@ -14,8 +14,9 @@ import java.util.function.Supplier;
 public final class UiRendererBindings {
     @FunctionalInterface public interface Configurator { void apply(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings); }
     public static Binding binding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, factory, configurator); }
-    public record Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposer) {
-        public Binding(String component, Supplier<JComponent> factory, Configurator configurator) { this(component, factory, configurator, ignored -> {}); }
+    public record Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposalPrepare, Consumer<JComponent> disposer) {
+        public Binding(String component, Supplier<JComponent> factory, Configurator configurator) { this(component, factory, configurator, ignored -> {}, ignored -> {}); }
+        public Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposer) { this(component, factory, configurator, ignored -> {}, disposer); }
     }
 
     private final Map<String, Binding> components;
@@ -40,6 +41,7 @@ public final class UiRendererBindings {
         if (value instanceof Number number) return number.intValue();
         throw new IllegalStateException("Spacing token is not numeric: " + token);
     }
+    public void prepareDisposal(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) binding.disposalPrepare().accept(component); }
     public void dispose(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) binding.disposer().accept(component); }
     public Color background() { return background; }
     public Color accent() { return accent; }
