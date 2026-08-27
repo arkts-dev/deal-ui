@@ -47,8 +47,15 @@ public final class UiProgramRuntime implements AutoCloseable {
         UiBridge.Enqueue enqueue;
         synchronized (this) {
             if (disposed) { pending--; notifyAll(); return; }
-            enqueue = bridge.enqueue(store, action);
-            store = enqueue.store();
+            try {
+                enqueue = bridge.enqueue(store, action);
+                store = enqueue.store();
+            } catch (RuntimeException failure) {
+                pending--;
+                asynchronousFailure = failure;
+                notifyAll();
+                return;
+            }
             if (!enqueue.accepted()) { pending--; notifyAll(); return; }
         }
         if (enqueue.startDrain()) drain();
@@ -59,10 +66,17 @@ public final class UiProgramRuntime implements AutoCloseable {
             UiBridge.Dequeue dequeue;
             synchronized (this) {
                 if (disposed) return;
-                dequeue = bridge.dequeue(store);
-                store = dequeue.store();
-                if (!dequeue.present()) {
-                    store = bridge.finish(store);
+                try {
+                    dequeue = bridge.dequeue(store);
+                    store = dequeue.store();
+                    if (!dequeue.present()) {
+                        store = bridge.finish(store);
+                        notifyAll();
+                        return;
+                    }
+                } catch (RuntimeException failure) {
+                    pending = Math.max(0, pending - 1);
+                    asynchronousFailure = failure;
                     notifyAll();
                     return;
                 }
@@ -126,7 +140,7 @@ public final class UiProgramRuntime implements AutoCloseable {
     }
 
     private void schedule(int effectId, UiBridge.StateValue effectState, UiBridge.ActionValue effectAction) {
-        effects.submit(() -> {
+        try { effects.submit(() -> {
             try {
                 UiBridge.ActionValue completion = bridge.runEffect(effectId, effectState, effectAction);
                 submitCompletion(completion);
@@ -138,7 +152,9 @@ public final class UiProgramRuntime implements AutoCloseable {
                     UiProgramRuntime.this.notifyAll();
                 }
             }
-        });
+        }); } catch (java.util.concurrent.RejectedExecutionException failure) {
+            synchronized (this) { runningEffects--; asynchronousFailure = failure; notifyAll(); }
+        }
     }
 
     public void show() { UiBridge.Node value; synchronized (this) { value = tree; } renderer.show(value); }

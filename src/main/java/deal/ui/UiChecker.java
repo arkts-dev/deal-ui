@@ -41,6 +41,7 @@ public final class UiChecker {
         UiModel.View root = null;
         Map<String, UiModel.View> views = new LinkedHashMap<>();
         for (UiModel.View view : viewModule.views()) {
+            requireSingleRoot(view.nodes(), view.span());
             if (views.putIfAbsent(view.name(), view) != null) error("UI2001", "Duplicate view '" + view.name() + "'", view.span());
             if (view.root()) {
                 if (!view.exported() || root != null) error("UI2002", "Exactly one exported @ui-root view is required", view.span());
@@ -367,5 +368,10 @@ public final class UiChecker {
     }
     private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic.code(), diagnostic.message(), Path.of(diagnostic.range().file()), diagnostic.range().startLine(), diagnostic.range().startColumn()); }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
+    private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {
+        if (nodes.size() != 1 || nodes.get(0) instanceof UiModel.ForEach) error("UI2037", "View must produce exactly one root node", span);
+        if (nodes.get(0) instanceof UiModel.When when && (when.thenNodes().size() != 1 || when.elseNodes().size() != 1)) error("UI2037", "Every root branch must produce exactly one node", when.span());
+    }
+
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
 }

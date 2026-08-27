@@ -35,7 +35,11 @@ final class UiDealGenerator {
         generateRouting(out, app);
         out.append("export function main(): null { return null; }\n");
         StringBuilder augmentation = new StringBuilder();
-        for (UiModel.View view : program.views().values()) appendForEachAccessors(augmentation, view.nodes(), new java.util.LinkedHashSet<>());
+        for (UiModel.View view : program.views().values()) {
+            Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
+            for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), new UiModel.TypeRef(simple(parameter.type().name()), parameter.type().optional(), parameter.type().array()));
+            appendForEachAccessors(augmentation, view.nodes(), scope, new java.util.LinkedHashSet<>());
+        }
         String flattened = flattenFramework(out.toString());
         return new Output(flattened, augmentation.toString(), Map.copyOf(actions), Map.copyOf(actionIds), Map.copyOf(effectIds));
     }
@@ -121,7 +125,7 @@ final class UiDealGenerator {
                 out.append(pad).append("}\n");
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
-                out.append(pad).append("for (let ").append(each.item().name()).append(": ").append(qualifiedType(each.item().type(), app)).append(" of app.uiItems").append(each.span().line()).append("(state)) {\n");
+                out.append(pad).append("for (let ").append(each.item().name()).append(": ").append(qualifiedType(each.item().type(), app)).append(" of app.uiItems").append(each.span().line()).append("(").append(each.source().parts().get(0)).append(")) {\n");
                 UiModel.TypeRef keyType = fieldType(each.item().type(), each.key());
                 String keyExpr = simple(keyType.name()).equals("int") ? "core.intKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
                 emitNodes(out, each.children(), target, structural + "/item", keyExpr, app, indent + 1);
@@ -185,13 +189,18 @@ final class UiDealGenerator {
             .append("  return { tree: tree, plan: planValue, store: nextStore, effect: effect };\n}\n\n");
     }
 
-    private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, java.util.Set<Integer> lines) {
+    private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, Map<String, UiModel.TypeRef> scope, java.util.Set<Integer> lines) {
         for (UiModel.Node node : nodes) {
             if (node instanceof UiModel.ForEach each) {
-                if (lines.add(each.span().line())) out.append("\nexport function uiItems").append(each.span().line()).append("(state: ").append(program.rootStateType()).append("): ").append(simple(each.item().type().name())).append("[] { return ").append(String.join(".", each.source().parts())).append("; }\n");
-                appendForEachAccessors(out, each.children(), lines);
-            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, call.children(), lines);
-            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), lines); appendForEachAccessors(out, when.elseNodes(), lines); }
+                String root = each.source().parts().get(0);
+                UiModel.TypeRef rootType = scope.get(root);
+                if (rootType == null) throw new IllegalStateException("Unknown iteration scope " + root);
+                if (lines.add(each.span().line())) out.append("\nexport function uiItems").append(each.span().line()).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(simple(each.item().type().name())).append("[] { return ").append(String.join(".", each.source().parts())).append("; }\n");
+                Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
+                nested.put(each.item().name(), each.item().type());
+                appendForEachAccessors(out, each.children(), nested, lines);
+            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, call.children(), scope, lines);
+            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), scope, lines); appendForEachAccessors(out, when.elseNodes(), scope, lines); }
         }
     }
 

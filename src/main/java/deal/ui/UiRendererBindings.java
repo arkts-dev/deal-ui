@@ -12,8 +12,9 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public final class UiRendererBindings {
-    public record Binding(String component, Supplier<JComponent> factory, Consumer<JComponent> disposer) {
-        public Binding(String component, Supplier<JComponent> factory) { this(component, factory, ignored -> {}); }
+    @FunctionalInterface public interface Configurator { void apply(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings); }
+    public record Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposer) {
+        public Binding(String component, Supplier<JComponent> factory, Configurator configurator) { this(component, factory, configurator, ignored -> {}); }
     }
 
     private final Map<String, Binding> components;
@@ -48,4 +49,5 @@ public final class UiRendererBindings {
     public static JComponent button() { return new JButton(); }
     public static JComponent input() { return new JTextField(); }
     public static JComponent spinner() { JProgressBar progress = new JProgressBar(); progress.setIndeterminate(true); return progress; }
+    public static void configure(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) { deal.ui.runtime.SwingUiRuntime.configureComponent(component, node, bridge, dispatch, bindings); }
 }

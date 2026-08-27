@@ -64,6 +64,8 @@ public final class UiFrameworkTest {
             Thread.currentThread().setContextClassLoader(previous);
         }
 
+        expect("UI2037", source(root).replace("view Header(title: string): View {\n  ui.Text(value: title)\n}", "view Header(title: string): View {}"));
+        expect("UI2037", source(root).replace("  ui.Card() {", "  ui.Text(value: state.title)\n  ui.Card() {"));
         expect("UI2012", source(root).replace("ui.Card()", "ui.Unknown()"));
         expect("UI2029", source(root).replace("ui.Text(value: title)", "ui.Text(label: title)"));
         expect("UI2031", source(root).replace("ui.IntText(value: state.count)", "ui.IntText(value: state.title)"));

@@ -21,6 +21,8 @@ public final class UiRuntimeInvariantTest {
         disposalRejectsEffectCompletion();
         equivalentRootsAndRendererFailureRetainCommit();
         rejectedSubmissionBalancesPending();
+        rejectedEffectSubmissionBalancesIdle();
+        queuePolicyFailuresBalanceIdle();
         System.out.println("Runtime invariants passed: " + passed);
     }
 
@@ -111,13 +113,35 @@ public final class UiRuntimeInvariantTest {
         runtime.close();
     }
 
+    private static void rejectedEffectSubmissionBalancesIdle() throws Exception {
+        ManualExecutor transitions = new ManualExecutor();
+        ManualExecutor effects = new ManualExecutor();
+        effects.shutdown();
+        try (UiProgramRuntime runtime = runtime(new ProtocolBridge(), transitions, effects)) {
+            runtime.dispatch(action("E1"));
+            transitions.runAll();
+            expectFailure(runtime, "java.util.concurrent.RejectedExecutionException");
+        }
+    }
+
+    private static void queuePolicyFailuresBalanceIdle() throws Exception {
+        ManualExecutor transitions = new ManualExecutor();
+        ProtocolBridge bridge = new ProtocolBridge();
+        bridge.failEnqueue = true;
+        try (UiProgramRuntime runtime = runtime(bridge, transitions, new ManualExecutor())) {
+            runtime.dispatch(action("A"));
+            transitions.runAll();
+            expectFailure(runtime, "enqueue failure");
+        }
+    }
+
     private static UiProgramRuntime runtime(ProtocolBridge bridge, ManualExecutor transitions, ManualExecutor effects) {
-        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", new UiRendererBindings.Binding("text", JLabel::new)), Map.of(), Color.WHITE, Color.BLACK);
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", new UiRendererBindings.Binding("text", JLabel::new, UiRendererBindings::configure)), Map.of(), Color.WHITE, Color.BLACK);
         return new UiProgramRuntime(bridge, "Invariant", bindings, transitions, effects);
     }
 
     private static UiBridge.ActionValue action(String name) { return new UiBridge.ActionValue(new TestAction(name)); }
-    private static void expectFailure(UiProgramRuntime runtime, String text) throws Exception { try { runtime.awaitIdle(); throw new AssertionError("Expected " + text); } catch (RuntimeException failure) { check(failure.getMessage().contains(text), text + " is surfaced"); } }
+    private static void expectFailure(UiProgramRuntime runtime, String text) throws Exception { try { runtime.awaitIdle(); throw new AssertionError("Expected " + text); } catch (RuntimeException failure) { check(failure.toString().contains(text), text + " is surfaced"); } }
     private static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); passed++; }
 
     private record TestState(String value) {}
@@ -129,13 +153,14 @@ public final class UiRuntimeInvariantTest {
         private int startedEffects;
         private int completionAdmissions;
         private int acceptedCompletions;
+        private boolean failEnqueue;
 
         @Override public String title() { return "Invariant"; }
         @Override public UiRendererBindings rendererBindings() { throw new UnsupportedOperationException(); }
         @Override public StateValue initialState() { return new StateValue(new TestState("")); }
         @Override public StoreValue initialStore() { return new StoreValue(new TestStore(List.of(), false, false)); }
         @Override public Transition initial(StateValue state, StoreValue store) { return transitionValue((TestState) state.abi(), store, null, node("text", ""), -1, null); }
-        @Override public Enqueue enqueue(StoreValue store, ActionValue action) { return admit(store, action); }
+        @Override public Enqueue enqueue(StoreValue store, ActionValue action) { if (failEnqueue) throw new IllegalStateException("enqueue failure"); return admit(store, action); }
         @Override public Dequeue dequeue(StoreValue value) {
             TestStore store = (TestStore) value.abi();
             if (store.queue().isEmpty()) return new Dequeue(value, UiRuntimeInvariantTest.action("NONE"), false);

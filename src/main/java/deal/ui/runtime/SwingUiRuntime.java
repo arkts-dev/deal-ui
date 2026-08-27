@@ -110,7 +110,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             component = patch.kind().equals("create") ? build(patch.node()) : binding.factory().get();
             retained.put(patch.identity(), component);
         }
-        configure(component, patch.node(), binding.component());
+        binding.configurator().apply(component, patch.node(), bridge, dispatch::accept, bindings);
         java.awt.Container parent = null;
         if (patch.rootParent()) parent = root;
         else {
@@ -160,7 +160,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         JComponent existing = retained.get(node.identity());
         JComponent component = compatible(existing, binding.component()) ? existing : binding.factory().get();
         retained.put(node.identity(), component);
-        configure(component, node, binding.component());
+        binding.configurator().apply(component, node, bridge, dispatch::accept, bindings);
         if (component instanceof JPanel panel) {
             panel.removeAll();
             int spacing = spacing(node);
@@ -180,7 +180,8 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
     private boolean compatible(JComponent component, String binding) { return component != null && component.getName().equals(binding); }
 
-    private void configure(JComponent component, UiBridge.Node node, String binding) {
+    public static void configureComponent(JComponent component, UiBridge.Node node, UiBridge bridge, java.util.function.Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings) {
+        String binding = node.component();
         component.setName(binding);
         if (component instanceof JPanel panel) {
             boolean card = component instanceof JPanel && binding.endsWith("Card");
@@ -200,7 +201,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             input.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", "Input")));
             for (var listener : input.getActionListeners()) input.removeActionListener(listener);
             UiBridge.Prop action = node.props().get("onSubmit");
-            if (action != null) input.addActionListener(event -> dispatch.accept(action(action.actionSlot(), input.getText())));
+            if (action != null) input.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), input.getText())));
         } else if (component instanceof JButton button) {
             button.setText(String.valueOf(value(node, "text")));
             button.setFont(button.getFont().deriveFont(Font.BOLD, 15f));
@@ -211,13 +212,12 @@ public final class SwingUiRuntime implements AutoCloseable {
             button.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", button.getText())));
             for (var listener : button.getActionListeners()) button.removeActionListener(listener);
             UiBridge.Prop action = node.props().get("onClick");
-            if (action != null) button.addActionListener(event -> dispatch.accept(action(action.actionSlot(), "")));
+            if (action != null) button.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), "")));
         }
     }
 
-    private UiBridge.ActionValue action(int slot, String payload) { return bridge.action(slot, payload); }
-    private Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
-    private Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
+    private static Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
+    private static Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
     private void dispose(UiBridge.Identity identity) {
         JComponent removed = retained.remove(identity);
         if (removed == null) return;

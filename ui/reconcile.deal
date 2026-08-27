@@ -48,7 +48,24 @@ function append(patches: Patch[], kind: string, node: core.ViewNode, parent: cor
   return null;
 }
 
+function validateUnique(nodes: core.ViewNode[]): null {
+  let leftIndex: int = 0;
+  for (let left: core.ViewNode of nodes) {
+    let rightIndex: int = 0;
+    for (let right: core.ViewNode of nodes) {
+      if (leftIndex < rightIndex && identityEquals(left, right)) {
+        throw { code: "UI3003", message: "Duplicate sibling identity" };
+      }
+      rightIndex = rightIndex + 1;
+    }
+    validateUnique(left.children);
+    leftIndex = leftIndex + 1;
+  }
+  return null;
+}
+
 function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
+  validateUnique(next);
   for (let old: core.ViewNode of previous) {
     let retained: boolean = false;
     for (let node: core.ViewNode of next) {
@@ -79,6 +96,7 @@ function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], par
 }
 
 export function plan(previous: core.ViewNode | null, next: core.ViewNode): Plan {
+  validateUnique(next.children);
   let patches: Patch[] = [];
   let root: core.ViewNode = {};
   if (previous === null) {
