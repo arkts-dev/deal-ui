@@ -176,6 +176,7 @@ public final class UiProgramRuntime implements AutoCloseable {
     public void show() { UiBridge.Node value; synchronized (this) { value = tree; } renderer.show(value); }
     public void click(String text) { renderer.click(text); }
     public deal.ui.runtime.SwingUiRuntime renderer() { return renderer; }
+    public synchronized boolean disposed() { return disposed; }
     public synchronized Map<String, Object> stateSnapshot() { return bridge.stateSnapshot(state); }
     public synchronized UiBridge.Node tree() { return tree; }
     public void awaitActions() throws InterruptedException { synchronized (this) { while (!disposed && pending > 0) wait(); } }

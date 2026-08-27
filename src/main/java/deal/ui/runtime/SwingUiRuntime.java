@@ -86,6 +86,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
 
     public void onCloseRequest(Runnable action) { closeRequest = Objects.requireNonNull(action); }
+    public void requestCloseForTesting() { onEdt(closeRequest); }
     public UiBridge.Node tree() { return tree; }
     public boolean lastApplyOnEdt() { return lastApplyOnEdt; }
     public long disposedComponents() { return disposedComponents; }
