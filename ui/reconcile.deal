@@ -48,16 +48,18 @@ function append(patches: Patch[], kind: string, node: core.ViewNode, parent: cor
   return null;
 }
 
-function contains(nodes: core.ViewNode[], value: core.ViewNode): boolean {
-  for (let node: core.ViewNode of nodes) {
-    if (identityEquals(node, value)) {
-      return true;
+function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
+  for (let old: core.ViewNode of previous) {
+    let retained: boolean = false;
+    for (let node: core.ViewNode of next) {
+      if (identityEquals(node, old) && node.component === old.component) {
+        retained = true;
+      }
+    }
+    if (!retained) {
+      append(patches, "dispose", old, parent, false, 0);
     }
   }
-  return false;
-}
-
-function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
   let index: int = 0;
   for (let node: core.ViewNode of next) {
     let retained: boolean = false;
@@ -72,11 +74,6 @@ function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], par
       append(patches, "create", node, parent, false, index);
     }
     index = index + 1;
-  }
-  for (let old: core.ViewNode of previous) {
-    if (!contains(next, old)) {
-      append(patches, "dispose", old, parent, false, 0);
-    }
   }
   return null;
 }

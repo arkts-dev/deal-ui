@@ -1,22 +1,26 @@
 package deal.ui;
 
+import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JProgressBar;
+import javax.swing.JTextField;
 import java.awt.Color;
 import java.util.Map;
+import java.util.function.Supplier;
 
 public final class UiRendererBindings {
-    public enum Kind { COLUMN, CARD, TEXT, INT_TEXT, BUTTON, INPUT, SPINNER }
-    public record Binding(String component, Kind kind) {}
+    public record Binding(String component, Supplier<JComponent> factory) {}
 
     private final Map<String, Binding> components;
     private final Map<String, Object> tokens;
-    private final int mountActionSlot;
     private final Color background;
     private final Color accent;
 
-    public UiRendererBindings(Map<String, Binding> components, Map<String, Object> tokens, int mountActionSlot, Color background, Color accent) {
+    public UiRendererBindings(Map<String, Binding> components, Map<String, Object> tokens, Color background, Color accent) {
         this.components = Map.copyOf(components);
         this.tokens = Map.copyOf(tokens);
-        this.mountActionSlot = mountActionSlot;
         this.background = background;
         this.accent = accent;
     }
@@ -31,7 +35,13 @@ public final class UiRendererBindings {
         if (value instanceof Number number) return number.intValue();
         throw new IllegalStateException("Spacing token is not numeric: " + token);
     }
-    public int mountActionSlot() { return mountActionSlot; }
     public Color background() { return background; }
     public Color accent() { return accent; }
+    public static JComponent column() { JPanel panel = new JPanel(); panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)); return panel; }
+    public static JComponent card() { JPanel panel = new JPanel(); panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)); return panel; }
+    public static JComponent text() { return new JLabel(); }
+    public static JComponent intText() { return new JLabel(); }
+    public static JComponent button() { return new JButton(); }
+    public static JComponent input() { return new JTextField(); }
+    public static JComponent spinner() { JProgressBar progress = new JProgressBar(); progress.setIndeterminate(true); return progress; }
 }

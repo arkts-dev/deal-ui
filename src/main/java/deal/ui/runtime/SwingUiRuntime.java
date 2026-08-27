@@ -6,13 +6,11 @@ import deal.ui.UiRendererBindings;
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
-import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JProgressBar;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
@@ -66,15 +64,19 @@ public final class SwingUiRuntime implements AutoCloseable {
     public void apply(List<UiBridge.Patch> patches, UiBridge.Node next) {
         onEdt(() -> {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
-            for (UiBridge.Patch patch : patches) if (patch.kind().equals("dispose")) dispose(patch.identity());
-            rebuild(next);
+            for (UiBridge.Patch patch : patches) applyPatch(patch);
+            for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
+            tree = Objects.requireNonNull(next);
+            if (frame != null) frame.pack();
         });
     }
 
     public JComponent componentForTesting(UiBridge.Node next) {
         AtomicReference<JComponent> result = new AtomicReference<>();
         onEdt(() -> {
-            result.set(build(next));
+            JComponent component = retained.get(next.identity());
+            if (component == null) component = build(next);
+            result.set(component);
             tree = next;
         });
         return result.get();
@@ -97,6 +99,48 @@ public final class SwingUiRuntime implements AutoCloseable {
         frame.setContentPane(root);
     }
 
+    private void applyPatch(UiBridge.Patch patch) {
+        if (closed) return;
+        if (patch.kind().equals("dispose")) { dispose(patch.identity()); return; }
+        UiRendererBindings.Binding binding = bindings.require(patch.node().component());
+        JComponent component = retained.get(patch.identity());
+        if (component == null) {
+            component = patch.kind().equals("create") ? build(patch.node()) : binding.factory().get();
+            retained.put(patch.identity(), component);
+        }
+        configure(component, patch.node(), binding.component());
+        java.awt.Container parent = null;
+        if (patch.rootParent()) parent = root;
+        else {
+            JComponent parentComponent = retained.get(patch.parentIdentity());
+            if (parentComponent instanceof java.awt.Container container) parent = container;
+        }
+        if (parent != null) {
+            if (component.getParent() != parent || parent.getComponentZOrder(component) != Math.min(patch.index(), parent.getComponentCount() - 1)) {
+                if (component.getParent() != null) component.getParent().remove(component);
+                parent.add(component, Math.min(patch.index(), parent.getComponentCount()));
+            }
+            parent.revalidate();
+            parent.repaint();
+        }
+    }
+
+    private void syncChildren(UiBridge.Node node) {
+        JComponent component = retained.get(node.identity());
+        if (!(component instanceof JPanel panel)) return;
+        int spacing = spacing(node);
+        panel.removeAll();
+        for (int i = 0; i < node.children().size(); i++) {
+            JComponent child = retained.get(node.children().get(i).identity());
+            if (child == null) continue;
+            child.setAlignmentX(Component.LEFT_ALIGNMENT);
+            panel.add(child);
+            if (i + 1 < node.children().size() && spacing > 0) panel.add(Box.createRigidArea(new Dimension(0, spacing)));
+        }
+        panel.revalidate();
+        panel.repaint();
+    }
+
     private void rebuild(UiBridge.Node next) {
         if (closed) return;
         tree = Objects.requireNonNull(next);
@@ -112,9 +156,9 @@ public final class SwingUiRuntime implements AutoCloseable {
     private JComponent build(UiBridge.Node node) {
         UiRendererBindings.Binding binding = bindings.require(node.component());
         JComponent existing = retained.get(node.identity());
-        JComponent component = compatible(existing, binding.kind()) ? existing : create(binding.kind());
+        JComponent component = compatible(existing, binding.component()) ? existing : binding.factory().get();
         retained.put(node.identity(), component);
-        configure(component, node, binding.kind());
+        configure(component, node, binding.component());
         if (component instanceof JPanel panel) {
             panel.removeAll();
             int spacing = spacing(node);
@@ -132,28 +176,19 @@ public final class SwingUiRuntime implements AutoCloseable {
         UiBridge.Prop prop = node.props().get("spacing");
         return prop != null && prop.value() instanceof String token ? bindings.spacing(token) : 0;
     }
-    private boolean compatible(JComponent component, UiRendererBindings.Kind kind) { return component != null && component.getName().equals(kind.name()); }
-    private JComponent create(UiRendererBindings.Kind kind) {
-        return switch (kind) {
-            case COLUMN, CARD -> { JPanel panel = new JPanel(); panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS)); yield panel; }
-            case TEXT, INT_TEXT -> new JLabel();
-            case BUTTON -> new JButton();
-            case INPUT -> new JTextField();
-            case SPINNER -> { JProgressBar progress = new JProgressBar(); progress.setIndeterminate(true); yield progress; }
-        };
-    }
+    private boolean compatible(JComponent component, String binding) { return component != null && component.getName().equals(binding); }
 
-    private void configure(JComponent component, UiBridge.Node node, UiRendererBindings.Kind kind) {
-        component.setName(kind.name());
+    private void configure(JComponent component, UiBridge.Node node, String binding) {
+        component.setName(binding);
         if (component instanceof JPanel panel) {
-            boolean card = kind == UiRendererBindings.Kind.CARD;
+            boolean card = component instanceof JPanel && binding.endsWith("Card");
             panel.setOpaque(card);
             panel.setBackground(card ? Color.WHITE : new Color(0, 0, 0, 0));
             panel.setBorder(card ? BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(0xDCE2EA)), BorderFactory.createEmptyBorder(28, 28, 28, 28)) : null);
         } else if (component instanceof JLabel label) {
             label.setText(String.valueOf(value(node, "value")));
             label.setForeground(new Color(0x172033));
-            label.setFont(label.getFont().deriveFont(Font.PLAIN, kind == UiRendererBindings.Kind.INT_TEXT ? 36f : 18f));
+            label.setFont(label.getFont().deriveFont(Font.PLAIN, value(node, "value") instanceof Number ? 36f : 18f));
             label.getAccessibleContext().setAccessibleName(label.getText());
         } else if (component instanceof JTextField input) {
             input.setText(String.valueOf(value(node, "value")));
@@ -181,7 +216,25 @@ public final class SwingUiRuntime implements AutoCloseable {
     private Object action(int slot, String payload) { return bridge.action(slot, payload); }
     private Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
     private Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
-    private void dispose(UiBridge.Identity identity) { JComponent removed = retained.remove(identity); if (removed != null) { disposedComponents++; if (removed instanceof java.awt.Container container) container.removeAll(); } }
+    private void dispose(UiBridge.Identity identity) {
+        JComponent removed = retained.remove(identity);
+        if (removed == null) return;
+        if (removed instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) if (child instanceof JComponent component) disposeComponent(component);
+            container.removeAll();
+        }
+        if (removed.getParent() != null) removed.getParent().remove(removed);
+        disposedComponents++;
+    }
+
+    private void disposeComponent(JComponent component) {
+        retained.entrySet().removeIf(entry -> entry.getValue() == component);
+        if (component instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested);
+            container.removeAll();
+        }
+        disposedComponents++;
+    }
     private JButton find(Component component, String text) { if (component instanceof JButton button && button.getText().equals(text)) return button; if (component instanceof java.awt.Container container) for (Component child : container.getComponents()) { JButton result = find(child, text); if (result != null) return result; } return null; }
     private void captureNow(Path destination) {
         if (frame == null || !frame.isDisplayable()) throw new IllegalStateException("UI is not shown");

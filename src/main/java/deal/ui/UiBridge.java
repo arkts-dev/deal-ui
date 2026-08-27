@@ -14,20 +14,21 @@ public interface UiBridge {
         }
     }
     record Patch(String kind, Identity identity, Identity parentIdentity, boolean rootParent, int index, Node node) {}
-    record Lifecycle(boolean disposed, boolean draining, long revision, long queued) {}
-    record Enqueue(boolean accepted, boolean startDrain, Lifecycle lifecycle) {}
-    record Transition(Object state, Node tree, List<Patch> patches, Lifecycle lifecycle, int effectId, Object effectState, Object effectAction) {}
+    record Enqueue(Object store, boolean accepted, boolean startDrain) {}
+    record Dequeue(Object store, Object action, boolean present) {}
+    record Transition(Object state, Node tree, List<Patch> patches, Object store, int effectId, Object effectState, Object effectAction) {}
 
     String title();
     UiRendererBindings rendererBindings();
     Object initialState();
-    Lifecycle initialLifecycle();
-    Transition initial(Object state, Lifecycle lifecycle);
-    Enqueue enqueue(Lifecycle lifecycle);
-    Lifecycle finish(Lifecycle lifecycle);
-    Lifecycle reject(Lifecycle lifecycle);
-    Lifecycle dispose(Lifecycle lifecycle);
-    Transition transition(Object state, Node previous, Lifecycle lifecycle, Object action);
+    Object initialStore();
+    Transition initial(Object state, Object store);
+    Enqueue enqueue(Object store, Object action);
+    Dequeue dequeue(Object store);
+    Object finish(Object store);
+    Object reject(Object store);
+    Object dispose(Object store);
+    Transition transition(Object state, Node previous, Object store, Object action);
     Object action(int slot, Object payload);
     Object runEffect(int effectId, Object state, Object action);
     Map<String, Object> stateSnapshot(Object state);

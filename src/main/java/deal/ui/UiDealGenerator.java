@@ -27,12 +27,9 @@ final class UiDealGenerator {
         String app = moduleName(program.dealSource());
         StringBuilder out = new StringBuilder();
         out.append("import * as app from \"./").append(app).append("\";\n\n")
-            .append("export class UiAction {\n  kind: int = -1;\n  slot: int = -1;\n  payload: string = \"\";\n");
-        for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
-            UiModel.DealClass declaration = program.deal().classes().get(entry.getKey());
-            for (UiModel.Field field : declaration.fields().values()) out.append("  a").append(entry.getValue()).append("_").append(field.name()).append(": ").append(qualifiedType(field.type(), app)).append(" = ").append(defaultValue(field.type())).append(";\n");
-        }
-        out.append("}\n\nexport class Transition {\n  tree: core.ViewNode = {};\n  plan: reconcile.Plan = {};\n  lifecycle: store.StoreLifecycle = {};\n  effect: effects.EffectDescriptor = {};\n}\n\n");
+            .append("export class UiAction {\n  slot: int = -1;\n  payload: string = \"\";\n");
+        for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  nominal").append(entry.getValue()).append("?: app.").append(entry.getKey()).append(";\n");
+        out.append("}\n\nexport class UiStore {\n  lifecycle: store.StoreLifecycle = {};\n  queue: UiAction[] = [];\n}\n\nexport class EnqueueResult {\n  store: UiStore = {};\n  accepted: boolean = false;\n  startDrain: boolean = false;\n}\n\nexport class DequeueResult {\n  store: UiStore = {};\n  action: UiAction = {};\n  present: boolean = false;\n}\n\nexport class Transition {\n  tree: core.ViewNode = {};\n  plan: reconcile.Plan = {};\n  store: UiStore = {};\n  effect: effects.EffectDescriptor = {};\n}\n\n");
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
         generateActionFactories(out);
         generateRouting(out, app);
@@ -49,11 +46,11 @@ final class UiDealGenerator {
             for (String module : List.of("core", "store", "actions", "effects", "reconcile")) {
                 String value = java.nio.file.Files.readString(java.nio.file.Path.of("").toAbsolutePath().resolve("ui/" + module + ".deal"));
                 value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
-                if (module.equals("store")) value = value.replace("function enqueue(", "function storeEnqueue(").replace("function finish(", "function storeFinish(").replace("function reject(", "function storeReject(").replace("function dispose(", "function storeDispose(");
+                if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");
                 if (module.equals("actions")) value = value.replace("function route(", "function actionRoute(");
                 source.append(value).append("\n");
             }
-            String body = generatedSource.substring(generatedSource.indexOf('\n') + 1).replace("core.", "").replace("store.enqueue", "storeEnqueue").replace("store.finish", "storeFinish").replace("store.reject", "storeReject").replace("store.dispose", "storeDispose").replace("store.", "").replace("actions.route", "actionRoute").replace("actions.", "").replace("effects.", "").replace("reconcile.", "");
+            String body = generatedSource.substring(generatedSource.indexOf('\n') + 1).replace("core.", "").replace("store.finish", "lifecycleFinish").replace("store.reject", "lifecycleReject").replace("store.dispose", "lifecycleDispose").replace("store.", "").replace("actions.route", "actionRoute").replace("actions.", "").replace("effects.", "").replace("reconcile.", "");
             source.append(body);
             return source.toString();
         } catch (java.io.IOException failure) {
@@ -137,31 +134,34 @@ final class UiDealGenerator {
         for (Map.Entry<Integer, UiModel.Action> entry : actions.entrySet()) {
             UiModel.Action action = entry.getValue();
             int id = actionIds.get(simple(action.name()));
-            out.append("export function action_").append(entry.getKey()).append("(payload: string): UiAction {\n  return { kind: ").append(id).append(", slot: ").append(entry.getKey()).append(", payload: payload");
+            out.append("export function action_").append(entry.getKey()).append("(payload: string): UiAction {\n  return { slot: ").append(entry.getKey()).append(", payload: payload, nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
+            boolean first = true;
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
-                out.append(", a").append(id).append("_").append(field.getKey()).append(": ");
+                if (!first) out.append(", ");
+                first = false;
+                out.append(field.getKey()).append(": ");
                 if (containsPayload(field.getValue())) out.append(payloadExpr(field.getValue()));
                 else out.append(expr(field.getValue(), moduleName(program.dealSource())));
             }
             for (String field : declaration.fields().keySet()) if (!action.fields().containsKey(field)) throw new IllegalStateException("Missing action field " + field);
-            out.append(" };\n}\n\n");
+            out.append("} };\n}\n\n");
         }
     }
 
     private void generateRouting(StringBuilder out, String app) {
-        out            .append("export function initialLifecycle(): store.StoreLifecycle { return {}; }\n")
-            .append("export function initial(state: app.").append(program.rootStateType()).append(", lifecycle: store.StoreLifecycle): Transition { let tree: core.ViewNode = view_").append(program.title()).append("(state); return { tree: tree, plan: reconcile.plan(null, tree), lifecycle: lifecycle, effect: effects.none() }; }\n")
-            .append("export function enqueue(lifecycle: store.StoreLifecycle): store.QueueTransition { return store.enqueue(lifecycle); }\n")
-
-            .append("export function finish(lifecycle: store.StoreLifecycle): store.StoreLifecycle { return store.finish(lifecycle); }\n")
-            .append("export function reject(lifecycle: store.StoreLifecycle): store.StoreLifecycle { return store.reject(lifecycle); }\n")
-            .append("export function dispose(lifecycle: store.StoreLifecycle): store.StoreLifecycle { return store.dispose(lifecycle); }\n\n")
+        out            .append("export function initialStore(): UiStore { return {}; }\n")
+            .append("export function initial(state: app.").append(program.rootStateType()).append(", current: UiStore): Transition { let tree: core.ViewNode = view_").append(program.title()).append("(state); return { tree: tree, plan: reconcile.plan(null, tree), store: current, effect: effects.none() }; }\n")
+            .append("export function enqueue(current: UiStore, action: UiAction): EnqueueResult { let decision: store.QueueDecision = store.enqueueDecision(current.lifecycle); if (!decision.accepted) { return { store: current }; } let queue: UiAction[] = []; for (let queued: UiAction of current.queue) { queue[queue.length] = queued; } queue[queue.length] = action; return { store: { lifecycle: store.beginDrain(current.lifecycle), queue: queue }, accepted: true, startDrain: decision.startDrain }; }\n")
+            .append("export function dequeue(current: UiStore): DequeueResult { if (current.queue.length === 0) { return { store: current }; } let action: UiAction = current.queue[0]; let queue: UiAction[] = []; for (let i: int = 1; i < current.queue.length; i = i + 1) { queue[queue.length] = current.queue[i]; } return { store: { lifecycle: current.lifecycle, queue: queue }, action: action, present: true }; }\n")
+            .append("export function finish(current: UiStore): UiStore { return { lifecycle: store.finish(current.lifecycle), queue: current.queue }; }\n")
+            .append("export function reject(current: UiStore): UiStore { return { lifecycle: store.reject(current.lifecycle), queue: current.queue }; }\n")
+            .append("export function dispose(current: UiStore): UiStore { let queue: UiAction[] = []; return { lifecycle: store.dispose(current.lifecycle), queue: queue }; }\n\n")
             .append("export function route(action: UiAction): actions.Route {\n");
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
             int effect = effectIds.getOrDefault(entry.getKey(), -1);
             int completion = effect < 0 ? -1 : actionIds.get(program.effects().get(entry.getKey()).returnType());
-            out.append("  if (action.kind === ").append(entry.getValue()).append(") { return actions.route(").append(entry.getValue()).append(", ").append(entry.getValue()).append(", ").append(effect).append(", ").append(completion).append("); }\n");
+            out.append("  let nominal").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (nominal").append(entry.getValue()).append(" !== null) { return actions.route(").append(entry.getValue()).append(", ").append(entry.getValue()).append(", ").append(effect).append(", ").append(completion).append("); }\n");
         }
         out.append("  return actions.noRoute();\n}\n\n")
             .append("export function nextState(state: app.").append(program.rootStateType()).append(", action: UiAction): app.").append(program.rootStateType()).append(" {\n")
@@ -169,20 +169,19 @@ final class UiDealGenerator {
         boolean first = true;
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
             UiModel.Handler handler = program.updates().get(entry.getKey());
-            out.append(first ? "  if" : "  else if").append(" (routeValue.updateId === ").append(entry.getValue()).append(") { candidate = app.").append(handler.name()).append("(state, ").append(actionLiteral(entry.getKey(), entry.getValue(), app)).append("); }\n");
+            out.append(first ? "  if" : "  else if").append(" (routeValue.updateId === ").append(entry.getValue()).append(") { let value: app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { candidate = app.").append(handler.name()).append("(state, value); } }\n");
             first = false;
         }
         out.append("  else { throw { code: \"UI3001\", message: \"Unknown closed action\" }; }\n")
             .append("  return candidate;\n}\n\n")
-            .append("export function transition(state: app.").append(program.rootStateType()).append(", previous: core.ViewNode | null, lifecycle: store.StoreLifecycle, action: UiAction): Transition {\n")
-            .append("  let candidate: app.").append(program.rootStateType()).append(" = nextState(state, action);\n")
+            .append("export function transitionFromCandidate(candidate: app.").append(program.rootStateType()).append(", previous: core.ViewNode | null, current: UiStore, action: UiAction): Transition {\n")
             .append("  let routeValue: actions.Route = route(action);\n")
-            .append("  let nextLifecycle: store.StoreLifecycle = store.commit(lifecycle);\n")
+            .append("  let nextStore: UiStore = { lifecycle: store.commit(current.lifecycle), queue: current.queue };\n")
             .append("  let tree: core.ViewNode = view_").append(program.title()).append("(candidate);\n")
             .append("  let planValue: reconcile.Plan = reconcile.plan(previous, tree);\n")
             .append("  let effect: effects.EffectDescriptor = effects.none();\n")
-            .append("  if (actions.hasEffect(routeValue)) { effect = effects.start(routeValue.effectId, action.slot, nextLifecycle.revision); }\n")
-            .append("  return { tree: tree, plan: planValue, lifecycle: nextLifecycle, effect: effect };\n}\n\n");
+            .append("  if (actions.hasEffect(routeValue)) { effect = effects.start(routeValue.effectId, action.slot, nextStore.lifecycle.revision); }\n")
+            .append("  return { tree: tree, plan: planValue, store: nextStore, effect: effect };\n}\n\n");
     }
 
     private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, java.util.Set<Integer> lines) {
@@ -198,8 +197,8 @@ final class UiDealGenerator {
     private String actionLiteral(String name, int id, String app) {
         UiModel.DealClass declaration = program.deal().classes().get(name);
         List<String> fields = new ArrayList<>();
-        for (UiModel.Field field : declaration.fields().values()) fields.add(field.name() + ": action.a" + id + "_" + field.name());
-        return "{ " + String.join(", ", fields) + " }";
+        for (UiModel.Field field : declaration.fields().values()) fields.add(field.name() + ": value." + field.name());
+        return "action.nominal" + id;
     }
 
     private UiModel.TypeRef expressionType(UiModel.Expr expression) {
