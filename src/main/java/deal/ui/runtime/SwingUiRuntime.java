@@ -65,8 +65,8 @@ public final class SwingUiRuntime implements AutoCloseable {
     public void apply(List<UiBridge.Patch> patches, UiBridge.Node next) {
         onEdt(() -> {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
-            stagePatches(patches);
-            for (UiBridge.Patch patch : patches) applyPatch(patch);
+            java.util.Set<JComponent> preflightDisposals = stagePatches(patches);
+            for (UiBridge.Patch patch : patches) applyPatch(patch, preflightDisposals);
             for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
             tree = Objects.requireNonNull(next);
             if (frame != null) frame.pack();
@@ -106,7 +106,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         frame.setContentPane(root);
     }
 
-    private void stagePatches(List<UiBridge.Patch> patches) {
+    private java.util.Set<JComponent> stagePatches(List<UiBridge.Patch> patches) {
         java.util.List<JComponent> staged = new java.util.ArrayList<>();
         java.util.Set<JComponent> disposals = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         try {
@@ -117,6 +117,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         } finally {
             for (int i = staged.size() - 1; i >= 0; i--) bindings.dispose(staged.get(i));
         }
+        return disposals;
     }
 
     private void stageDisposal(JComponent component, java.util.Set<JComponent> staged) {
@@ -133,9 +134,9 @@ public final class SwingUiRuntime implements AutoCloseable {
         for (UiBridge.Node child : node.children()) stageNode(child, staged);
     }
 
-    private void applyPatch(UiBridge.Patch patch) {
+    private void applyPatch(UiBridge.Patch patch, java.util.Set<JComponent> preflightDisposals) {
         if (closed) return;
-        if (patch.kind().equals("dispose")) { dispose(patch.identity()); return; }
+        if (patch.kind().equals("dispose")) { dispose(patch.identity(), preflightDisposals); return; }
         UiRendererBindings.Binding binding = bindings.require(patch.node().component());
         JComponent component = retained.get(patch.identity());
         if (component == null) {
@@ -255,25 +256,27 @@ public final class SwingUiRuntime implements AutoCloseable {
 
     private static Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
     private static Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
-    private void dispose(UiBridge.Identity identity) {
+    private void dispose(UiBridge.Identity identity) { dispose(identity, java.util.Collections.emptySet()); }
+    private void dispose(UiBridge.Identity identity, java.util.Set<JComponent> preflightDisposals) {
         JComponent removed = retained.remove(identity);
         if (removed == null) return;
         if (removed instanceof java.awt.Container container) {
-            for (Component child : container.getComponents()) if (child instanceof JComponent component) disposeComponent(component);
+            for (Component child : container.getComponents()) if (child instanceof JComponent component) disposeComponent(component, preflightDisposals);
             container.removeAll();
         }
         if (removed.getParent() != null) removed.getParent().remove(removed);
-        bindings.dispose(removed);
+        if (!preflightDisposals.contains(removed)) bindings.dispose(removed);
         disposedComponents++;
     }
 
-    private void disposeComponent(JComponent component) {
+    private void disposeComponent(JComponent component) { disposeComponent(component, java.util.Collections.emptySet()); }
+    private void disposeComponent(JComponent component, java.util.Set<JComponent> preflightDisposals) {
         retained.entrySet().removeIf(entry -> entry.getValue() == component);
         if (component instanceof java.awt.Container container) {
-            for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested);
+            for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested, preflightDisposals);
             container.removeAll();
         }
-        bindings.dispose(component);
+        if (!preflightDisposals.contains(component)) bindings.dispose(component);
         disposedComponents++;
     }
 

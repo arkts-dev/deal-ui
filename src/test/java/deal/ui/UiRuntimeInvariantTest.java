@@ -28,6 +28,7 @@ public final class UiRuntimeInvariantTest {
         dequeueAndFinishFailuresTerminateRuntime();
         rejectedCompletionSubmissionTerminatesRuntime();
         initializationFailureCleansOwnedResources();
+        disposerPreflightProtectsLiveGraph();
         windowCloseDisposesRuntimeOnce();
         System.out.println("Runtime invariants passed: " + passed);
     }
@@ -201,6 +202,25 @@ public final class UiRuntimeInvariantTest {
         catch (IllegalStateException failure) { check(failure.getMessage().equals("initial failure"), "initial failure is preserved"); }
         check(bridge.disposeCalls == 1, "failed initialization disposes initialized store");
         check(transitions.isShutdown() && effects.isShutdown(), "failed initialization shuts down executors");
+    }
+
+    private static void disposerPreflightProtectsLiveGraph() {
+        int[] calls = {0};
+        boolean[] fail = {true};
+        UiRendererBindings.Binding binding = new UiRendererBindings.Binding("text", JLabel::new, UiRendererBindings::configure, component -> { calls[0]++; if (fail[0]) throw new IllegalStateException("dispose failure"); });
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", binding), Map.of(), Color.WHITE, Color.BLACK);
+        ProtocolBridge bridge = new ProtocolBridge();
+        deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Disposal", bindings, bridge, action -> {});
+        UiBridge.Node prior = bridge.node("text", "prior");
+        JComponent component = renderer.componentForTesting(prior);
+        UiBridge.Patch disposal = new UiBridge.Patch("dispose", prior.identity(), prior.identity(), true, 0, prior);
+        try { renderer.apply(List.of(disposal), bridge.node("text", "next")); throw new AssertionError("Expected dispose failure"); }
+        catch (IllegalStateException failure) { check(failure.getMessage().equals("dispose failure"), "throwing disposer is surfaced during preflight"); }
+        check(renderer.componentForTesting(prior) == component && renderer.disposedComponents() == 0, "throwing disposer leaves live identity and disposal count unchanged");
+        fail[0] = false;
+        renderer.apply(List.of(disposal), bridge.node("text", "next"));
+        check(calls[0] == 2 && renderer.disposedComponents() == 1, "successful disposer runs once in preflight and live disposal does not repeat it");
+        renderer.close();
     }
 
     private static void windowCloseDisposesRuntimeOnce() {
