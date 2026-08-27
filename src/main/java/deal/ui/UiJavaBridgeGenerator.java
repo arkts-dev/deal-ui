@@ -85,14 +85,9 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateSnapshot(StringBuilder out) {
-        out.append("  @Override public java.util.Map<String, Object> stateSnapshot(StateValue state) { var value = (").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(); return java.util.Map.ofEntries(");
-        boolean first = true;
-        for (UiModel.Field field : program.deal().classes().get(program.rootStateType()).fields().values()) {
-            if (!first) out.append(", ");
-            first = false;
-            out.append("java.util.Map.entry(\"").append(field.name()).append("\", value.").append(field.name()).append(")");
-        }
-        out.append("); }\n");
+        out.append("  @Override public java.util.Map<String, Object> stateSnapshot(StateValue state) { var value = (").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(); java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();");
+        for (UiModel.Field field : program.deal().classes().get(program.rootStateType()).fields().values()) out.append(" result.put(\"").append(field.name()).append("\", value.").append(field.name()).append(");");
+        out.append(" return java.util.Collections.unmodifiableMap(result); }\n");
     }
 
     private void generateConversions(StringBuilder out) {

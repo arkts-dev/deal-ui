@@ -100,8 +100,8 @@ public final class UiProgramRuntime implements AutoCloseable {
             transition = bridge.transition(priorState, priorTree, priorStore, action);
         } catch (RuntimeException failure) {
             synchronized (this) {
-                store = bridge.reject(store);
-                pending--;
+                try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); }
+                retirePending();
                 asynchronousFailure = failure;
                 notifyAll();
             }
@@ -111,7 +111,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             renderer.apply(transition.patches(), transition.tree());
         } catch (RuntimeException failure) {
             try { renderer.restore(priorTree); } catch (RuntimeException restoreFailure) { failure.addSuppressed(restoreFailure); }
-            synchronized (this) { store = bridge.reject(store); asynchronousFailure = failure; pending--; notifyAll(); }
+            synchronized (this) { try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); } asynchronousFailure = failure; retirePending(); }
             return;
         }
         synchronized (this) {
@@ -185,14 +185,16 @@ public final class UiProgramRuntime implements AutoCloseable {
 
     @Override
     public void close() {
+        RuntimeException failure = null;
         synchronized (this) {
             if (disposed) return;
             disposed = true;
-            store = bridge.dispose(store);
+            try { store = bridge.dispose(store); } catch (RuntimeException disposeFailure) { failure = disposeFailure; }
             notifyAll();
         }
-        transitions.shutdownNow();
-        effects.shutdownNow();
-        renderer.close();
+        try { transitions.shutdownNow(); } catch (RuntimeException shutdownFailure) { if (failure == null) failure = shutdownFailure; else failure.addSuppressed(shutdownFailure); }
+        try { effects.shutdownNow(); } catch (RuntimeException shutdownFailure) { if (failure == null) failure = shutdownFailure; else failure.addSuppressed(shutdownFailure); }
+        try { renderer.close(); } catch (RuntimeException closeFailure) { if (failure == null) failure = closeFailure; else failure.addSuppressed(closeFailure); }
+        if (failure != null) throw failure;
     }
 }

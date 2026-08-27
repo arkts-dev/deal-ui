@@ -17,8 +17,10 @@ public final class UiCompiler {
                          String bridgeClass, UiModel.CheckedProgram program, Map<String, Path> packFiles) {}
 
     private final Path fsRoot;
+    private final Path frameworkRoot;
 
-    public UiCompiler(Path fsRoot) { this.fsRoot = fsRoot.toAbsolutePath().normalize(); }
+    public UiCompiler(Path fsRoot) { this(fsRoot, Path.of(System.getProperty("deal.ui.frameworkRoot", Path.of("").toAbsolutePath().toString()))); }
+    public UiCompiler(Path fsRoot, Path frameworkRoot) { this.fsRoot = fsRoot.toAbsolutePath().normalize(); this.frameworkRoot = frameworkRoot.toAbsolutePath().normalize(); }
 
     public Result compile(Path viewSource, Path output) throws IOException, InterruptedException {
         Path view = viewSource.toAbsolutePath().normalize();
@@ -46,14 +48,13 @@ public final class UiCompiler {
         UiChecker checker = new UiChecker();
         UiModel.DealModule dealModule = checker.parseDeal(deal, Files.readString(deal));
         UiModel.CheckedProgram checked = checker.check(view, views, deal, dealModule, packs);
-        UiDealGenerator.Output generatedDeal = new UiDealGenerator(checked).generate();
+        UiDealGenerator.Output generatedDeal = new UiDealGenerator(checked, frameworkRoot).generate();
 
         Path project = destination.resolve("deal");
         Path framework = project.resolve("ui");
         Files.createDirectories(framework);
         Files.writeString(project.resolve(deal.getFileName()), Files.readString(deal) + generatedDeal.appAugmentation());
-        Path repository = Path.of("").toAbsolutePath().normalize();
-        for (String module : List.of("core", "store", "reconcile", "actions", "effects")) Files.copy(repository.resolve("ui/" + module + ".deal"), framework.resolve(module + ".deal"), StandardCopyOption.REPLACE_EXISTING);
+        for (String module : List.of("core", "store", "reconcile", "actions", "effects")) Files.copy(frameworkRoot.resolve("ui/" + module + ".deal"), framework.resolve(module + ".deal"), StandardCopyOption.REPLACE_EXISTING);
         Path entry = project.resolve("ui_application.deal");
         Files.writeString(entry, generatedDeal.source());
 

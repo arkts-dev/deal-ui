@@ -9,14 +9,16 @@ final class UiDealGenerator {
     record Output(String source, String appAugmentation, Map<Integer, UiModel.Action> actions, Map<String, Integer> actionIds, Map<String, Integer> effectIds) {}
 
     private final UiModel.CheckedProgram program;
+    private final java.nio.file.Path frameworkRoot;
     private final Map<Integer, UiModel.Action> actions = new LinkedHashMap<>();
     private final Map<String, Integer> actionIds = new LinkedHashMap<>();
     private final Map<String, Integer> effectIds = new LinkedHashMap<>();
     private int actionSlot;
     private int localId;
 
-    UiDealGenerator(UiModel.CheckedProgram program) {
+    UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
+        this.frameworkRoot = frameworkRoot;
         int id = 0;
         for (String action : program.updates().keySet()) actionIds.put(action, id++);
         id = 0;
@@ -48,7 +50,7 @@ final class UiDealGenerator {
         try {
             StringBuilder source = new StringBuilder("import * as app from \"./").append(moduleName(program.dealSource())).append("\";\n\n");
             for (String module : List.of("core", "store", "actions", "effects", "reconcile")) {
-                String value = java.nio.file.Files.readString(java.nio.file.Path.of("").toAbsolutePath().resolve("ui/" + module + ".deal"));
+                String value = java.nio.file.Files.readString(frameworkRoot.resolve("ui/" + module + ".deal"));
                 value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
                 if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");
                 if (module.equals("actions")) value = value.replace("function route(", "function actionRoute(");
