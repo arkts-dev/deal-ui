@@ -35,7 +35,7 @@ public final class UiFrameworkTest {
             UiBridge bridge = Main.bridge(result, loader);
             try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
                 check(runtime.stateSnapshot().get("title").equals("Gallery"), "DEAL supplies initial state");
-                check(texts(runtime.tree()).containsAll(List.of("Gallery", "Curated collection", "0", "Details are hidden", "The Starry Night")), "DEAL-generated tree evaluates composition and control flow");
+                check(texts(runtime.tree()).containsAll(List.of("Gallery", "A focused collection for thoughtful discovery", "FEATURED WORK", "0", "Details are hidden", "The Starry Night")), "DEAL-generated tree evaluates composition and control flow");
                 check(!runtime.tree().children().get(0).children().get(0).identity().equals(runtime.tree().children().get(0).children().get(1).identity()), "custom view identities include call sites");
                 JComponent component = runtime.renderer().componentForTesting(runtime.tree());
                 JComponent firstItem = named(component, "ui.Text", "The Starry Night");

@@ -28,6 +28,7 @@ public final class UiProgramRuntime implements AutoCloseable {
         state = bridge.initialState();
         store = bridge.initialStore();
         renderer = new deal.ui.runtime.SwingUiRuntime(title, bindings, bridge, this::dispatch);
+        renderer.onCloseRequest(this::close);
         UiBridge.Transition initial = bridge.initial(state, store);
         state = initial.state();
         tree = initial.tree();

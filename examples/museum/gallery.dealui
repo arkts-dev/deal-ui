@@ -10,7 +10,8 @@ export view Gallery(state: app.GalleryState): View {
   ui.Card() {
     ui.Column(spacing: ui.spaceMd) {
       Header(title: state.title)
-      Header(title: "Curated collection")
+      Header(title: "A focused collection for thoughtful discovery")
+      ui.Text(value: "FEATURED WORK")
       ui.Input(
         value: state.title,
         accessibilityLabel: "Gallery title",

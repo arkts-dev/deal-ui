@@ -44,6 +44,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     private boolean closed;
     private boolean lastApplyOnEdt;
     private long disposedComponents;
+    private Runnable closeRequest = () -> {};
 
     public SwingUiRuntime(String title, UiRendererBindings bindings, UiBridge bridge, Dispatch dispatch) {
         this.title = Objects.requireNonNull(title);
@@ -84,6 +85,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         return result.get();
     }
 
+    public void onCloseRequest(Runnable action) { closeRequest = Objects.requireNonNull(action); }
     public UiBridge.Node tree() { return tree; }
     public boolean lastApplyOnEdt() { return lastApplyOnEdt; }
     public long disposedComponents() { return disposedComponents; }
@@ -93,7 +95,8 @@ public final class SwingUiRuntime implements AutoCloseable {
     private void ensureFrame() {
         if (frame != null) return;
         frame = new JFrame(title);
-        frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        frame.addWindowListener(new java.awt.event.WindowAdapter() { @Override public void windowClosing(java.awt.event.WindowEvent event) { closeRequest.run(); } });
         frame.setMinimumSize(new Dimension(680, 520));
         root = new JPanel(new BorderLayout());
         root.setBorder(BorderFactory.createEmptyBorder(28, 28, 28, 28));
