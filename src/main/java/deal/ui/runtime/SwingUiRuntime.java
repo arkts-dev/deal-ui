@@ -147,11 +147,17 @@ public final class SwingUiRuntime implements AutoCloseable {
         if (closed) return;
         if (patch.kind().equals("dispose")) { dispose(patch.identity(), prepared.disposals()); return; }
         JComponent component = retained.get(patch.identity());
-        if (component == null) {
-            component = prepared.take(patch.identity());
-            if (component == null) throw new IllegalStateException("Missing prepared component " + patch.identity());
-            retained.put(patch.identity(), component);
-        }
+        JComponent replacement = prepared.take(patch.identity());
+        if (replacement != null) {
+            JComponent displaced = retained.put(patch.identity(), replacement);
+            component = replacement;
+            if (displaced != null) {
+                java.awt.Container parent = displaced.getParent();
+                int index = parent == null ? -1 : parent.getComponentZOrder(displaced);
+                if (parent != null) { parent.remove(displaced); parent.add(component, Math.min(index, parent.getComponentCount())); }
+                disposeDetached(displaced);
+            }
+        } else if (component == null) throw new IllegalStateException("Missing prepared component " + patch.identity());
         prepared.commit(patch.identity());
         java.awt.Container parent = null;
         if (patch.rootParent()) parent = root;
@@ -286,6 +292,15 @@ public final class SwingUiRuntime implements AutoCloseable {
         }
         if (removed.getParent() != null) removed.getParent().remove(removed);
         bindings.dispose(removed);
+        disposedComponents++;
+    }
+
+    private void disposeDetached(JComponent component) {
+        if (component instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) if (child instanceof JComponent nested) disposeComponent(nested);
+            container.removeAll();
+        }
+        bindings.dispose(component);
         disposedComponents++;
     }
 
