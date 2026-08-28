@@ -28,6 +28,7 @@ final class UiDealGenerator {
 
     Output generate() {
         String app = moduleName(program.dealSource());
+        validateEffectPolicyTypes();
         StringBuilder out = new StringBuilder();
         out.append("import * as app from \"./").append(app).append("\";\n\n")
             .append("export class UiAction {\n  slot: int = -1;\n");
@@ -187,16 +188,27 @@ final class UiDealGenerator {
             out.append(first ? "  if" : "  else if").append(" (routeValue.updateId === ").append(entry.getValue()).append(") { let value: app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { candidate = app.").append(handler.name()).append("(state, value); } }\n");
             first = false;
         }
-        out.append("  else { throw { code: \"UI3001\", message: \"Unknown closed action\" }; }\n")
-            .append("  return candidate;\n}\n\n")
+        if (first) out.append("  throw { code: \"UI3001\", message: \"Unknown closed action\" };\n");
+        else out.append("  else { throw { code: \"UI3001\", message: \"Unknown closed action\" }; }\n");
+        out.append("  return candidate;\n}\n\n")
             .append("export function transitionFromCandidate(candidate: app.").append(program.rootStateType()).append(", previous: core.ViewNode | null, current: UiStore, action: UiAction): Transition {\n")
             .append("  let routeValue: actions.Route = validateAction(action);\n")
             .append("  let nextStore: UiStore = { lifecycle: store.commit(current.lifecycle), queue: current.queue };\n")
             .append("  let tree: core.ViewNode = view_").append(program.title()).append("(\"").append(program.title()).append("\", candidate);\n")
             .append("  let planValue: reconcile.Plan = reconcile.plan(previous, tree);\n")
-            .append("  let effect: effects.EffectDescriptor = effects.none();\n")
-            .append("  if (actions.hasEffect(routeValue)) { effect = effects.start(routeValue.effectId, action.slot, nextStore.lifecycle.revision); }\n")
-            .append("  return { tree: tree, plan: planValue, store: nextStore, effect: effect };\n}\n\n");
+             .append("  let effect: effects.EffectDescriptor = effects.none();\n")
+             .append("  if (actions.hasEffect(routeValue)) { effect = effects.start(routeValue.effectId, action.slot, nextStore.lifecycle.revision); }\n")
+             .append("  return { tree: tree, plan: planValue, store: nextStore, effect: effect };\n}\n\n")
+             .append("export function effectCommand(state: app.").append(program.rootStateType()).append(", action: UiAction): effects.EffectCommand {\n")
+             .append("  let routeValue: actions.Route = validateAction(action);\n");
+        first = true;
+        for (Map.Entry<String, UiModel.Handler> entry : program.effectPolicies().entrySet()) {
+            int id = actionIds.get(entry.getKey());
+            out.append(first ? "  if" : "  else if").append(" (routeValue.actionId === ").append(id).append(") { let value: app.").append(entry.getKey()).append(" | null = action.nominal").append(id).append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { let command: app.EffectCommand = app.").append(entry.getValue().name()).append("(state, value); return { operation: command.operation, key: command.key, delayMillis: command.delayMillis, cancellationMode: command.cancellationMode }; } }\n");
+            first = false;
+        }
+        out.append("  return effects.startCommand(\"\", 0, \"none\");\n}\n\n");
+
     }
 
     private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, Map<String, UiModel.TypeRef> scope, java.util.Set<Integer> lines) {
@@ -270,6 +282,17 @@ final class UiDealGenerator {
         if (expression instanceof UiModel.Binary binary) return containsPayload(binary.left()) || containsPayload(binary.right());
         if (expression instanceof UiModel.Has has) return has.path().parts().get(0).equals("payload");
         return false;
+    }
+
+    private void validateEffectPolicyTypes() {
+        UiModel.DealClass command = program.deal().classes().get("EffectCommand");
+        if ((!program.effectPolicies().isEmpty() || !program.effectFailures().isEmpty()) && command == null) throw new UiDiagnostic("UI2042", "EffectCommand must be declared by the application", program.dealSource(), 1, 1);
+        if (command == null) return;
+        Map<String, String> expected = Map.of("operation", "string", "key", "string", "delayMillis", "int", "cancellationMode", "string");
+        for (Map.Entry<String, String> field : expected.entrySet()) {
+            UiModel.Field actual = command.fields().get(field.getKey());
+            if (actual == null || !actual.type().name().equals(field.getValue()) || actual.type().optional() || actual.type().array()) throw new UiDiagnostic("UI2043", "EffectCommand requires " + field.getKey() + ": " + field.getValue(), program.dealSource(), 1, 1);
+        }
     }
 
     private String qualifiedType(UiModel.TypeRef type, String app) {

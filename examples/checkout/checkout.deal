@@ -1,49 +1,102 @@
 import * as interaction from "../../ui/interaction";
 
 export class CheckoutState {
-  route: string = "contact";
+  route: string = "checkout/contact";
   parentRoute: string = "checkout";
   email: string = "";
   dirty: boolean = false;
   touched: boolean = false;
   valid: boolean = false;
   guardMessage: string = "";
+  leavePending: boolean = false;
 }
 
 export class EditEmail { value: string = ""; }
 export class TouchEmail {}
 export class Continue {}
-export class ReturnToContact {}
+export class Back {}
+export class RequestLeave {}
+export class ConfirmLeave {}
+export class CancelLeave {}
 
 export function initialState(): CheckoutState { return {}; }
 
+function emailMessage(value: string): string {
+  if (value === "") { return "Email is required"; }
+  let atCount: int = 0;
+  let dotAfterAt: boolean = false;
+  let localLength: int = 0;
+  let domainLength: int = 0;
+  let suffixLength: int = 0;
+  for (let character: string of value) {
+    if (character === " ") { return "Email cannot contain spaces"; }
+    if (character === "@") {
+      atCount = atCount + 1;
+      suffixLength = 0;
+    } else if (atCount === 0) {
+      localLength = localLength + 1;
+    } else {
+      domainLength = domainLength + 1;
+      if (character === ".") {
+        if (suffixLength === 0) { return "Email domain labels cannot be empty"; }
+        dotAfterAt = true;
+        suffixLength = 0;
+      } else {
+        suffixLength = suffixLength + 1;
+      }
+    }
+  }
+  if (atCount !== 1 || localLength === 0 || domainLength === 0) { return "Enter an email such as name@example.com"; }
+  if (!dotAfterAt || suffixLength < 2) { return "Email domain must end with a dot-separated suffix"; }
+  return "";
+}
+
+function copy(state: CheckoutState, route: string, message: string, leavePending: boolean): CheckoutState {
+  return { route: route, parentRoute: state.parentRoute, email: state.email, dirty: state.dirty, touched: state.touched, valid: state.valid, guardMessage: message, leavePending: leavePending };
+}
+
 // @ui-update
 export function editEmail(state: CheckoutState, action: EditEmail): CheckoutState {
-  let message: string = "";
-  if (action.value === "") { message = "Email is required"; }
-  let field: interaction.FieldStatus = interaction.editField(action.value !== "", message);
-  return { route: state.route, parentRoute: state.parentRoute, email: action.value, dirty: field.dirty, touched: field.touched, valid: field.valid, guardMessage: field.message };
+  let message: string = emailMessage(action.value);
+  return { route: state.route, parentRoute: state.parentRoute, email: action.value, dirty: true, touched: state.touched, valid: message === "", guardMessage: message, leavePending: false };
 }
 
 // @ui-update
 export function touchEmail(state: CheckoutState, action: TouchEmail): CheckoutState {
-  let current: interaction.FieldStatus = { dirty: state.dirty, touched: state.touched, valid: state.valid, message: state.guardMessage };
-  let field: interaction.FieldStatus = interaction.touchField(current);
-  return { route: state.route, parentRoute: state.parentRoute, email: state.email, dirty: field.dirty, touched: field.touched, valid: field.valid, guardMessage: field.message };
+  let message: string = emailMessage(state.email);
+  return { route: state.route, parentRoute: state.parentRoute, email: state.email, dirty: state.dirty, touched: true, valid: message === "", guardMessage: message, leavePending: state.leavePending };
 }
 
 // @ui-update
 export function continueCheckout(state: CheckoutState, action: Continue): CheckoutState {
-  let decision: interaction.NavigationDecision = interaction.guardNavigation("checkout/payment", state.dirty, state.valid);
-  let route: string = state.route;
-  if (decision.allowed) { route = decision.route; }
-  return { route: route, parentRoute: state.parentRoute, email: state.email, dirty: state.dirty, touched: state.touched, valid: state.valid, guardMessage: decision.reason };
+  if (!state.valid) {
+    return { route: state.route, parentRoute: state.parentRoute, email: state.email, dirty: state.dirty, touched: true, valid: state.valid, guardMessage: "Resolve invalid fields before continuing", leavePending: false };
+  }
+  return copy(state, "checkout/payment", "", false);
 }
 
 // @ui-update
-export function returnToContact(state: CheckoutState, action: ReturnToContact): CheckoutState {
-  let decision: interaction.NavigationDecision = interaction.allowNavigation("contact");
-  return { route: decision.route, parentRoute: "checkout", email: state.email, dirty: state.dirty, touched: state.touched, valid: state.valid };
+export function back(state: CheckoutState, action: Back): CheckoutState {
+  if (state.route === "checkout/payment") { return copy(state, "checkout/contact", "", false); }
+  if (state.dirty) { return copy(state, state.route, "Confirm leaving checkout to discard your changes", true); }
+  return copy(state, "catalog", "", false);
+}
+
+// @ui-update
+export function requestLeave(state: CheckoutState, action: RequestLeave): CheckoutState {
+  if (state.dirty) { return copy(state, state.route, "Confirm leaving checkout to discard your changes", true); }
+  return copy(state, "catalog", "", false);
+}
+
+// @ui-update
+export function confirmLeave(state: CheckoutState, action: ConfirmLeave): CheckoutState {
+  if (!state.leavePending) { return state; }
+  return copy(state, "catalog", "", false);
+}
+
+// @ui-update
+export function cancelLeave(state: CheckoutState, action: CancelLeave): CheckoutState {
+  return copy(state, state.route, "", false);
 }
 
 export function main(): null { return null; }

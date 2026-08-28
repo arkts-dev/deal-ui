@@ -1,32 +1,115 @@
 import * as interaction from "../../ui/interaction";
+import * as strings from "std/string";
 
+export class MailRecord { id: int = 0; sender: string = ""; subject: string = ""; body: string = ""; }
 export class SearchState {
+  mailbox: MailRecord[] = [];
+  matches: MailRecord[] = [];
   query: string = "";
   status: string = "idle";
-  result: string = "";
+  result: string = "Enter a query to search 4 messages";
   generation: int = 0;
   activeGeneration: int = -1;
-  debounceRevision: int = 0;
   errorMessage: string = "";
 }
 export class Search { query: string = ""; }
 export class Cancel {}
 export class Retry {}
-export class SearchCompleted { generation: int = 0; value: string = ""; }
+export class SearchCompleted { generation: int = 0; matches: MailRecord[] = []; value: string = ""; }
+export class SearchFailed { generation: int = 0; message: string = "Search failed"; }
+export class EffectCommand { operation: string = "none"; key: string = "mail-search"; delayMillis: int = 0; cancellationMode: string = "replace"; }
 
-export function policy(state: SearchState): interaction.RequestPolicy { return { generation: state.generation, activeGeneration: state.activeGeneration, debounceRevision: state.debounceRevision, loading: state.status === "loading" || state.status === "debouncing", failed: state.status === "error" }; }
-export function initialState(): SearchState { return {}; }
+function mailboxRecords(): MailRecord[] {
+  let first: MailRecord = { id: 1, sender: "maya@deal.dev", subject: "Portable policy review", body: "Please review the portable effect policy before release." };
+  let second: MailRecord = { id: 2, sender: "release@deal.dev", subject: "Renderer release", body: "The Swing renderer checks are ready." };
+  let third: MailRecord = { id: 3, sender: "team@deal.dev", subject: "Kanban validation", body: "Optimistic move validation is scheduled." };
+  let fourth: MailRecord = { id: 4, sender: "alerts@deal.dev", subject: "Rollback report", body: "The denied move rollback completed." };
+  return [first, second, third, fourth];
+}
+
+export function initialState(): SearchState { return { mailbox: mailboxRecords() }; }
+
+function beginRequest(state: SearchState, query: string, status: string): SearchState {
+  let next: int = state.generation + 1;
+  return { mailbox: state.mailbox, matches: state.matches, query: query, status: status, result: state.result, generation: next, activeGeneration: next };
+}
+
+function matchesQuery(record: MailRecord, query: string): boolean {
+  return strings.contains(record.sender, query) || strings.contains(record.subject, query) || strings.contains(record.body, query);
+}
+
+function searchMailbox(mailbox: MailRecord[], query: string): MailRecord[] {
+  let result: MailRecord[] = [];
+  for (let record: MailRecord of mailbox) {
+    if (matchesQuery(record, query)) { result[result.length] = record; }
+  }
+  return result;
+}
+
+function resultLabel(matches: MailRecord[], query: string): string {
+  if (matches.length === 0) { return "No messages match " + query; }
+  if (matches.length === 1) { return "1 message matches " + query; }
+  if (matches.length === 2) { return "2 messages match " + query; }
+  if (matches.length === 3) { return "3 messages match " + query; }
+  return "4 messages match " + query;
+}
 
 // @ui-update
-export function beginSearch(state: SearchState, action: Search): SearchState { let request: interaction.RequestPolicy = interaction.beginRequest(policy(state)); return { query: action.query, status: "debouncing", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+export function beginSearch(state: SearchState, action: Search): SearchState {
+  let query: string = action.query;
+  if (query === "") { return { mailbox: state.mailbox, query: query, status: "idle", result: "Enter a query to search 4 messages", generation: state.generation, activeGeneration: -1 }; }
+  return beginRequest(state, query, "debouncing");
+}
+
+// @ui-effect-policy
+export function searchPolicy(state: SearchState, action: Search): EffectCommand {
+  if (action.query === "") { return { operation: "cancel", cancellationMode: "interrupt" }; }
+  return { operation: "start", delayMillis: 250 };
+}
+
 // @ui-effect
-export async function search(state: SearchState, action: Search): SearchCompleted { return { generation: state.activeGeneration, value: "Results for " + action.query }; }
+export async function search(state: SearchState, action: Search): SearchCompleted {
+  let query: string = state.query;
+  let matches: MailRecord[] = searchMailbox(state.mailbox, query);
+  return { generation: state.activeGeneration, matches: matches, value: resultLabel(matches, query) };
+}
+
+// @ui-effect-failure
+export function searchFailure(state: SearchState, action: Search, message: string): SearchFailed {
+  return { generation: state.activeGeneration, message: message };
+}
+
 // @ui-update
-export function finishSearch(state: SearchState, action: SearchCompleted): SearchState { let current: interaction.RequestPolicy = policy(state); if (!interaction.acceptResponse(current, action.generation)) { return state; } let request: interaction.RequestPolicy = interaction.finishRequest(current, action.generation); return { query: state.query, status: "ready", result: action.value, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+export function finishSearch(state: SearchState, action: SearchCompleted): SearchState {
+  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "debouncing" || state.status === "loading")) { return state; }
+  return { mailbox: state.mailbox, matches: action.matches, query: state.query, status: "ready", result: action.value, generation: state.generation, activeGeneration: -1 };
+}
+
 // @ui-update
-export function cancelSearch(state: SearchState, action: Cancel): SearchState { let request: interaction.RequestPolicy = interaction.cancelRequest(policy(state)); return { query: state.query, status: "cancelled", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+export function failSearch(state: SearchState, action: SearchFailed): SearchState {
+  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "debouncing" || state.status === "loading")) { return state; }
+  return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "error", result: state.result, generation: state.generation, activeGeneration: -1, errorMessage: action.message };
+}
+
 // @ui-update
-export function retrySearch(state: SearchState, action: Retry): SearchState { let request: interaction.RequestPolicy = interaction.retryRequest(policy(state)); return { query: state.query, status: "loading", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+export function cancelSearch(state: SearchState, action: Cancel): SearchState { return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "cancelled", result: state.result, generation: state.generation, activeGeneration: -1 }; }
+
+// @ui-update
+export function retrySearch(state: SearchState, action: Retry): SearchState { return beginRequest(state, state.query, "loading"); }
+
+// @ui-effect-policy
+export function retryPolicy(state: SearchState, action: Retry): EffectCommand { return { operation: "start" }; }
+
 // @ui-effect
-export async function retry(state: SearchState, action: Retry): SearchCompleted { return { generation: state.generation + 1, value: "Results for " + state.query }; }
+export async function retry(state: SearchState, action: Retry): SearchCompleted {
+  let query: string = state.query;
+  let matches: MailRecord[] = searchMailbox(state.mailbox, query);
+  return { generation: state.activeGeneration, matches: matches, value: resultLabel(matches, query) };
+}
+
+// @ui-effect-failure
+export function retryFailure(state: SearchState, action: Retry, message: string): SearchFailed {
+  return { generation: state.activeGeneration, message: message };
+}
+
 export function main(): null { return null; }

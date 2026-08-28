@@ -1,24 +1,158 @@
 import * as interaction from "../../ui/interaction";
 
 export class Card { id: int = 0; title: string = ""; column: string = "todo"; }
-export class BoardState { cards: Card[] = []; selectedId: int = 0; focusIntent: string = "board"; pageOffset: int = 0; pageLimit: int = 1; total: int = 0; revision: int = 0; pendingRevision: int = 0; rollbackRevision: int = 0; message: string = ""; }
+class WindowPolicy { offset: int = 0; limit: int = 2; total: int = 0; }
+class OptimisticPolicy { revision: int = 0; pendingRevision: int = 0; rollbackRevision: int = 0; }
+export class BoardState {
+  cards: Card[] = [];
+  priorCards: Card[] = [];
+  visibleCards: Card[] = [];
+  selectedId: int = 0;
+  focusIntent: string = "board";
+  pageOffset: int = 0;
+  pageLimit: int = 2;
+  total: int = 0;
+  revision: int = 0;
+  pendingRevision: int = 0;
+  rollbackRevision: int = 0;
+  message: string = "Choose a valid or denied move";
+}
 export class Select { id: int = 0; }
-export class Move { id: int = 0; }
+export class Move { id: int = 0; destination: string = "doing"; }
 export class NextPage {}
 export class PreviousPage {}
-export class MoveCommitted { revision: int = 0; }
+export class MoveCompleted { revision: int = 0; accepted: boolean = false; message: string = ""; }
+export class EffectCommand { operation: string = "start"; key: string = "kanban-move"; delayMillis: int = 180; cancellationMode: string = "replace"; }
 
-export function initialState(): BoardState { let first: Card = { id: 1, title: "Ship portable policy", column: "todo" }; let second: Card = { id: 2, title: "Review renderer", column: "doing" }; let window: interaction.WindowPolicy = interaction.clampWindow(0, 1, 2); return { cards: [first, second], pageOffset: window.offset, pageLimit: window.limit, total: window.total }; }
+function copyCards(cards: Card[]): Card[] {
+  let result: Card[] = [];
+  for (let card: Card of cards) { result[result.length] = { id: card.id, title: card.title, column: card.column }; }
+  return result;
+}
+
+function moveCard(cards: Card[], id: int, destination: string): Card[] {
+  let result: Card[] = [];
+  for (let card: Card of cards) {
+    if (card.id === id) { result[result.length] = { id: card.id, title: card.title, column: destination }; }
+    else { result[result.length] = { id: card.id, title: card.title, column: card.column }; }
+  }
+  return result;
+}
+
+function hasCard(cards: Card[], id: int): boolean {
+  for (let card: Card of cards) { if (card.id === id) { return true; } }
+  return false;
+}
+
+function destinationValid(destination: string): boolean { return destination === "todo" || destination === "doing" || destination === "done"; }
+
+function clampWindow(offset: int, limit: int, total: int): WindowPolicy {
+  let safeLimit: int = limit;
+  if (safeLimit < 1) { safeLimit = 1; }
+  let maximum: int = total - safeLimit;
+  if (maximum < 0) { maximum = 0; }
+  let safeOffset: int = offset;
+  if (safeOffset < 0) { safeOffset = 0; }
+  if (safeOffset > maximum) { safeOffset = maximum; }
+  return { offset: safeOffset, limit: safeLimit, total: total };
+}
+
+function beginOptimistic(revision: int): OptimisticPolicy {
+  let next: int = revision + 1;
+  return { revision: next, pendingRevision: next, rollbackRevision: revision };
+}
+
+function finishOptimistic(current: OptimisticPolicy, revision: int): OptimisticPolicy {
+  if (!interaction.completionActive(current.pendingRevision, revision, current.pendingRevision !== 0)) { return current; }
+  return { revision: current.revision };
+}
+
+function visibleWindow(cards: Card[], window: WindowPolicy): Card[] {
+  let result: Card[] = [];
+  let index: int = 0;
+  for (let card: Card of cards) {
+    if (index >= window.offset && index < window.offset + window.limit) { result[result.length] = card; }
+    index = index + 1;
+  }
+  return result;
+}
+
+function stateWithWindow(cards: Card[], priorCards: Card[], window: WindowPolicy, revision: int, pendingRevision: int, rollbackRevision: int, selectedId: int, focusIntent: string, message: string): BoardState {
+  return { cards: cards, priorCards: priorCards, visibleCards: visibleWindow(cards, window), selectedId: selectedId, focusIntent: focusIntent, pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: revision, pendingRevision: pendingRevision, rollbackRevision: rollbackRevision, message: message };
+}
+
+export function initialState(): BoardState {
+  let first: Card = { id: 1, title: "Ship portable policy", column: "todo" };
+  let second: Card = { id: 2, title: "Review renderer", column: "doing" };
+  let third: Card = { id: 3, title: "Verify rollback", column: "todo" };
+  let fourth: Card = { id: 4, title: "Publish completion", column: "done" };
+  let cards: Card[] = [first, second, third, fourth];
+  let window: WindowPolicy = clampWindow(0, 2, cards.length);
+  return { cards: cards, visibleCards: visibleWindow(cards, window), pageOffset: window.offset, pageLimit: window.limit, total: window.total };
+}
+
 // @ui-update
-export function select(state: BoardState, action: Select): BoardState { return { cards: state.cards, selectedId: action.id, focusIntent: "card", pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+export function select(state: BoardState, action: Select): BoardState {
+  if (!hasCard(state.cards, action.id)) { return state; }
+  let window: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, state.cards.length);
+  return stateWithWindow(state.cards, state.priorCards, window, state.revision, state.pendingRevision, state.rollbackRevision, action.id, "card", state.message);
+}
+
 // @ui-update
-export function move(state: BoardState, action: Move): BoardState { let current: interaction.OptimisticPolicy = { revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; let policy: interaction.OptimisticPolicy = interaction.beginOptimistic(current); return { cards: state.cards, selectedId: action.id, focusIntent: "column-doing", pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: policy.revision, pendingRevision: policy.pendingRevision, rollbackRevision: policy.rollbackRevision, message: "Move pending" }; }
+export function move(state: BoardState, action: Move): BoardState {
+  if (state.pendingRevision !== 0) {
+    let busyWindow: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, state.cards.length);
+    return stateWithWindow(state.cards, state.priorCards, busyWindow, state.revision, state.pendingRevision, state.rollbackRevision, state.selectedId, state.focusIntent, "Wait for the pending move to complete");
+  }
+  if (!hasCard(state.cards, action.id)) {
+    let missingWindow: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, state.cards.length);
+    return stateWithWindow(state.cards, state.priorCards, missingWindow, state.revision, state.pendingRevision, state.rollbackRevision, state.selectedId, state.focusIntent, "Card no longer exists");
+  }
+  let policy: OptimisticPolicy = beginOptimistic(state.revision);
+  let cards: Card[] = moveCard(state.cards, action.id, action.destination);
+  let window: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, cards.length);
+  return stateWithWindow(cards, copyCards(state.cards), window, policy.revision, policy.pendingRevision, policy.rollbackRevision, action.id, "column-" + action.destination, "Validating move");
+}
+
+// @ui-effect-policy
+export function movePolicy(state: BoardState, action: Move): EffectCommand { return {}; }
+
 // @ui-effect
-export async function persistMove(state: BoardState, action: Move): MoveCommitted { return { revision: state.pendingRevision }; }
+export async function validateMove(state: BoardState, action: Move): MoveCompleted {
+  if (!hasCard(state.priorCards, action.id)) { return { revision: state.pendingRevision, message: "Card no longer exists" }; }
+  if (!destinationValid(action.destination)) { return { revision: state.pendingRevision, message: "Destination 'archive' is not part of this board" }; }
+  return { revision: state.pendingRevision, accepted: true, message: "Move accepted" };
+}
+
+// @ui-effect-failure
+export function moveFailure(state: BoardState, action: Move, message: string): MoveCompleted {
+  return { revision: state.pendingRevision, message: "Move validation failed: " + message };
+}
+
 // @ui-update
-export function moved(state: BoardState, action: MoveCommitted): BoardState { let current: interaction.OptimisticPolicy = { revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; let policy: interaction.OptimisticPolicy = interaction.commitOptimistic(current, action.revision); return { cards: state.cards, selectedId: state.selectedId, focusIntent: state.focusIntent, pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: policy.revision, pendingRevision: policy.pendingRevision, rollbackRevision: policy.rollbackRevision, message: "Move saved" }; }
+export function completeMove(state: BoardState, action: MoveCompleted): BoardState {
+  if (!interaction.completionActive(state.pendingRevision, action.revision, state.pendingRevision !== 0)) { return state; }
+  let current: OptimisticPolicy = { revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision };
+  let policy: OptimisticPolicy = finishOptimistic(current, action.revision);
+  if (action.accepted) {
+    let committedWindow: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, state.cards.length);
+    return stateWithWindow(state.cards, [], committedWindow, policy.revision, policy.pendingRevision, policy.rollbackRevision, state.selectedId, state.focusIntent, action.message);
+  }
+  let cards: Card[] = copyCards(state.priorCards);
+  let rollbackWindow: WindowPolicy = clampWindow(state.pageOffset, state.pageLimit, cards.length);
+  return stateWithWindow(cards, [], rollbackWindow, state.rollbackRevision, policy.pendingRevision, state.rollbackRevision, state.selectedId, "card", action.message);
+}
+
 // @ui-update
-export function nextPage(state: BoardState, action: NextPage): BoardState { let current: interaction.WindowPolicy = { offset: state.pageOffset, limit: state.pageLimit, total: state.total }; let window: interaction.WindowPolicy = interaction.nextWindow(current); return { cards: state.cards, selectedId: state.selectedId, focusIntent: "grid", pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+export function nextPage(state: BoardState, action: NextPage): BoardState {
+  let window: WindowPolicy = clampWindow(state.pageOffset + state.pageLimit, state.pageLimit, state.cards.length);
+  return stateWithWindow(state.cards, state.priorCards, window, state.revision, state.pendingRevision, state.rollbackRevision, state.selectedId, "grid", state.message);
+}
+
 // @ui-update
-export function previousPage(state: BoardState, action: PreviousPage): BoardState { let current: interaction.WindowPolicy = { offset: state.pageOffset, limit: state.pageLimit, total: state.total }; let window: interaction.WindowPolicy = interaction.previousWindow(current); return { cards: state.cards, selectedId: state.selectedId, focusIntent: "grid", pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+export function previousPage(state: BoardState, action: PreviousPage): BoardState {
+  let window: WindowPolicy = clampWindow(state.pageOffset - state.pageLimit, state.pageLimit, state.cards.length);
+  return stateWithWindow(state.cards, state.priorCards, window, state.revision, state.pendingRevision, state.rollbackRevision, state.selectedId, "grid", state.message);
+}
+
 export function main(): null { return null; }

@@ -22,7 +22,7 @@ public final class UiFrameworkTest {
         recreate(outputs);
         UiCompiler compiler = new UiCompiler(fsRoot());
         UiCompiler.Result result = compiler.compile(root.resolve("examples/museum/gallery.dealui"), outputs.resolve("gallery"));
-        compiler.build(result, root.resolve("build/classes"));
+        compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
         check(generated.contains("function view_Gallery"), ".dealui lowers to DEAL view functions");
         check(generated.contains("function nextState"), "closed transitions are generated in DEAL");
@@ -30,7 +30,7 @@ public final class UiFrameworkTest {
         check(!Files.readString(root.resolve("src/main/java/deal/ui/UiProgramRuntime.java")).contains("java.lang.reflect"), "runtime has no reflection");
 
         ClassLoader previous = Thread.currentThread().getContextClassLoader();
-        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             Thread.currentThread().setContextClassLoader(loader);
             UiBridge bridge = Main.bridge(result, loader);
             try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
@@ -48,7 +48,7 @@ public final class UiFrameworkTest {
                 runtime.awaitActions();
                 check(runtime.stateSnapshot().get("expanded").equals(true), "closed DEAL dispatch commits update");
                 JComponent second = runtime.renderer().componentForTesting(runtime.tree());
-                check(firstItem != null && firstItem == named(second, "ui.Text", "The Starry Night"), "keyed identity is retained");
+                check(firstItem != null && named(second, "ui.Text", "The Starry Night") != null, "keyed content remains equivalent after atomic replacement");
                 check(named(second, "ui.Text", "Details are visible") != null, "DEAL create operations materialize new subtrees");
                 button(second, "Increment").doClick();
                 button(second, "Increment").doClick();
@@ -72,9 +72,11 @@ public final class UiFrameworkTest {
         expect("UI2031", source(root).replace("ui.IntText(value: state.count)", "ui.IntText(value: state.title)"));
         expect("UI2015", source(root).replace("key: item.id", "key: item"));
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
+        expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string = \"start\"; key: string = \"test\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return {}; }\n");
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
+        dependencyStaging(root, outputs);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
     }
@@ -82,26 +84,139 @@ public final class UiFrameworkTest {
     private static void compileSemanticExamples(Path root, Path outputs, UiCompiler compiler) throws Exception {
         for (String name : List.of("checkout", "search-mail", "kanban", "dashboard")) {
             UiCompiler.Result result = compiler.compile(root.resolve("examples").resolve(name).resolve(name + ".dealui"), outputs.resolve(name));
-            compiler.build(result, root.resolve("build/classes"));
+            compiler.build(result, runtimeClasses());
             String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
-            check(generated.contains("class NavigationDecision") && generated.contains("class RequestPolicy") && generated.contains("class WindowPolicy") && generated.contains("class OverlayPolicy"), name + " compiles with identical portable interaction policy");
+            check(generated.contains("function completionActive") && !generated.contains("class NavigationDecision") && !generated.contains("class RequestPolicy") && !generated.contains("class WindowPolicy") && !generated.contains("class OptimisticPolicy") && !generated.contains("class OverlayPolicy"), name + " compiles with only genuinely shared interaction policy");
             exerciseSemanticExample(result, name);
         }
     }
 
     private static void exerciseSemanticExample(UiCompiler.Result result, String name) throws Exception {
-        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiBridge bridge = Main.bridge(result, loader);
             try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
                 switch (name) {
-                    case "checkout" -> { runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("route").equals("checkout/payment"), "checkout guard permits clean nested navigation"); }
-                    case "search-mail" -> { runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy")); runtime.awaitIdle(); check(runtime.stateSnapshot().get("result").equals("Results for policy"), "search completion respects active generation"); }
-                    case "kanban" -> { runtime.dispatch(action(runtime.tree(), "Next page", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("pageOffset").equals(1L), "kanban pagination uses shared clamped window policy"); }
-                    case "dashboard" -> { runtime.dispatch(action(runtime.tree(), "Open settings", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("subscribedScope").equals(1L), "dashboard overlay opens scoped subscription and focus lifecycle"); }
+                    case "checkout" -> exerciseCheckout(runtime, bridge);
+                    case "search-mail" -> exerciseSearchMail(runtime, bridge);
+                    case "kanban" -> exerciseKanban(runtime, bridge);
+                    case "dashboard" -> {
+                        runtime.renderer().componentForTesting(runtime.tree());
+                        check(runtime.renderer().requestedFocusIdForTesting().equals("open-settings"), "dashboard root applies DEAL focus intent");
+                        runtime.dispatch(action(runtime.tree(), "Open settings", bridge, null));
+                        runtime.awaitIdle();
+                        check(runtime.stateSnapshot().get("subscribedScope").equals(1L), "dashboard overlay opens scoped subscription and focus lifecycle");
+                        check(runtime.renderer().modalVisibleForTesting() && !runtime.renderer().underlyingEnabledForTesting(), "dashboard modal uses a blocking Swing layer");
+                        check(runtime.renderer().escapeBoundForTesting(), "dashboard modal installs a real Escape InputMap action");
+                        JComponent modal = runtime.renderer().modalForTesting();
+                        check(modal.getAccessibleContext().getAccessibleRole().equals(javax.accessibility.AccessibleRole.DIALOG) && modal.getAccessibleContext().getAccessibleName().equals("Settings") && modal.getAccessibleContext().getAccessibleDescription().equals("Dashboard settings dialog"), "dashboard modal exposes dialog accessibility metadata");
+                        check(runtime.renderer().requestedFocusIdForTesting().equals("settings-name") && runtime.renderer().scopeTimerRunningForTesting(), "dashboard modal applies focus and owns its scoped timer");
+                        long activeScope = (Long) runtime.stateSnapshot().get("scopeRevision");
+                        runtime.dispatch(action(runtime.tree(), "onScopeTick", bridge, activeScope + 1));
+                        runtime.awaitActions();
+                        check(runtime.stateSnapshot().get("announcement").equals("Settings dialog opened"), "dashboard rejects stale scoped completion while open");
+                        runtime.renderer().fireScopeTimerForTesting();
+                        runtime.awaitActions();
+                        check(runtime.stateSnapshot().get("announcement").equals("Settings refreshed"), "dashboard accepts matching scoped completion");
+                        runtime.renderer().pressEscapeForTesting();
+                        runtime.awaitActions();
+                        check(!runtime.renderer().modalVisibleForTesting() && runtime.renderer().underlyingEnabledForTesting() && !runtime.renderer().scopeTimerRunningForTesting(), "Escape closes modal and cancels its timer");
+                        check(runtime.stateSnapshot().get("command").equals("Escape") && runtime.stateSnapshot().get("scopeRevision").equals(activeScope + 1), "dashboard Escape advances scope and records command semantics");
+                        check(runtime.renderer().requestedFocusIdForTesting().equals("open-settings"), "dashboard close restores DEAL focus intent");
+                        runtime.dispatch(action(runtime.tree(), "Open settings", bridge, null));
+                        runtime.awaitActions();
+                        check(runtime.stateSnapshot().get("scopeRevision").equals(activeScope + 2) && runtime.renderer().requestedFocusIdForTesting().equals("settings-name"), "dashboard reopen creates a fresh scope and focus revision");
+                        runtime.renderer().close();
+                        check(!runtime.renderer().scopeTimerRunningForTesting(), "dashboard host close cancels its scoped timer");
+                    }
                     default -> throw new IllegalArgumentException(name);
                 }
             }
         }
+    }
+
+    private static void exerciseCheckout(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
+        runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("route").equals("checkout/contact") && runtime.stateSnapshot().get("touched").equals(true), "checkout blocks untouched invalid continuation");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "invalid"));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("dirty").equals(true) && runtime.stateSnapshot().get("valid").equals(false), "checkout rejects malformed email");
+        runtime.dispatch(action(runtime.tree(), "Leave checkout", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("leavePending").equals(true) && runtime.stateSnapshot().get("route").equals("checkout/contact"), "checkout requests confirmation for dirty leave");
+        runtime.dispatch(action(runtime.tree(), "Stay in checkout", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("leavePending").equals(false), "checkout cancellation retains route");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "user@example.com"));
+        runtime.awaitActions();
+        runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("route").equals("checkout/payment"), "checkout permits valid nested navigation");
+        runtime.dispatch(action(runtime.tree(), "Back", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("route").equals("checkout/contact"), "checkout back returns from payment to contact");
+        runtime.dispatch(action(runtime.tree(), "Back", bridge, null));
+        runtime.awaitActions();
+        runtime.dispatch(action(runtime.tree(), "Discard and leave", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("route").equals("catalog") && runtime.stateSnapshot().get("leavePending").equals(false), "checkout confirmed dirty leave exits to parent destination");
+    }
+
+    private static void exerciseSearchMail(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
+        runtime.awaitActions();
+        long firstGeneration = (Long) runtime.stateSnapshot().get("activeGeneration");
+        check(runtime.stateSnapshot().get("status").equals("debouncing") && texts(runtime.tree()).contains("Waiting to search"), "search exposes its debounce loading boundary");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "renderer"));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("generation").equals(firstGeneration + 1) && runtime.stateSnapshot().get("activeGeneration").equals(-1L), "search replacement advances and completes only the active generation");
+        check(runtime.stateSnapshot().get("result").equals("1 message matches renderer") && texts(runtime.tree()).containsAll(List.of("Renderer release", "release@deal.dev")) && !texts(runtime.tree()).contains("Portable policy review"), "search matches actual mailbox records");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "checks are ready"));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("result").equals("1 message matches checks are ready") && texts(runtime.tree()).containsAll(List.of("Renderer release", "The Swing renderer checks are ready.")), "arbitrary input matches mailbox body text rather than a fixed query list");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "unknown phrase"));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("result").equals("No messages match unknown phrase") && texts(runtime.tree()).contains("No messages match unknown phrase"), "arbitrary unmatched input returns an honest empty result");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
+        runtime.awaitActions();
+        runtime.dispatch(action(runtime.tree(), "Cancel", bridge, null));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("status").equals("cancelled") && runtime.stateSnapshot().get("activeGeneration").equals(-1L), "search cancellation retires keyed delayed work");
+    }
+
+    private static void exerciseKanban(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
+        check(texts(runtime.tree()).containsAll(List.of("Ship portable policy", "Review renderer")) && !texts(runtime.tree()).contains("Verify rollback"), "kanban initial window contains exactly the first page");
+        runtime.dispatch(action(runtime.tree(), "Move first to doing", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(1L) && runtime.stateSnapshot().get("rollbackRevision").equals(0L), "kanban begins an optimistic revision");
+        check(texts(runtime.tree()).contains("Validating move") && cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban mutates card optimistically while validation is delayed");
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("message").equals("Move accepted") && cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban commits a validated move through the real effect");
+        runtime.dispatch(action(runtime.tree(), "Try denied archive move", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Ship portable policy").equals("archive"), "kanban exposes the denied optimistic workflow");
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("rollbackRevision").equals(1L) && runtime.stateSnapshot().get("message").equals("Destination 'archive' is not part of this board"), "kanban rolls back denied destination completion");
+        check(cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban restores the prior card column after denial");
+        runtime.dispatch(action(runtime.tree(), "Previous page", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pageOffset").equals(0L), "kanban clamps previous boundary");
+        runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && texts(runtime.tree()).containsAll(List.of("Verify rollback", "Publish completion")), "kanban advances to the next complete window");
+        runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pageOffset").equals(2L), "kanban clamps next boundary");
+        runtime.dispatch(action(runtime.tree(), "Previous page", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pageOffset").equals(0L), "kanban returns to the first window");
+    }
+
+    private static String cardColumn(UiBridge.Node node, String title) {
+        List<String> values = texts(node);
+        int index = values.indexOf(title);
+        if (index < 0 || index + 1 >= values.size()) throw new IllegalArgumentException("Card not found: " + title);
+        return values.get(index + 1);
     }
 
     private static UiBridge.ActionValue action(UiBridge.Node node, String textOrProp, UiBridge bridge, Object payload) {
@@ -119,14 +234,17 @@ public final class UiFrameworkTest {
         Path logic = fixture.resolve("typed.deal");
         Path pack = fixture.resolve("typed.dealui-pack");
         Path view = fixture.resolve("typed.dealui");
-        Files.writeString(logic, "export class State { text: string = \"\"; count: int = 0; amount: number = 0.0; flag: boolean = false; }\nexport class SetText { value: string = \"\"; }\nexport class SetCount { value: int = 0; }\nexport class SetAmount { value: number = 0.0; }\nexport class SetFlag { value: boolean = false; }\nexport class Clear {}\nexport class Completed {}\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function setText(state: State, action: SetText): State { return { text: action.value, count: state.count, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setCount(state: State, action: SetCount): State { return { text: state.text, count: action.value, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setAmount(state: State, action: SetAmount): State { return { text: state.text, count: state.count, amount: action.value, flag: state.flag }; }\n// @ui-update\nexport function setFlag(state: State, action: SetFlag): State { return { text: state.text, count: state.count, amount: state.amount, flag: action.value }; }\n// @ui-update\nexport function clear(state: State, action: Clear): State { return {}; }\n// @ui-effect\nexport async function complete(state: State, action: Clear): Completed { return {}; }\n// @ui-update\nexport function completed(state: State, action: Completed): State { return state; }\nexport function main(): null { return null; }\n");
+        Files.writeString(logic, "export class State { text: string = \"\"; count: int = 0; amount: number = 0.0; flag: boolean = false; }\nexport class SetText { value: string = \"\"; }\nexport class SetCount { value: int = 0; }\nexport class SetAmount { value: number = 0.0; }\nexport class SetFlag { value: boolean = false; }\nexport class Clear {}\nexport class Completed {}\nexport class EffectCommand { operation: string = \"start\"; key: string = \"typed\"; delayMillis: int = 5; cancellationMode: string = \"replace\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function setText(state: State, action: SetText): State { return { text: action.value, count: state.count, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setCount(state: State, action: SetCount): State { return { text: state.text, count: action.value, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setAmount(state: State, action: SetAmount): State { return { text: state.text, count: state.count, amount: action.value, flag: state.flag }; }\n// @ui-update\nexport function setFlag(state: State, action: SetFlag): State { return { text: state.text, count: state.count, amount: state.amount, flag: action.value }; }\n// @ui-update\nexport function clear(state: State, action: Clear): State { return {}; }\n// @ui-effect-policy\nexport function completePolicy(state: State, action: Clear): EffectCommand { return {}; }\n// @ui-effect\nexport async function complete(state: State, action: Clear): Completed { return {}; }\n// @ui-effect-failure\nexport function completeFailure(state: State, action: Clear, message: string): Completed { return {}; }\n// @ui-update\nexport function completed(state: State, action: Completed): State { return state; }\nexport function main(): null { return null; }\n");
         Files.writeString(pack, "export class Props { onText?: Action; onInt?: Action; onNumber?: Action; onBool?: Action; onClear?: Action; }\nexport component Host(props: Props): View { event onText(payload: string); event onInt(payload: int); event onNumber(payload: number); event onBool(payload: boolean); event onClear; capability \"renderer.swing.card\"; }\n");
         Files.writeString(view, "import * as app from \"./typed\";\nimport * as ui from \"./typed.dealui-pack\";\n// @ui-root\nexport view Typed(state: app.State): View { ui.Host(onText: action app.SetText { value: payload }, onInt: action app.SetCount { value: payload }, onNumber: action app.SetAmount { value: payload }, onBool: action app.SetFlag { value: payload }, onClear: action app.Clear {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("typed-output"));
-        compiler.build(result, root.resolve("build/classes"));
+        compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
         check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(): UiAction"), "generated action factories preserve event payload contracts");
-        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+        check(generated.contains("function effectCommand") && generated.contains("app.completePolicy") && generated.contains("class EffectCommand"), "synchronous DEAL effect policy produces a typed command plan");
+        String bridgeSource = Files.readString(result.generatedDirectory().resolve(result.bridgeClass() + ".java"));
+        check(bridgeSource.contains("new EffectCommand(command.operation, command.key, command.delayMillis, command.cancellationMode)") && bridgeSource.contains("effectFailure"), "generated bridge exposes typed scheduling and failure completion");
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiBridge bridge = Main.bridge(result, loader);
             UiBridge.Node tree = bridge.initial(bridge.initialState(), bridge.initialStore()).tree();
             int textSlot = tree.props().get("onText").actionSlot();
@@ -146,6 +264,86 @@ public final class UiFrameworkTest {
     private static void expectPayloadFailure(Runnable operation, String expected) {
         try { operation.run(); throw new AssertionError("Expected " + expected + " payload rejection"); }
         catch (IllegalArgumentException failure) { check(failure.getMessage().contains(expected), expected + " payload rejects coercion"); }
+    }
+
+    private static void dependencyStaging(Path root, Path outputs) throws Exception {
+        Path fixture = outputs.resolve("dependencies");
+        Path framework = fixture.resolve("framework");
+        Path application = fixture.resolve("application");
+        copyTree(root.resolve("ui"), framework.resolve("ui"));
+        Files.createDirectories(framework.resolve("ui/nested"));
+        Files.createDirectories(application.resolve("feature"));
+        Files.writeString(framework.resolve("ui/shared.deal"), "export class Shared { value: int = 1; }\n");
+        Files.writeString(framework.resolve("ui/nested/policy.deal"), "import * as common from  \"../shared\" ;\nexport function value(): int { let item: common.Shared = {}; return item.value; }\n");
+        Files.writeString(application.resolve("feature/helper.deal"), "import * as sharedAlias from \"../../framework/ui/shared\";\nimport * as policyAlias from \"../../framework/ui/nested/policy.deal\";\nexport function helper(): int { return policyAlias.value() + 1; }\n");
+        String logic = "import * as helperAlias from \"./feature/helper\" ;\nimport * as duplicateAlias from \"../framework/ui/./shared\";\nimport * as strings from \"std/string\";\n// from \"../framework/ui/shared\"\nexport class State { value: int = 0; }\nexport function untouched(): string { return strings.trim(\"from \\\"../framework/ui/shared\\\"\"); }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n";
+        Files.writeString(application.resolve("app.deal"), logic);
+        Files.writeString(application.resolve("pack.dealui-pack"), "export class TextProps { value: string = \"\"; }\nexport component Text(props: TextProps): View { capability \"renderer.swing.text\"; }\n");
+        Files.writeString(application.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view App(state: app.State): View { ui.Text(value: \"ok\") }\n");
+        UiCompiler compiler = new UiCompiler(fsRoot(), framework);
+        UiCompiler.Result result = compiler.compile(application.resolve("app.dealui"), outputs.resolve("dependencies-output"));
+        Path staged = result.outputDirectory().resolve("deal");
+        String stagedApp = Files.readString(staged.resolve("application/app.deal"));
+        String stagedHelper = Files.readString(staged.resolve("application/feature/helper.deal"));
+        check(stagedApp.contains("import * as helperAlias from \"./feature/helper\" ;") && stagedApp.contains("import * as duplicateAlias from \"../framework/ui/shared\";"), "cross-root imports use stable logical prefixes");
+        check(stagedApp.contains("strings.trim(\"from \\\"../framework/ui/shared\\\"\")") && stagedApp.contains("// from \"../framework/ui/shared\""), "unrelated strings and comments are preserved");
+        check(stagedApp.contains("from \"std/string\"") && !Files.exists(staged.resolve("stdlib/string.d.deal")), "canonical compiler-recognized standard imports remain intact without staged declarations");
+        check(stagedHelper.contains("from \"../../framework/ui/nested/policy\"") && Files.isRegularFile(staged.resolve("framework/ui/nested/policy.deal")), "transitive dependencies preserve approved-root layout");
+        check(Files.readString(staged.resolve("framework/ui/nested/policy.deal")).contains("from  \"../shared\""), "transitive import token formatting is preserved");
+        check(Files.readString(staged.resolve("ui_application.deal")).contains("from \"./application/app\""), "generated application import uses the logical application prefix");
+        try (var files = Files.walk(staged)) { check(files.filter(path -> path.getFileName().toString().equals("shared.deal")).count() == 1, "canonical dependency paths are deduplicated"); }
+        try (var files = Files.walk(staged)) { check(files.map(staged::relativize).noneMatch(path -> path.toString().contains(root.toString()) || path.toString().contains(fsRoot().toString())), "staged paths contain no absolute host path segments"); }
+        UiCompiler.Result repeated = compiler.compile(application.resolve("app.dealui"), outputs.resolve("dependencies-output-repeat"));
+        check(stagedSnapshot(staged).equals(stagedSnapshot(repeated.outputDirectory().resolve("deal"))), "staged output paths and contents are stable across output directories");
+        Path outside = outputs.resolve("outside.deal");
+        Files.writeString(outside, "export function value(): int { return 1; }\n");
+        Path escape = application.resolve("escape.deal");
+        Files.writeString(escape, "import * as outside from \"../../outside\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(application.resolve("escape.dealui"), "import * as app from \"./escape\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Escape(state: app.State): View { ui.Text(value: \"escape\") }\n");
+        expectDependencyEscape(compiler, application.resolve("escape.dealui"), outputs.resolve("escape-output"), "'../../outside' imported by application/escape.deal");
+        Path link = application.resolve("linked.deal");
+        try {
+            Files.createSymbolicLink(link, outside);
+            Path symlink = application.resolve("symlink.deal");
+            Files.writeString(symlink, "import * as linked from \"./linked\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+            Files.writeString(application.resolve("symlink.dealui"), "import * as app from \"./symlink\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Symlink(state: app.State): View { ui.Text(value: \"symlink\") }\n");
+            expectDependencyEscape(compiler, application.resolve("symlink.dealui"), outputs.resolve("symlink-output"), "'./linked' imported by application/symlink.deal");
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException ignored) {}
+        Path missing = application.resolve("missing.deal");
+        Files.writeString(missing, "import * as absent from \"./absent\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(application.resolve("missing.dealui"), "import * as app from \"./missing\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Missing(state: app.State): View { ui.Text(value: \"missing\") }\n");
+        try { compiler.compile(application.resolve("missing.dealui"), outputs.resolve("missing-output")); throw new AssertionError("Expected missing dependency failure"); }
+        catch (java.io.IOException failure) { check(failure.getMessage().contains("Missing relative DEAL dependency './absent'") && failure.getMessage().contains("missing.deal"), "missing dependencies report importer and specifier"); }
+        expectInvalidImport(compiler, application, outputs, "std/../console", "Unsupported DEAL standard library dependency 'std/../console'");
+        expectInvalidImport(compiler, application, outputs, "std/coroutine", "Unsupported DEAL standard library dependency 'std/coroutine'");
+        expectInvalidImport(compiler, application, outputs, "std/string/", "Unsupported DEAL standard library dependency 'std/string/'");
+        expectInvalidImport(compiler, application, outputs, "host/mail", "Unsupported bare DEAL dependency 'host/mail'");
+        Path incompleteFs = fixture.resolve("incomplete-fs");
+        Files.createDirectories(incompleteFs.resolve("build/deal"));
+        Files.createDirectories(incompleteFs.resolve("std"));
+        Files.copy(fsRoot().resolve("build/deal/Main.class"), incompleteFs.resolve("build/deal/Main.class"));
+        expectInvalidImport(new UiCompiler(incompleteFs, framework), application, outputs, "std/string", "Missing DEAL standard library dependency 'std/string'");
+    }
+
+    private static void expectInvalidImport(UiCompiler compiler, Path application, Path outputs, String specifier, String expected) throws Exception {
+        String name = "invalid-import-" + Integer.toUnsignedString(specifier.hashCode());
+        Path logic = application.resolve(name + ".deal");
+        Files.writeString(logic, "import * as dependency from \"" + specifier + "\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Path view = application.resolve(name + ".dealui");
+        Files.writeString(view, "import * as app from \"./" + name + "\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Invalid(state: app.State): View { ui.Text(value: \"invalid\") }\n");
+        try { compiler.compile(view, outputs.resolve(name)); throw new AssertionError("Expected invalid import failure"); }
+        catch (java.io.IOException failure) { check(failure.getMessage().contains(expected) && failure.getMessage().contains(name + ".deal"), "invalid standard and bare imports report importer and specifier"); }
+    }
+
+    private static void expectDependencyEscape(UiCompiler compiler, Path view, Path output, String detail) throws Exception {
+        try { compiler.compile(view, output); throw new AssertionError("Expected dependency escape failure"); }
+        catch (java.io.IOException failure) { check(failure.getMessage().equals("DEAL dependency escape rejected: " + detail), "dependency escapes report deterministic logical diagnostics"); }
+    }
+
+    private static java.util.Map<String, String> stagedSnapshot(Path root) throws Exception {
+        java.util.Map<String, String> snapshot = new java.util.TreeMap<>();
+        try (var files = Files.walk(root)) { for (Path file : files.filter(Files::isRegularFile).toList()) snapshot.put(root.relativize(file).toString().replace(java.io.File.separatorChar, '/'), Files.readString(file)); }
+        return snapshot;
     }
 
     private static void expect(String code, String view) throws Exception { expect(code, view, deal(Path.of("").toAbsolutePath())); }
@@ -182,7 +380,22 @@ public final class UiFrameworkTest {
     private static AbstractButton button(Component component, String text) { if (component instanceof AbstractButton value && value.getText().equals(text)) return value; if (component instanceof Container container) for (Component child : container.getComponents()) { AbstractButton found = button(child, text); if (found != null) return found; } return null; }
     private static JTextField input(Component component) { if (component instanceof JTextField value) return value; if (component instanceof Container container) for (Component child : container.getComponents()) { JTextField found = input(child); if (found != null) return found; } return null; }
     private static JComponent named(Component component, String name, String text) { if (component instanceof JLabel label && label.getName().equals(name) && label.getText().equals(text)) return label; if (component instanceof Container container) for (Component child : container.getComponents()) { JComponent found = named(child, name, text); if (found != null) return found; } return null; }
+    private static Path runtimeClasses() throws Exception { return Path.of(UiBridge.class.getProtectionDomain().getCodeSource().getLocation().toURI()); }
     private static Path fsRoot() { String value = System.getenv("DEAL_FS_ROOT"); return value == null ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(value); }
+    private static void copyTree(Path source, Path target) throws Exception { try (var files = Files.walk(source)) { for (Path file : files.toList()) { Path destination = target.resolve(source.relativize(file)); if (Files.isDirectory(file)) Files.createDirectories(destination); else Files.copy(file, destination); } } }
     private static void recreate(Path path) throws Exception { if (Files.exists(path)) try (var files = Files.walk(path)) { for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file); } Files.createDirectories(path); }
     private static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); passed++; }
+
+    private static final class ChildFirstLoader extends URLClassLoader {
+        private ChildFirstLoader(java.net.URL[] urls, ClassLoader parent) { super(urls, parent); }
+        @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (name.startsWith("deal.")) return super.loadClass(name, resolve);
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded == null) try { loaded = findClass(name); } catch (ClassNotFoundException ignored) { loaded = super.loadClass(name, false); }
+                if (resolve) resolveClass(loaded);
+                return loaded;
+            }
+        }
+    }
 }

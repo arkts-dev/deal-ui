@@ -63,7 +63,9 @@ public final class UiModel {
     }
 
     public record DealClass(String name, Map<String, Field> fields, boolean exported) { public DealClass { fields = immutable(fields); } }
-    public record Handler(String name, String stateType, String actionType, String returnType, boolean effect, Span span) {}
+    public record Handler(String name, String stateType, String actionType, String returnType, String kind, Span span) {
+        public boolean effect() { return kind.equals("ui-effect"); }
+    }
     public record DealFunction(String name, List<TypeRef> parameters, TypeRef returnType, boolean exported, boolean async, Span span) {
         public DealFunction { parameters = List.copyOf(parameters); }
     }
@@ -88,9 +90,11 @@ public final class UiModel {
     public record CheckedProgram(Path viewSource, Path dealSource, String title, String rootStateType,
                                  Map<String, View> views, Map<String, Component> components,
                                  Map<String, PackClass> packClasses, Map<String, Token> tokens,
-                                 DealModule deal, List<RenderNode> rootNodes, Map<String, Handler> updates,
-                                 Map<String, Handler> effects) {
-        public CheckedProgram { views = immutable(views); components = immutable(components); packClasses = immutable(packClasses); tokens = immutable(tokens); rootNodes = List.copyOf(rootNodes); updates = immutable(updates); effects = immutable(effects); }
+                                  DealModule deal, List<RenderNode> rootNodes, Map<String, Handler> updates,
+                                  Map<String, Handler> effects, Map<String, Handler> effectPolicies,
+                                  Map<String, Handler> effectFailures) {
+        public CheckedProgram { views = immutable(views); components = immutable(components); packClasses = immutable(packClasses); tokens = immutable(tokens); rootNodes = List.copyOf(rootNodes); updates = immutable(updates); effects = immutable(effects); effectPolicies = immutable(effectPolicies); effectFailures = immutable(effectFailures); }
+
     }
 
     private static <K, V> Map<K, V> immutable(Map<K, V> source) {

@@ -67,8 +67,10 @@ public final class UiChecker {
         }
         validatePack(components, packClasses, tokens);
 
-        Map<String, UiModel.Handler> updates = handlers(deal.handlers(), false);
-        Map<String, UiModel.Handler> effects = handlers(deal.handlers(), true);
+        Map<String, UiModel.Handler> updates = handlers(deal.handlers(), "ui-update");
+        Map<String, UiModel.Handler> effects = handlers(deal.handlers(), "ui-effect");
+        Map<String, UiModel.Handler> effectPolicies = handlers(deal.handlers(), "ui-effect-policy");
+        Map<String, UiModel.Handler> effectFailures = handlers(deal.handlers(), "ui-effect-failure");
         Set<String> reachableActions = new LinkedHashSet<>();
         Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
         scope.put(root.parameters().get(0).name(), new UiModel.TypeRef(stateType, false, false));
@@ -77,15 +79,25 @@ public final class UiChecker {
         for (String action : reachableActions) {
             if (!updates.containsKey(action)) error("UI2005", "Reachable action '" + action + "' requires exactly one @ui-update", root.span());
         }
-        for (String action : updates.keySet()) if (!reachableActions.contains(action) && !effectCompletion(actions(effects)).contains(action)) {
+        Set<String> completionActions = effectCompletion(actions(effects));
+        completionActions.addAll(effectCompletion(actions(effectFailures)));
+        for (String action : updates.keySet()) if (!reachableActions.contains(action) && !completionActions.contains(action)) {
             error("UI2006", "Update action '" + action + "' is unreachable", updates.get(action).span());
         }
         for (Map.Entry<String, UiModel.Handler> effect : effects.entrySet()) {
             if (!updates.containsKey(effect.getKey())) error("UI2007", "Effect action requires an update", effect.getValue().span());
             if (!updates.containsKey(effect.getValue().returnType())) error("UI2008", "Effect completion action requires an update", effect.getValue().span());
+            UiModel.Handler policy = effectPolicies.get(effect.getKey());
+            if (policy != null && !policy.returnType().equals("EffectCommand")) error("UI2038", "Effect policy must return EffectCommand", policy.span());
+            if (policy != null && !policy.stateType().equals(stateType)) error("UI2045", "Effect policy state must match root state", policy.span());
+            UiModel.Handler failure = effectFailures.get(effect.getKey());
+            if (failure != null && !updates.containsKey(failure.returnType())) error("UI2039", "Effect failure mapper must return an update action", failure.span());
+            if (failure != null && !failure.stateType().equals(stateType)) error("UI2046", "Effect failure mapper state must match root state", failure.span());
         }
+        for (UiModel.Handler policy : effectPolicies.values()) if (!effects.containsKey(policy.actionType())) error("UI2040", "Effect policy requires an effect", policy.span());
+        for (UiModel.Handler failure : effectFailures.values()) if (!effects.containsKey(failure.actionType())) error("UI2041", "Effect failure mapper requires an effect", failure.span());
         return new UiModel.CheckedProgram(viewFile, dealFile, root.name(), stateType, views, components,
-            packClasses, tokens, deal, nodes, updates, effects);
+            packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures);
     }
 
     private Set<String> effectCompletion(Map<String, UiModel.Handler> effects) {
@@ -286,9 +298,9 @@ public final class UiChecker {
     private String prefix(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(0, dot + 1); }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
 
-    private Map<String, UiModel.Handler> handlers(List<UiModel.Handler> source, boolean effect) {
+    private Map<String, UiModel.Handler> handlers(List<UiModel.Handler> source, String kind) {
         Map<String, UiModel.Handler> result = new LinkedHashMap<>();
-        for (UiModel.Handler handler : source) if (handler.effect() == effect && result.putIfAbsent(handler.actionType(), handler) != null) error("UI2033", "Duplicate handler for action '" + handler.actionType() + "'", handler.span());
+        for (UiModel.Handler handler : source) if (handler.kind().equals(kind) && result.putIfAbsent(handler.actionType(), handler) != null) error("UI2033", "Duplicate " + kind + " handler for action '" + handler.actionType() + "'", handler.span());
         return Map.copyOf(result);
     }
 
@@ -333,14 +345,18 @@ public final class UiChecker {
         for (FunctionDeclaration function : functions) {
             String directive = directiveBefore(source, function.span().startLine());
             if (directive == null) continue;
-            if (!exported.contains(function.name()) || function.params().size() != 2) throw new UiDiagnostic("UI2034", "UI handler must be exported with two parameters", file, function.span().startLine(), function.span().startColumn());
+            boolean failure = directive.equals("ui-effect-failure");
+            int parameters = failure ? 3 : 2;
+            if (!exported.contains(function.name()) || function.params().size() != parameters) throw new UiDiagnostic("UI2034", failure ? "Effect failure mapper must be exported with state, action, and message parameters" : "UI handler must be exported with two parameters", file, function.span().startLine(), function.span().startColumn());
             boolean effect = directive.equals("ui-effect");
-            if (function.isAsync() != effect) throw new UiDiagnostic("UI2035", effect ? "Effect must be async" : "Update must be synchronous", file, function.span().startLine(), function.span().startColumn());
+            boolean policy = directive.equals("ui-effect-policy") || failure;
+            if (function.isAsync() != effect) throw new UiDiagnostic("UI2035", effect ? "Effect must be async" : "Update and effect policy must be synchronous", file, function.span().startLine(), function.span().startColumn());
             String state = typeName(function.params().get(0).type());
             String action = typeName(function.params().get(1).type());
             String returned = typeName(function.returnType());
-            if (!effect && !state.equals(returned)) throw new UiDiagnostic("UI2036", "Update must return root state", file, function.span().startLine(), function.span().startColumn());
-            handlers.add(new UiModel.Handler(function.name(), state, action, returned, effect, span(file, function.span().startLine(), function.span().startColumn())));
+            if (failure && !typeName(function.params().get(2).type()).equals("string")) throw new UiDiagnostic("UI2044", "Effect failure mapper message parameter must be string", file, function.span().startLine(), function.span().startColumn());
+            if (!effect && !policy && !state.equals(returned)) throw new UiDiagnostic("UI2036", "Update must return root state", file, function.span().startLine(), function.span().startColumn());
+            handlers.add(new UiModel.Handler(function.name(), state, action, returned, directive, span(file, function.span().startLine(), function.span().startColumn())));
         }
         return new UiModel.DealModule(classes, functionInfo, handlers, file);
     }
@@ -352,6 +368,8 @@ public final class UiChecker {
             if (value.isEmpty()) continue;
             if (value.equals("// @ui-update")) return "ui-update";
             if (value.equals("// @ui-effect")) return "ui-effect";
+            if (value.equals("// @ui-effect-policy")) return "ui-effect-policy";
+            if (value.equals("// @ui-effect-failure")) return "ui-effect-failure";
             return null;
         }
         return null;

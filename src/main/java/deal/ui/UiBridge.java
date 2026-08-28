@@ -21,7 +21,20 @@ public interface UiBridge {
     record Enqueue(StoreValue store, boolean accepted, boolean startDrain) {}
     record Dequeue(StoreValue store, ActionValue action, boolean present) {}
     record Completion(StoreValue store, boolean accepted, boolean startDrain) {}
-    record Transition(StateValue state, Node tree, List<Patch> patches, StoreValue store, int effectId, StateValue effectState, ActionValue effectAction) {}
+    record EffectCommand(String operation, String key, long delayMillis, String cancellationMode) {
+        public EffectCommand {
+            java.util.Objects.requireNonNull(operation);
+            java.util.Objects.requireNonNull(key);
+            java.util.Objects.requireNonNull(cancellationMode);
+            if (!operation.equals("none") && !operation.equals("start") && !operation.equals("cancel")) throw new IllegalArgumentException("Unknown effect operation: " + operation);
+            if (delayMillis < 0) throw new IllegalArgumentException("Effect delay must be non-negative");
+            if (!cancellationMode.equals("none") && !cancellationMode.equals("replace") && !cancellationMode.equals("interrupt")) throw new IllegalArgumentException("Unknown effect cancellation mode: " + cancellationMode);
+            if ((operation.equals("cancel") || !cancellationMode.equals("none")) && key.isEmpty()) throw new IllegalArgumentException("Effect key is required for cancellation");
+        }
+        public static EffectCommand none() { return new EffectCommand("none", "", 0, "none"); }
+        public static EffectCommand immediate() { return new EffectCommand("start", "", 0, "none"); }
+    }
+    record Transition(StateValue state, Node tree, List<Patch> patches, StoreValue store, int effectId, StateValue effectState, ActionValue effectAction, EffectCommand effectCommand) {}
 
     String title();
     UiRendererBindings rendererBindings();
@@ -37,5 +50,6 @@ public interface UiBridge {
     Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action);
     ActionValue action(int slot, Object payload);
     ActionValue runEffect(int effectId, StateValue state, ActionValue action);
+    default ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { return null; }
     Map<String, Object> stateSnapshot(StateValue state);
 }

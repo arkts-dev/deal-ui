@@ -4,6 +4,13 @@ export class EffectDescriptor {
   committedRevision: int = 0;
 }
 
+export class EffectCommand {
+  operation: string = "none";
+  key: string = "";
+  delayMillis: int = 0;
+  cancellationMode: string = "none";
+}
+
 export class CompletionDescriptor {
   accepted: boolean = false;
   actionSlot: int = -1;
@@ -19,6 +26,18 @@ export function start(effectId: int, actionSlot: int, committedRevision: int): E
     actionSlot: actionSlot,
     committedRevision: committedRevision
   };
+}
+
+export function noCommand(): EffectCommand {
+  return {};
+}
+
+export function startCommand(key: string, delayMillis: int, cancellationMode: string): EffectCommand {
+  return { operation: "start", key: key, delayMillis: delayMillis, cancellationMode: cancellationMode };
+}
+
+export function cancelCommand(key: string, cancellationMode: string): EffectCommand {
+  return { operation: "cancel", key: key, cancellationMode: cancellationMode };
 }
 
 export function completion(disposed: boolean, actionSlot: int): CompletionDescriptor {

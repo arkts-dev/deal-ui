@@ -5,13 +5,31 @@ import * as ui from "./platform-ui.dealui-pack";
 export view Checkout(state: app.CheckoutState): View {
   ui.Card() {
     ui.Column(spacing: ui.spaceMd) {
-      ui.Text(value: "CHECKOUT / CONTACT / PAYMENT")
+      ui.Text(value: "CHECKOUT")
       ui.Text(value: state.route)
-      ui.Input(value: state.email, accessibilityLabel: "Email address", onSubmit: action app.EditEmail { value: payload })
-      When(state.touched && !state.valid) { ui.Text(value: state.guardMessage) } Else { ui.Text(value: "Contact information is ready") }
-      ui.Button(text: "Review email", accessibilityLabel: "Review email validation", onClick: action app.TouchEmail {})
-      ui.Button(text: "Continue to payment", accessibilityLabel: "Continue to payment", onClick: action app.Continue {})
-      ui.Button(text: "Return to contact", accessibilityLabel: "Return to contact", onClick: action app.ReturnToContact {})
+      When(state.route === "checkout/contact") {
+        ui.Text(value: "Contact")
+        ui.Input(value: state.email, accessibilityLabel: "Email address", onSubmit: action app.EditEmail { value: payload })
+        When((state.touched || state.dirty) && !state.valid) { ui.Text(value: state.guardMessage) } Else { ui.Text(value: "Contact information is ready") }
+        ui.Button(text: "Review email", accessibilityLabel: "Review email validation", onClick: action app.TouchEmail {})
+        ui.Button(text: "Continue to payment", accessibilityLabel: "Continue to payment", onClick: action app.Continue {})
+      } Else {
+        When(state.route === "checkout/payment") {
+          ui.Text(value: "Payment")
+          ui.Text(value: state.email)
+        } Else {
+          ui.Text(value: "Checkout closed")
+        }
+      }
+      ui.Button(text: "Back", accessibilityLabel: "Go back", onClick: action app.Back {})
+      ui.Button(text: "Leave checkout", accessibilityLabel: "Leave checkout", onClick: action app.RequestLeave {})
+      When(state.leavePending) {
+        ui.Text(value: state.guardMessage)
+        ui.Button(text: "Discard and leave", accessibilityLabel: "Discard changes and leave checkout", onClick: action app.ConfirmLeave {})
+        ui.Button(text: "Stay in checkout", accessibilityLabel: "Cancel leaving checkout", onClick: action app.CancelLeave {})
+      } Else {
+        ui.Text(value: state.guardMessage)
+      }
     }
   }
 }

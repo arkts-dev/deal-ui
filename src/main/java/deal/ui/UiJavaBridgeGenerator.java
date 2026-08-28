@@ -28,7 +28,8 @@ final class UiJavaBridgeGenerator {
         for (Map.Entry<String, UiModel.Component> component : program.components().entrySet()) {
             if (!first) out.append(", ");
             first = false;
-            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings.binding(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory(component.getValue())).append(", deal.ui.UiRendererBindings::configure))");
+            String factory = factory(component.getValue());
+            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings.").append(factory.equals("modal") ? "modalBinding" : "binding").append("(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory).append(", deal.ui.UiRendererBindings::configure))");
         }
         out.append("), java.util.Map.ofEntries(");
         first = true;
@@ -51,6 +52,7 @@ final class UiJavaBridgeGenerator {
 
         generateActions(out);
         generateEffects(out);
+        generateEffectFailures(out);
         generateSnapshot(out);
         out.append("  private static <T> T invalidPayload(int slot, String expected, Object payload) { throw new IllegalArgumentException(\"Action slot \" + slot + \" requires \" + expected + \" payload, got \" + (payload == null ? \"null\" : payload.getClass().getName())); }\n");
         generateConversions(out);
@@ -86,7 +88,28 @@ final class UiJavaBridgeGenerator {
             int completionId = generated.actionIds().get(handler.returnType());
             UiModel.DealClass completion = program.deal().classes().get(handler.returnType());
             out.append("  private Object completion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L");
-            for (Map.Entry<String, Integer> action : generated.actionIds().entrySet()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
+            for (Map.Entry<String, Integer> action : generated.actionIds().entrySet().stream().sorted(Map.Entry.comparingByValue()).toList()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
+            out.append("); }\n");
+        }
+    }
+
+    private void generateEffectFailures(StringBuilder out) {
+        if (program.effectFailures().isEmpty()) return;
+        out.append("  @Override public ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { var value = (").append(ui).append(".$C_UiAction) action.abi(); return switch (effectId) {\n");
+        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
+            UiModel.Handler handler = program.effectFailures().get(entry.getKey());
+            if (handler == null) continue;
+            int id = generated.actionIds().get(entry.getKey());
+            out.append("    case ").append(entry.getValue()).append(" -> new ActionValue(failureCompletion_").append(entry.getValue()).append("(").append(app).append(".").append(handler.name()).append("((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), new ").append(app).append(".$C_").append(entry.getKey()).append("(");
+            appendFields(out, program.deal().classes().get(entry.getKey()), field -> "value.nominal" + id + "." + field.name());
+            out.append("), failure.getMessage() == null ? failure.getClass().getName() : failure.getMessage())));\n");
+        }
+        out.append("    default -> null;\n  }; }\n");
+        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
+            UiModel.Handler handler = program.effectFailures().get(entry.getKey());
+            if (handler == null) continue;
+            out.append("  private Object failureCompletion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L");
+            for (Map.Entry<String, Integer> action : generated.actionIds().entrySet().stream().sorted(Map.Entry.comparingByValue()).toList()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
             out.append("); }\n");
         }
     }
@@ -98,7 +121,7 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateConversions(StringBuilder out) {
-        out.append("  private Transition transition(").append(ui).append(".$C_Transition value, StateValue state, ActionValue effectAction) { return new Transition(state, node(value.tree), patches(value.plan.patches), new StoreValue(value.store), (int) value.effect.effectId, state, effectAction); }\n")
+        out.append("  private Transition transition(").append(ui).append(".$C_Transition value, StateValue state, ActionValue effectAction) { var command = effectAction == null ? ").append(ui).append(".startCommand(\"\", 0L, \"none\") : ").append(ui).append(".effectCommand((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), (").append(ui).append(".$C_UiAction) effectAction.abi()); return new Transition(state, node(value.tree), patches(value.plan.patches), new StoreValue(value.store), (int) value.effect.effectId, state, effectAction, new EffectCommand(command.operation, command.key, command.delayMillis, command.cancellationMode)); }\n")
             .append("  private Identity identity(").append(ui).append(".$C_ViewNode value) { return new Identity(value.structural, new Key(value.keyKind, value.keyInt, value.keyString)); }\n")
             .append("  private Node node(").append(ui).append(".$C_ViewNode value) { java.util.Map<String, Prop> props = new java.util.LinkedHashMap<>(); for (Object raw : value.props.data) { var prop = (").append(ui).append(".$C_Prop) raw; Object converted = switch (prop.kind) { case \"int\" -> prop.intValue; case \"number\" -> prop.numberValue; case \"boolean\" -> prop.booleanValue; default -> prop.stringValue; }; props.put(prop.name, new Prop(prop.name, prop.kind, converted, (int) prop.actionSlot)); } java.util.List<Node> children = new java.util.ArrayList<>(); for (Object raw : value.children.data) children.add(node((").append(ui).append(".$C_ViewNode) raw)); return new Node(value.component, identity(value), props, children); }\n")
             .append("  private ").append(ui).append(".$C_ViewNode nodeValue(Node value) { var props = new ").append(ui).append(".$Array$Prop(new Object[0]); for (Prop prop : value.props().values()) { var raw = new ").append(ui).append(".$C_Prop(prop.name(), prop.kind(), prop.value() instanceof String text ? text : \"\", prop.value() instanceof Long number ? number : 0L, prop.value() instanceof Double number ? number : 0.0, prop.value() instanceof Boolean bool && bool, prop.actionSlot()); props.data = java.util.Arrays.copyOf(props.data, props.data.length + 1); props.data[props.data.length - 1] = raw; } var children = new ").append(ui).append(".$Array$ViewNode(new Object[0]); for (Node child : value.children()) { children.data = java.util.Arrays.copyOf(children.data, children.data.length + 1); children.data[children.data.length - 1] = nodeValue(child); } return new ").append(ui).append(".$C_ViewNode(value.component(), value.identity().structural(), value.identity().key().kind(), value.identity().key().intValue(), value.identity().key().stringValue(), props, children); }\n")
