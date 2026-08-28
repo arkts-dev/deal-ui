@@ -127,7 +127,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
 
     private static void cleanupPrepared(Map<UiBridge.Identity, PreparedComponent> staged, Throwable failure) {
-        for (PreparedComponent component : staged.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+        for (PreparedComponent component : staged.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException | Error cleanupFailure) { failure.addSuppressed(cleanupFailure); }
         staged.clear();
     }
 
@@ -142,8 +142,8 @@ public final class SwingUiRuntime implements AutoCloseable {
         JComponent live = retained.get(node.identity());
         UiRendererBindings.Binding binding = bindings.require(node.component());
         JComponent component = binding.factory().get();
-        binding.configurator().apply(component, node, bridge, dispatch::accept, bindings);
         staged.put(node.identity(), new PreparedComponent(component, binding));
+        binding.configurator().apply(component, node, bridge, dispatch::accept, bindings);
         stageDisposal(live, disposals);
         for (UiBridge.Node child : node.children()) stageNode(child, staged, disposals);
     }
@@ -154,8 +154,8 @@ public final class SwingUiRuntime implements AutoCloseable {
         JComponent component = retained.get(patch.identity());
         PreparedComponent preparedComponent = prepared.take(patch.identity());
         if (preparedComponent != null && component != null && compatible(component, patch.node().component())) {
-            copyConfiguration(preparedComponent.component(), component);
             preparedComponent.binding().disposer().accept(preparedComponent.component());
+            copyConfiguration(preparedComponent.component(), component);
         } else if (preparedComponent != null) {
             JComponent replacement = preparedComponent.component();
             JComponent displaced = retained.put(patch.identity(), replacement);
@@ -203,7 +203,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         private PreparedPlan(Map<UiBridge.Identity, PreparedComponent> components, java.util.Set<JComponent> disposals) { this.components = components; this.disposals = disposals; }
         private PreparedComponent take(UiBridge.Identity identity) { return components.remove(identity); }
         private java.util.Set<JComponent> disposals() { return disposals; }
-        private void releaseUnused(UiRendererBindings bindings) { RuntimeException failure = null; for (PreparedComponent component : components.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException cleanupFailure) { if (failure == null) failure = cleanupFailure; else failure.addSuppressed(cleanupFailure); } components.clear(); if (failure != null) throw failure; }
+        private void releaseUnused(UiRendererBindings bindings) { Throwable failure = null; for (PreparedComponent component : components.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException | Error cleanupFailure) { if (failure == null) failure = cleanupFailure; else failure.addSuppressed(cleanupFailure); } components.clear(); if (failure instanceof RuntimeException runtime) throw runtime; if (failure instanceof Error error) throw error; }
     }
 
     private void syncChildren(UiBridge.Node node) {
