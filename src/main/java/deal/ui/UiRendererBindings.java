@@ -39,7 +39,8 @@ public final class UiRendererBindings {
         throw new IllegalStateException("Spacing token is not numeric: " + token);
     }
     public void prepareDisposal(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) binding.disposalPrepare().accept(component); }
-    public void dispose(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) try { binding.disposer().accept(component); } catch (RuntimeException | Error failure) { Thread.getDefaultUncaughtExceptionHandler().uncaughtException(Thread.currentThread(), failure); } }
+    public void dispose(JComponent component) { String name = component.getName(); if (name == null) return; Binding binding = components.get(name); if (binding != null) try { binding.disposer().accept(component); } catch (RuntimeException | Error failure) { reportCleanupFailure(failure); } }
+    public static void reportCleanupFailure(Throwable failure) { try { Thread thread = Thread.currentThread(); Thread.UncaughtExceptionHandler handler = thread.getUncaughtExceptionHandler(); if (handler != null) handler.uncaughtException(thread, failure); } catch (RuntimeException | Error ignored) {} }
     public Color background() { return background; }
     public Color accent() { return accent; }
     public static JComponent column() { JPanel panel = new JPanel(); panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)); return panel; }

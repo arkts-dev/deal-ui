@@ -154,8 +154,9 @@ public final class SwingUiRuntime implements AutoCloseable {
         JComponent component = retained.get(patch.identity());
         PreparedComponent preparedComponent = prepared.take(patch.identity());
         if (preparedComponent != null && component != null && compatible(component, patch.node().component())) {
+            Runnable configuration = prepareConfigurationCopy(preparedComponent.component(), component);
             preparedComponent.binding().disposer().accept(preparedComponent.component());
-            copyConfiguration(preparedComponent.component(), component);
+            configuration.run();
         } else if (preparedComponent != null) {
             JComponent replacement = preparedComponent.component();
             JComponent displaced = retained.put(patch.identity(), replacement);
@@ -183,17 +184,12 @@ public final class SwingUiRuntime implements AutoCloseable {
         }
     }
 
-    private void copyConfiguration(JComponent source, JComponent target) {
-        target.setName(source.getName());
-        target.setFont(source.getFont());
-        target.setForeground(source.getForeground());
-        target.setBackground(source.getBackground());
-        target.setBorder(source.getBorder());
-        target.setOpaque(source.isOpaque());
-        target.setCursor(source.getCursor());
-        if (source instanceof JLabel from && target instanceof JLabel to) to.setText(from.getText());
-        if (source instanceof JTextField from && target instanceof JTextField to) { to.setText(from.getText()); to.setColumns(from.getColumns()); for (var listener : to.getActionListeners()) to.removeActionListener(listener); for (var listener : from.getActionListeners()) to.addActionListener(listener); }
-        if (source instanceof JButton from && target instanceof JButton to) { to.setText(from.getText()); to.setFocusPainted(from.isFocusPainted()); for (var listener : to.getActionListeners()) to.removeActionListener(listener); for (var listener : from.getActionListeners()) to.addActionListener(listener); }
+    private Runnable prepareConfigurationCopy(JComponent source, JComponent target) {
+        String name = source.getName(); Font font = source.getFont(); Color foreground = source.getForeground(); Color background = source.getBackground(); javax.swing.border.Border border = source.getBorder(); boolean opaque = source.isOpaque(); java.awt.Cursor cursor = source.getCursor();
+        String text = source instanceof JLabel label ? label.getText() : source instanceof JTextField input ? input.getText() : source instanceof JButton button ? button.getText() : null;
+        int columns = source instanceof JTextField input ? input.getColumns() : 0; boolean focusPainted = source instanceof JButton button && button.isFocusPainted();
+        java.awt.event.ActionListener[] listeners = source instanceof JTextField input ? input.getActionListeners() : source instanceof JButton button ? button.getActionListeners() : new java.awt.event.ActionListener[0];
+        return () -> { target.setName(name); target.setFont(font); target.setForeground(foreground); target.setBackground(background); target.setBorder(border); target.setOpaque(opaque); target.setCursor(cursor); if (target instanceof JLabel label) label.setText(text); if (target instanceof JTextField input) { input.setText(text); input.setColumns(columns); for (var listener : input.getActionListeners()) input.removeActionListener(listener); for (var listener : listeners) input.addActionListener(listener); } if (target instanceof JButton button) { button.setText(text); button.setFocusPainted(focusPainted); for (var listener : button.getActionListeners()) button.removeActionListener(listener); for (var listener : listeners) button.addActionListener(listener); } };
     }
 
     private record PreparedComponent(JComponent component, UiRendererBindings.Binding binding) {}
@@ -203,7 +199,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         private PreparedPlan(Map<UiBridge.Identity, PreparedComponent> components, java.util.Set<JComponent> disposals) { this.components = components; this.disposals = disposals; }
         private PreparedComponent take(UiBridge.Identity identity) { return components.remove(identity); }
         private java.util.Set<JComponent> disposals() { return disposals; }
-        private void releaseUnused(UiRendererBindings bindings) { Throwable failure = null; for (PreparedComponent component : components.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException | Error cleanupFailure) { if (failure == null) failure = cleanupFailure; else failure.addSuppressed(cleanupFailure); } components.clear(); if (failure instanceof RuntimeException runtime) throw runtime; if (failure instanceof Error error) throw error; }
+        private void releaseUnused(UiRendererBindings bindings) { for (PreparedComponent component : components.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException | Error cleanupFailure) { UiRendererBindings.reportCleanupFailure(cleanupFailure); } components.clear(); }
     }
 
     private void syncChildren(UiBridge.Node node) {
