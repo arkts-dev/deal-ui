@@ -1,5 +1,5 @@
-Commit: a672c8a711c47873865a108a82e88bb7b23462f4
-Timestamp: 2026-08-28T13:32:36+03:00
+Commit: a2bb6f32140c1559fbc6fdcadeb795ce3899798d
+Timestamp: 2026-08-28T19:18:06+03:00
 
 $ ./scripts/compile.sh
 EXIT: 0
@@ -8,21 +8,19 @@ $ ./scripts/lint.sh
 EXIT: 0
 
 $ ./scripts/test.sh
-Passed: 39
-Exception in thread "main" java.lang.IllegalStateException: unhandled cleanup
-	at deal.ui.UiRuntimeInvariantTest.cleanupReportingNeverEscapes(UiRuntimeInvariantTest.java:290)
-	at deal.ui.UiRuntimeInvariantTest.main(UiRuntimeInvariantTest.java:36)
-Runtime invariants passed: 47
+Passed: 92
+Runtime invariants passed: 85
 EXIT: 0
 
 $ ./scripts/build.sh
-UI build successful: /tmp/deal-ui-14194846779082999599/application/classes
-UI build successful: /tmp/deal-ui-276714027902946904/application/classes
-UI build successful: /tmp/deal-ui-290667664216627894/application/classes
-UI build successful: /tmp/deal-ui-14491823170965757577/application/classes
-UI build successful: /tmp/deal-ui-8097777231504985403/application/classes
+UI build successful: /tmp/deal-ui-13367107535856689950/application/classes
+UI build successful: /tmp/deal-ui-3001087324806583113/application/classes
+UI build successful: /tmp/deal-ui-13944525994839354565/application/classes
+UI build successful: /tmp/deal-ui-9921014256175631191/application/classes
+UI build successful: /tmp/deal-ui-8277697559832608527/application/classes
 EXIT: 0
 
 $ ./scripts/verify-visible.sh
 Visible gallery scenario passed
+Visible semantic example scenarios passed
 EXIT: 0
