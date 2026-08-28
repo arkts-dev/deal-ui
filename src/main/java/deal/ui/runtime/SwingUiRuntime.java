@@ -67,7 +67,6 @@ public final class SwingUiRuntime implements AutoCloseable {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
             PreparedPlan prepared = stagePatches(patches, next);
             try {
-                prepared.commitConfigurations();
                 for (UiBridge.Patch patch : patches) applyPatch(patch, prepared);
                 for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
                 tree = Objects.requireNonNull(next);
@@ -113,19 +112,23 @@ public final class SwingUiRuntime implements AutoCloseable {
 
     private PreparedPlan stagePatches(List<UiBridge.Patch> patches, UiBridge.Node next) {
         Map<UiBridge.Identity, PreparedComponent> staged = new LinkedHashMap<>();
-        Map<UiBridge.Identity, Runnable> commits = new LinkedHashMap<>();
         java.util.Set<JComponent> disposals = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         try {
             for (UiBridge.Patch patch : patches) {
                 if (patch.kind().equals("dispose")) stageDisposal(retained.get(patch.identity()), disposals);
-                else stageNode(patch.node(), staged, commits, disposals);
+                else stageNode(patch.node(), staged, disposals);
             }
-            stageNode(next, staged, commits, disposals);
-            return new PreparedPlan(staged, commits, disposals);
+            stageNode(next, staged, disposals);
+            return new PreparedPlan(staged, disposals);
         } catch (RuntimeException | Error failure) {
-            for (PreparedComponent component : staged.values()) component.binding().disposer().accept(component.component());
+            cleanupPrepared(staged, failure);
             throw failure;
         }
+    }
+
+    private static void cleanupPrepared(Map<UiBridge.Identity, PreparedComponent> staged, Throwable failure) {
+        for (PreparedComponent component : staged.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+        staged.clear();
     }
 
     private void stageDisposal(JComponent component, java.util.Set<JComponent> staged) {
@@ -134,22 +137,27 @@ public final class SwingUiRuntime implements AutoCloseable {
         bindings.prepareDisposal(component);
     }
 
-    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, PreparedComponent> staged, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) {
-        if (commits.containsKey(node.identity())) return;
+    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, PreparedComponent> staged, java.util.Set<JComponent> disposals) {
+        if (staged.containsKey(node.identity())) return;
         JComponent live = retained.get(node.identity());
         UiRendererBindings.Binding binding = bindings.require(node.component());
-        JComponent component = live != null && compatible(live, node.component()) ? live : binding.factory().get();
-        if (component != live) { staged.put(node.identity(), new PreparedComponent(component, binding)); stageDisposal(live, disposals); }
-        commits.put(node.identity(), binding.preparer().prepare(component, node, bridge, dispatch::accept, bindings));
-        for (UiBridge.Node child : node.children()) stageNode(child, staged, commits, disposals);
+        JComponent component = binding.factory().get();
+        binding.configurator().apply(component, node, bridge, dispatch::accept, bindings);
+        staged.put(node.identity(), new PreparedComponent(component, binding));
+        stageDisposal(live, disposals);
+        for (UiBridge.Node child : node.children()) stageNode(child, staged, disposals);
     }
 
     private void applyPatch(UiBridge.Patch patch, PreparedPlan prepared) {
         if (closed) return;
         if (patch.kind().equals("dispose")) { dispose(patch.identity(), prepared.disposals()); return; }
         JComponent component = retained.get(patch.identity());
-        JComponent replacement = prepared.take(patch.identity());
-        if (replacement != null) {
+        PreparedComponent preparedComponent = prepared.take(patch.identity());
+        if (preparedComponent != null && component != null && compatible(component, patch.node().component())) {
+            copyConfiguration(preparedComponent.component(), component);
+            preparedComponent.binding().disposer().accept(preparedComponent.component());
+        } else if (preparedComponent != null) {
+            JComponent replacement = preparedComponent.component();
             JComponent displaced = retained.put(patch.identity(), replacement);
             component = replacement;
             if (displaced != null) {
@@ -175,16 +183,27 @@ public final class SwingUiRuntime implements AutoCloseable {
         }
     }
 
+    private void copyConfiguration(JComponent source, JComponent target) {
+        target.setName(source.getName());
+        target.setFont(source.getFont());
+        target.setForeground(source.getForeground());
+        target.setBackground(source.getBackground());
+        target.setBorder(source.getBorder());
+        target.setOpaque(source.isOpaque());
+        target.setCursor(source.getCursor());
+        if (source instanceof JLabel from && target instanceof JLabel to) to.setText(from.getText());
+        if (source instanceof JTextField from && target instanceof JTextField to) { to.setText(from.getText()); to.setColumns(from.getColumns()); for (var listener : to.getActionListeners()) to.removeActionListener(listener); for (var listener : from.getActionListeners()) to.addActionListener(listener); }
+        if (source instanceof JButton from && target instanceof JButton to) { to.setText(from.getText()); to.setFocusPainted(from.isFocusPainted()); for (var listener : to.getActionListeners()) to.removeActionListener(listener); for (var listener : from.getActionListeners()) to.addActionListener(listener); }
+    }
+
     private record PreparedComponent(JComponent component, UiRendererBindings.Binding binding) {}
     private static final class PreparedPlan {
         private final Map<UiBridge.Identity, PreparedComponent> components;
-        private final Map<UiBridge.Identity, Runnable> commits;
         private final java.util.Set<JComponent> disposals;
-        private PreparedPlan(Map<UiBridge.Identity, PreparedComponent> components, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) { this.components = components; this.commits = commits; this.disposals = disposals; }
-        private JComponent take(UiBridge.Identity identity) { PreparedComponent value = components.remove(identity); return value == null ? null : value.component(); }
-        private void commitConfigurations() { for (Runnable action : commits.values()) action.run(); commits.clear(); }
+        private PreparedPlan(Map<UiBridge.Identity, PreparedComponent> components, java.util.Set<JComponent> disposals) { this.components = components; this.disposals = disposals; }
+        private PreparedComponent take(UiBridge.Identity identity) { return components.remove(identity); }
         private java.util.Set<JComponent> disposals() { return disposals; }
-        private void releaseUnused(UiRendererBindings bindings) { for (PreparedComponent component : components.values()) component.binding().disposer().accept(component.component()); components.clear(); }
+        private void releaseUnused(UiRendererBindings bindings) { RuntimeException failure = null; for (PreparedComponent component : components.values()) try { component.binding().disposer().accept(component.component()); } catch (RuntimeException cleanupFailure) { if (failure == null) failure = cleanupFailure; else failure.addSuppressed(cleanupFailure); } components.clear(); if (failure != null) throw failure; }
     }
 
     private void syncChildren(UiBridge.Node node) {
@@ -220,7 +239,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         JComponent existing = retained.get(node.identity());
         JComponent component = compatible(existing, binding.component()) ? existing : binding.factory().get();
         retained.put(node.identity(), component);
-        binding.preparer().prepare(component, node, bridge, dispatch::accept, bindings).run();
+        binding.configurator().apply(component, node, bridge, dispatch::accept, bindings);
         if (component instanceof JPanel panel) {
             panel.removeAll();
             int spacing = spacing(node);

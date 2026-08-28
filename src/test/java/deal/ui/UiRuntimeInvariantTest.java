@@ -222,7 +222,7 @@ public final class UiRuntimeInvariantTest {
         check(renderer.componentForTesting(prior) == component && renderer.disposedComponents() == 0 && disposals[0] == 0, "throwing disposal preparation leaves live identity and resources unchanged");
         fail[0] = false;
         renderer.apply(List.of(disposal), bridge.node("text", "next"));
-        check(prepares[0] == 2 && disposals[0] == 1 && renderer.disposedComponents() == 1, "successful retry prepares before exactly-once destructive disposal");
+        check(prepares[0] == 2 && disposals[0] == 2 && renderer.disposedComponents() == 1, "successful retry releases live and unused staged resources once each");
         renderer.close();
     }
 
@@ -230,8 +230,8 @@ public final class UiRuntimeInvariantTest {
         int[] commits = {0};
         int[] disposals = {0};
         boolean[] fail = {true};
-        UiRendererBindings.Binding text = new UiRendererBindings.Binding("text", JLabel::new, (component, node, bridge, dispatch, bindings) -> () -> { component.setName("text"); commits[0]++; }, ignored -> { if (fail[0]) throw new IllegalStateException("replacement disposal failure"); }, ignored -> disposals[0]++);
-        UiRendererBindings.Binding panel = new UiRendererBindings.Binding("panel", JPanel::new, (component, node, bridge, dispatch, bindings) -> () -> { component.setName("panel"); commits[0]++; }, ignored -> {}, ignored -> disposals[0]++);
+        UiRendererBindings.Binding text = new UiRendererBindings.Binding("text", JLabel::new, (component, node, bridge, dispatch, bindings) -> { component.setName("text"); commits[0]++; }, ignored -> { if (fail[0]) throw new IllegalStateException("replacement disposal failure"); }, ignored -> disposals[0]++);
+        UiRendererBindings.Binding panel = new UiRendererBindings.Binding("panel", JPanel::new, (component, node, bridge, dispatch, bindings) -> { component.setName("panel"); commits[0]++; }, ignored -> {}, ignored -> disposals[0]++);
         UiRendererBindings bindings = new UiRendererBindings(Map.of("text", text, "panel", panel), Map.of(), Color.WHITE, Color.BLACK);
         ProtocolBridge bridge = new ProtocolBridge();
         deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Replacement", bindings, bridge, action -> {});
@@ -241,12 +241,12 @@ public final class UiRuntimeInvariantTest {
         UiBridge.Patch update = new UiBridge.Patch("update", next.identity(), next.identity(), true, 0, next);
         try { renderer.apply(List.of(update), next); throw new AssertionError("Expected replacement disposal failure"); }
         catch (IllegalStateException failure) { check(failure.getMessage().equals("replacement disposal failure"), "replacement disposal preparation failure is surfaced"); }
-        check(renderer.componentForTesting(prior) == old && commits[0] == 1 && disposals[0] == 1, "failed replacement retains old identity and releases abandoned replacement");
+        check(renderer.componentForTesting(prior) == old && commits[0] == 2 && disposals[0] == 1, "failed replacement retains old identity and releases abandoned replacement");
         fail[0] = false;
         renderer.apply(List.of(update), next);
         JComponent replacement = renderer.componentForTesting(next);
         check(replacement instanceof JPanel && replacement != old, "prepared incompatible replacement is installed");
-        check(replacement.getName().equals("panel") && commits[0] == 2, "prepared replacement commits configuration once");
+        check(replacement.getName().equals("panel") && commits[0] == 3, "prepared replacement commits configuration once");
         check(disposals[0] == 2 && renderer.disposedComponents() == 1, "displaced component is disposed once after abandoned replacement cleanup");
         renderer.close();
     }
