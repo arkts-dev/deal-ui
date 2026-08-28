@@ -234,7 +234,7 @@ public final class UiRuntimeInvariantTest {
     }
 
     private static UiProgramRuntime runtime(ProtocolBridge bridge, ManualExecutor transitions, ManualExecutor effects) {
-        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", new UiRendererBindings.Binding("text", JLabel::new, UiRendererBindings::configure)), Map.of(), Color.WHITE, Color.BLACK);
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", UiRendererBindings.binding("text", JLabel::new, UiRendererBindings::configure)), Map.of(), Color.WHITE, Color.BLACK);
         return new UiProgramRuntime(bridge, "Invariant", bindings, transitions, effects);
     }
 
