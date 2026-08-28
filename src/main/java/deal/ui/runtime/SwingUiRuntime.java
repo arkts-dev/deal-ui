@@ -117,9 +117,9 @@ public final class SwingUiRuntime implements AutoCloseable {
         try {
             for (UiBridge.Patch patch : patches) {
                 if (patch.kind().equals("dispose")) stageDisposal(retained.get(patch.identity()), disposals);
-                else stageNode(patch.node(), staged, commits);
+                else stageNode(patch.node(), staged, commits, disposals);
             }
-            stageNode(next, staged, commits);
+            stageNode(next, staged, commits, disposals);
             return new PreparedPlan(staged, commits, disposals);
         } catch (RuntimeException | Error failure) {
             for (JComponent component : staged.values()) bindings.dispose(component);
@@ -133,14 +133,14 @@ public final class SwingUiRuntime implements AutoCloseable {
         bindings.prepareDisposal(component);
     }
 
-    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, JComponent> staged, Map<UiBridge.Identity, Runnable> commits) {
+    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, JComponent> staged, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) {
         if (commits.containsKey(node.identity())) return;
         JComponent live = retained.get(node.identity());
         UiRendererBindings.Binding binding = bindings.require(node.component());
         JComponent component = live != null && compatible(live, node.component()) ? live : binding.factory().get();
-        if (component != live) staged.put(node.identity(), component);
+        if (component != live) { staged.put(node.identity(), component); stageDisposal(live, disposals); }
         commits.put(node.identity(), binding.preparer().prepare(component, node, bridge, dispatch::accept, bindings));
-        for (UiBridge.Node child : node.children()) stageNode(child, staged, commits);
+        for (UiBridge.Node child : node.children()) stageNode(child, staged, commits, disposals);
     }
 
     private void applyPatch(UiBridge.Patch patch, PreparedPlan prepared) {
