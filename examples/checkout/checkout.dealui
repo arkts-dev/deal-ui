@@ -9,9 +9,8 @@ export view Checkout(state: app.CheckoutState): View {
       ui.Text(value: state.route)
       When(state.route === "checkout/contact") {
         ui.Text(value: "Contact")
-        ui.Input(value: state.email, accessibilityLabel: "Email address", onSubmit: action app.EditEmail { value: payload })
-        When((state.touched || state.dirty) && !state.valid) { ui.Text(value: state.guardMessage) } Else { ui.Text(value: "Contact information is ready") }
-        ui.Button(text: "Review email", accessibilityLabel: "Review email validation", onClick: action app.TouchEmail {})
+        ui.Input(value: state.email, accessibilityLabel: "Email address", onChange: action app.EditEmail { value: payload }, onBlur: action app.TouchEmail {})
+        When(state.touched && !state.valid) { ui.Text(value: state.guardMessage) } Else { ui.Text(value: "Contact information is ready") }
         ui.Button(text: "Continue to payment", accessibilityLabel: "Continue to payment", onClick: action app.Continue {})
       } Else {
         When(state.route === "checkout/payment") {

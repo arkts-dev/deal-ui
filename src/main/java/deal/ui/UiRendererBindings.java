@@ -16,8 +16,8 @@ import java.util.function.Supplier;
 public final class UiRendererBindings {
     public enum HostKind { NORMAL, MODAL }
     @FunctionalInterface public interface Configurator { void apply(JComponent component, UiBridge.Node node, UiBridge bridge, Consumer<UiBridge.ActionValue> dispatch, UiRendererBindings bindings); }
-    public static Binding binding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, HostKind.NORMAL, factory, configurator, ignored -> {}, ignored -> {}); }
-    public static Binding modalBinding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, HostKind.MODAL, factory, configurator, ignored -> {}, ignored -> {}); }
+    public static Binding binding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, HostKind.NORMAL, factory, configurator, ignored -> {}, deal.ui.runtime.SwingUiRuntime::disposeHostComponent); }
+    public static Binding modalBinding(String component, Supplier<JComponent> factory, Configurator configurator) { return new Binding(component, HostKind.MODAL, factory, configurator, ignored -> {}, deal.ui.runtime.SwingUiRuntime::disposeHostComponent); }
     public record Binding(String component, HostKind hostKind, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposalPrepare, Consumer<JComponent> disposer) {
         public Binding(String component, Supplier<JComponent> factory, Configurator configurator, Consumer<JComponent> disposalPrepare, Consumer<JComponent> disposer) { this(component, HostKind.NORMAL, factory, configurator, disposalPrepare, disposer); }
     }

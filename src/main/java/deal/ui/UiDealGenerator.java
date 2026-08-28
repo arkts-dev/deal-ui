@@ -74,11 +74,13 @@ final class UiDealGenerator {
             out.append(parameter.name()).append(": ").append(qualifiedType(parameter.type(), app));
         }
         out.append("): core.ViewNode {\n  let nodes: core.ViewNode[] = [];\n");
-        emitNodes(out, view.nodes(), "nodes", "\" + identityPrefix + \"", "core.noKey()", app, 1);
+        Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
+        for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), parameter.type());
+        emitNodes(out, view.nodes(), "nodes", "\" + identityPrefix + \"", "core.noKey()", app, 1, scope);
         out.append("  return nodes[0];\n}\n\n");
     }
 
-    private void emitNodes(StringBuilder out, List<UiModel.Node> nodes, String target, String identity, String key, String app, int indent) {
+    private void emitNodes(StringBuilder out, List<UiModel.Node> nodes, String target, String identity, String key, String app, int indent, Map<String, UiModel.TypeRef> scope) {
         int index = 0;
         for (UiModel.Node node : nodes) {
             String structural = identity + "/" + index++;
@@ -106,7 +108,7 @@ final class UiDealGenerator {
                         actions.put(slot, new GeneratedAction(action, event.payload()));
                         value = "core.actionProp(\"" + argument.getKey() + "\", " + slot + ")";
                     } else {
-                        UiModel.TypeRef type = expressionType(argument.getValue());
+                        UiModel.TypeRef type = expressionType(argument.getValue(), scope);
                         String factory = switch (simple(type.name())) {
                             case "int" -> "intProp";
                             case "number" -> "numberProp";
@@ -120,20 +122,22 @@ final class UiDealGenerator {
                     out.append(pad).append(props).append("[").append(props).append(".length] = ").append(value).append(";\n");
                 }
                 out.append(pad).append("let ").append(children).append(": core.ViewNode[] = [];\n");
-                emitNodes(out, call.children(), children, structural, key, app, indent);
+                emitNodes(out, call.children(), children, structural, key, app, indent, scope);
                 out.append(pad).append(target).append("[").append(target).append(".length] = core.node(\"").append(call.name()).append("\", \"").append(structural).append("\", ").append(key).append(", ").append(props).append(", ").append(children).append(");\n");
             } else if (node instanceof UiModel.When when) {
                 out.append(pad).append("if (").append(expr(when.condition(), app)).append(") {\n");
-                emitNodes(out, when.thenNodes(), target, structural + "/then", key, app, indent + 1);
+                emitNodes(out, when.thenNodes(), target, structural + "/then", key, app, indent + 1, scope);
                 out.append(pad).append("} else {\n");
-                emitNodes(out, when.elseNodes(), target, structural + "/else", key, app, indent + 1);
+                emitNodes(out, when.elseNodes(), target, structural + "/else", key, app, indent + 1, scope);
                 out.append(pad).append("}\n");
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
                 out.append(pad).append("for (let ").append(each.item().name()).append(": ").append(qualifiedType(each.item().type(), app)).append(" of app.uiItems").append(each.span().line()).append("(").append(each.source().parts().get(0)).append(")) {\n");
                 UiModel.TypeRef keyType = fieldType(each.item().type(), each.key());
                 String keyExpr = simple(keyType.name()).equals("int") ? "core.intKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
-                emitNodes(out, each.children(), target, structural + "/item", keyExpr, app, indent + 1);
+                Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
+                nested.put(each.item().name(), each.item().type());
+                emitNodes(out, each.children(), target, structural + "/item", keyExpr, app, indent + 1, nested);
                 out.append(pad).append("}\n");
             }
         }
@@ -233,13 +237,14 @@ final class UiDealGenerator {
         return "action.nominal" + id;
     }
 
-    private UiModel.TypeRef expressionType(UiModel.Expr expression) {
+    private UiModel.TypeRef expressionType(UiModel.Expr expression, Map<String, UiModel.TypeRef> scope) {
         if (expression instanceof UiModel.Literal literal) return new UiModel.TypeRef(literal.type(), false, false);
         if (expression instanceof UiModel.PathExpr path) {
             if (path.parts().get(0).equals("payload")) return new UiModel.TypeRef("string", false, false);
             UiModel.Token token = program.tokens().get(String.join(".", path.parts()));
             if (token != null) return token.type();
-            if (path.parts().get(0).equals("state")) return pathType(new UiModel.TypeRef(program.rootStateType(), false, false), path.parts().subList(1, path.parts().size()));
+            UiModel.TypeRef root = scope.get(path.parts().get(0));
+            if (root != null) return pathType(root, path.parts().subList(1, path.parts().size()));
         }
         return new UiModel.TypeRef("string", false, false);
     }

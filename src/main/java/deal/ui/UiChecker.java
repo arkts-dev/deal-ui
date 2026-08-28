@@ -5,10 +5,16 @@ import deal.ast.ClassDeclaration;
 import deal.ast.ClassField;
 import deal.ast.ExportDeclaration;
 import deal.ast.FunctionDeclaration;
+import deal.ast.Block;
+import deal.ast.IfStatement;
+import deal.ast.LiteralExpr;
+import deal.ast.LiteralValue;
 import deal.ast.NamedType;
 import deal.ast.NullableType;
+import deal.ast.ObjectLiteralExpr;
 import deal.ast.ProgramNode;
 import deal.ast.QualifiedType;
+import deal.ast.ReturnStatement;
 import deal.ast.StatementNode;
 import deal.ast.TypeNode;
 import deal.diagnostics.CompilerDiagnostic;
@@ -94,7 +100,11 @@ public final class UiChecker {
             if (failure != null && !updates.containsKey(failure.returnType())) error("UI2039", "Effect failure mapper must return an update action", failure.span());
             if (failure != null && !failure.stateType().equals(stateType)) error("UI2046", "Effect failure mapper state must match root state", failure.span());
         }
-        for (UiModel.Handler policy : effectPolicies.values()) if (!effects.containsKey(policy.actionType())) error("UI2040", "Effect policy requires an effect", policy.span());
+        for (UiModel.Handler policy : effectPolicies.values()) {
+            if (!policy.returnType().equals("EffectCommand")) error("UI2038", "Effect policy must return EffectCommand", policy.span());
+            if (!policy.stateType().equals(stateType)) error("UI2045", "Effect policy state must match root state", policy.span());
+            if (policy.mayStartEffect() && !effects.containsKey(policy.actionType())) error("UI2040", "Starting effect policy requires an effect", policy.span());
+        }
         for (UiModel.Handler failure : effectFailures.values()) if (!effects.containsKey(failure.actionType())) error("UI2041", "Effect failure mapper requires an effect", failure.span());
         return new UiModel.CheckedProgram(viewFile, dealFile, root.name(), stateType, views, components,
             packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures);
@@ -356,9 +366,29 @@ public final class UiChecker {
             String returned = typeName(function.returnType());
             if (failure && !typeName(function.params().get(2).type()).equals("string")) throw new UiDiagnostic("UI2044", "Effect failure mapper message parameter must be string", file, function.span().startLine(), function.span().startColumn());
             if (!effect && !policy && !state.equals(returned)) throw new UiDiagnostic("UI2036", "Update must return root state", file, function.span().startLine(), function.span().startColumn());
-            handlers.add(new UiModel.Handler(function.name(), state, action, returned, directive, span(file, function.span().startLine(), function.span().startColumn())));
+            handlers.add(new UiModel.Handler(function.name(), state, action, returned, directive, directive.equals("ui-effect-policy") && policyMayStart(function.body()), span(file, function.span().startLine(), function.span().startColumn())));
         }
         return new UiModel.DealModule(classes, functionInfo, handlers, file);
+    }
+
+    private boolean policyMayStart(Block block) {
+        for (StatementNode statement : block.statements()) {
+            if (statement instanceof ReturnStatement returned && returned.expr().isPresent() && returned.expr().get() instanceof ObjectLiteralExpr object) {
+                for (deal.ast.Property property : object.properties()) {
+                    if (property.name().equals("operation") && property.value() instanceof LiteralExpr literal && literal.value() instanceof LiteralValue.StringLiteral value && value.value().equals("start")) return true;
+                }
+            }
+            if (statement instanceof IfStatement conditional && conditionalMayStart(conditional)) return true;
+        }
+        return false;
+    }
+
+    private boolean conditionalMayStart(IfStatement conditional) {
+        if (policyMayStart(conditional.thenBlock())) return true;
+        if (conditional.elseBranch().isEmpty()) return false;
+        deal.ast.Either<IfStatement, Block> branch = conditional.elseBranch().get();
+        if (branch instanceof deal.ast.Either.Left<IfStatement, Block> left) return conditionalMayStart(left.value());
+        return policyMayStart(((deal.ast.Either.Right<IfStatement, Block>) branch).value());
     }
 
     private String directiveBefore(String source, int declarationLine) {

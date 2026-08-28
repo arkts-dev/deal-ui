@@ -3,26 +3,27 @@ import * as ui from "./platform-ui.dealui-pack";
 
 // @ui-root
 export view Kanban(state: app.BoardState): View {
-  ui.Card() {
-    ui.Column(spacing: ui.spaceMd) {
-      ui.Text(value: "KANBAN / VIRTUAL GRID")
-      ui.Text(value: state.focusIntent)
-      ui.IntText(value: state.selectedId)
-      ui.Text(value: "Visible cards")
-      ForEach(state.visibleCards, card: app.Card, key: card.id) {
-        ui.Card() {
-          ui.Column(spacing: ui.spaceMd) {
-            ui.Text(value: card.title)
-            ui.Text(value: card.column)
-          }
+  ui.Root(spacing: ui.spaceMd, focusIntent: state.focusIntent, focusRevision: state.focusRevision) {
+    ui.Text(value: "KANBAN / VIRTUAL GRID")
+    ui.Text(value: state.focusIntent)
+    ui.IntText(value: state.selectedId)
+    ui.Text(value: "Visible cards")
+    ForEach(state.visibleCards, card: app.Card, key: card.id) {
+      ui.Card() {
+        ui.Column(spacing: ui.spaceMd) {
+          ui.Text(value: card.title)
+          ui.Text(value: card.column)
+          When(state.selectedId === card.id) { ui.Text(value: "Selected") } Else { ui.Text(value: "Not selected") }
+          ui.Button(text: "Select " + card.title, accessibilityLabel: "Select " + card.title, focusId: card.focusId, actionPayload: card.id, onClick: action app.Select { id: payload })
+          ui.Button(text: "Move " + card.title + " to todo", accessibilityLabel: "Move " + card.title + " to todo", focusId: card.todoFocusId, actionPayload: card.id, onClick: action app.Move { id: payload, destination: "todo" })
+          ui.Button(text: "Move " + card.title + " to doing", accessibilityLabel: "Move " + card.title + " to doing", focusId: card.doingFocusId, actionPayload: card.id, onClick: action app.Move { id: payload, destination: "doing" })
+          ui.Button(text: "Move " + card.title + " to done", accessibilityLabel: "Move " + card.title + " to done", focusId: card.doneFocusId, actionPayload: card.id, onClick: action app.Move { id: payload, destination: "done" })
+          ui.Button(text: "Try denied archive move for " + card.title, accessibilityLabel: "Try denied archive move for " + card.title, focusId: card.archiveFocusId, actionPayload: card.id, onClick: action app.Move { id: payload, destination: "archive" })
         }
       }
-      ui.Button(text: "Select first", accessibilityLabel: "Select first card", onClick: action app.Select { id: 1 })
-      ui.Button(text: "Move first to doing", accessibilityLabel: "Move first card to doing", onClick: action app.Move { id: 1, destination: "doing" })
-      ui.Button(text: "Try denied archive move", accessibilityLabel: "Try denied archive move", onClick: action app.Move { id: 1, destination: "archive" })
-      ui.Button(text: "Previous page", accessibilityLabel: "Previous page", onClick: action app.PreviousPage {})
-      ui.Button(text: "Next page", accessibilityLabel: "Next page", onClick: action app.NextPage {})
-      ui.Text(value: state.message)
     }
+    ui.Button(text: "Previous page", actionPayload: 0, accessibilityLabel: "Previous page", focusId: "previous-page", onClick: action app.PreviousPage {})
+    ui.Button(text: "Next page", actionPayload: 0, accessibilityLabel: "Next page", focusId: "next-page", onClick: action app.NextPage {})
+    ui.Text(value: state.message)
   }
 }

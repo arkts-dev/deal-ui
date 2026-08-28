@@ -18,6 +18,9 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.WindowConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.text.BadLocationException;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -30,6 +33,9 @@ import java.awt.GridBagLayout;
 import java.awt.KeyboardFocusManager;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.FocusListener;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
@@ -323,6 +329,8 @@ public final class SwingUiRuntime implements AutoCloseable {
         return () -> dispatch.accept(bridge.action(action.actionSlot(), null));
     }
 
+    private static final String INPUT_INGRESS = "deal.inputIngress";
+
     private static void copyConfiguration(JComponent source, JComponent target) {
         target.setName(source.getName());
         target.setOpaque(source.isOpaque());
@@ -340,10 +348,12 @@ public final class SwingUiRuntime implements AutoCloseable {
             to.setIcon(from.getIcon());
             to.setHorizontalAlignment(from.getHorizontalAlignment());
         } else if (source instanceof JTextField from && target instanceof JTextField to) {
-            to.setText(from.getText());
+            InputIngress ingress = inputIngress(to);
+            if (ingress != null) ingress.suspend();
+            try { to.setText(from.getText()); } finally { if (ingress != null) ingress.resume(); }
             to.setColumns(from.getColumns());
-            for (var listener : to.getActionListeners()) to.removeActionListener(listener);
-            for (var listener : from.getActionListeners()) to.addActionListener(listener);
+            InputIngress configured = inputIngress(from);
+            configureInputIngress(to, configured == null ? null : configured.copyFor(to));
             to.getAccessibleContext().setAccessibleName(from.getAccessibleContext().getAccessibleName());
             to.getAccessibleContext().setAccessibleDescription(from.getAccessibleContext().getAccessibleDescription());
         } else if (source instanceof JButton from && target instanceof JButton to) {
@@ -437,14 +447,14 @@ public final class SwingUiRuntime implements AutoCloseable {
             label.setFont(label.getFont().deriveFont(style, size));
             label.getAccessibleContext().setAccessibleName(label.getText());
         } else if (component instanceof JTextField input) {
-            input.setText(String.valueOf(value(node, "value")));
+            InputIngress ingress = inputIngress(input);
+            if (ingress != null) ingress.suspend();
+            try { input.setText(String.valueOf(value(node, "value"))); } finally { if (ingress != null) ingress.resume(); }
             input.setColumns(28);
             input.setFont(input.getFont().deriveFont(Font.PLAIN, 16f));
             input.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(0xCAD3E0)), BorderFactory.createEmptyBorder(10, 12, 10, 12)));
             input.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", "Input")));
-            for (var listener : input.getActionListeners()) input.removeActionListener(listener);
-            UiBridge.Prop action = node.props().get("onSubmit");
-            if (action != null) input.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), ((JTextField) event.getSource()).getText())));
+            configureInputIngress(input, new InputIngress(input, actionDispatch(node, "onChange", bridge, dispatch), actionDispatch(node, "onBlur", bridge, dispatch), actionDispatch(node, "onSubmit", bridge, dispatch)));
         } else if (component instanceof JButton button) {
             button.setText(String.valueOf(value(node, "text")));
             button.setFont(button.getFont().deriveFont(Font.BOLD, 15f));
@@ -457,9 +467,22 @@ public final class SwingUiRuntime implements AutoCloseable {
             button.getAccessibleContext().setAccessibleName(String.valueOf(valueOr(node, "accessibilityLabel", button.getText())));
             for (var listener : button.getActionListeners()) button.removeActionListener(listener);
             UiBridge.Prop action = node.props().get("onClick");
-            if (action != null) button.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), null)));
+            if (action != null) button.addActionListener(event -> dispatch.accept(bridge.action(action.actionSlot(), valueOr(node, "actionPayload", null))));
         }
     }
+
+    private static java.util.function.Consumer<Object> actionDispatch(UiBridge.Node node, String name, UiBridge bridge, java.util.function.Consumer<UiBridge.ActionValue> dispatch) {
+        UiBridge.Prop action = node.props().get(name);
+        return action == null || action.actionSlot() < 0 ? null : payload -> dispatch.accept(bridge.action(action.actionSlot(), payload));
+    }
+    private static InputIngress inputIngress(JTextField input) { Object value = input.getClientProperty(INPUT_INGRESS); return value instanceof InputIngress ingress ? ingress : null; }
+    private static void configureInputIngress(JTextField input, InputIngress next) {
+        InputIngress previous = inputIngress(input);
+        if (previous != null) previous.dispose();
+        input.putClientProperty(INPUT_INGRESS, next);
+        if (next != null) next.install();
+    }
+    public static void disposeHostComponent(JComponent component) { if (component instanceof JTextField input) configureInputIngress(input, null); }
 
     private static Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
     private static Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
@@ -480,23 +503,63 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
     @Override public void close() { onEdt(() -> { if (closed) return; closed = true; if (scopeTimer != null) scopeTimer.stop(); scopeTimer = null; disposePrevious(retained); retained = new LinkedHashMap<>(); tree = null; if (frame != null) frame.dispose(); frame = null; host = null; }); }
 
+    private static final class InputIngress {
+        private final JTextField input;
+        private final java.util.function.Consumer<Object> change;
+        private final java.util.function.Consumer<Object> blur;
+        private final java.util.function.Consumer<Object> submit;
+        private final DocumentListener documentListener = new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent event) { changed(event); }
+            @Override public void removeUpdate(DocumentEvent event) { changed(event); }
+            @Override public void changedUpdate(DocumentEvent event) { changed(event); }
+        };
+        private final FocusListener focusListener = new FocusAdapter() { @Override public void focusLost(FocusEvent event) { if (!event.isTemporary() && blur != null) blur.accept(null); } };
+        private final java.awt.event.ActionListener actionListener;
+        private int suspension;
+        private boolean installed;
+        private InputIngress(JTextField input, java.util.function.Consumer<Object> change, java.util.function.Consumer<Object> blur, java.util.function.Consumer<Object> submit) { this.input = input; this.change = change; this.blur = blur; this.submit = submit; this.actionListener = event -> { if (this.submit != null) this.submit.accept(this.input.getText()); }; }
+        private InputIngress copyFor(JTextField target) { return new InputIngress(target, change, blur, submit); }
+        private void install() {
+            if (installed) return;
+            installed = true;
+            if (change != null) input.getDocument().addDocumentListener(documentListener);
+            if (blur != null) input.addFocusListener(focusListener);
+            if (submit != null) input.addActionListener(actionListener);
+        }
+        private void dispose() {
+            if (!installed) return;
+            if (change != null) input.getDocument().removeDocumentListener(documentListener);
+            if (blur != null) input.removeFocusListener(focusListener);
+            if (submit != null) input.removeActionListener(actionListener);
+            installed = false;
+        }
+        private void suspend() { suspension++; }
+        private void resume() { suspension--; }
+        private void changed(DocumentEvent event) {
+            if (suspension != 0 || change == null) return;
+            try { change.accept(event.getDocument().getText(0, event.getDocument().getLength())); }
+            catch (BadLocationException failure) { throw new IllegalStateException("Cannot snapshot input document", failure); }
+        }
+    }
+
     private record Owned(JComponent component, UiRendererBindings.Binding binding) {}
     private record ComponentPlan(UiBridge.Node node, JComponent staged, JComponent committed, List<JComponent> gaps) {}
     private record StagedTree(JComponent root, JComponent modal, Map<UiBridge.Identity, JComponent> components, Map<UiBridge.Identity, ComponentPlan> plans, List<Owned> abandoned, List<Owned> newOwned, List<Owned> displaced, Timer timer, Runnable escapeAction, long focusRevision, String focusIntent, JComponent focusTarget) {}
-    private record ComponentState(JComponent component, String name, boolean opaque, Color background, Color foreground, Font font, javax.swing.border.Border border, boolean focusable, java.awt.Cursor cursor, boolean enabled, String tooltip, Object focusId, float alignmentX, String accessibleName, String accessibleDescription, String text, javax.swing.Icon icon, int horizontalAlignment, int columns, boolean focusPainted, java.awt.event.ActionListener[] listeners) {
+    private record ComponentState(JComponent component, String name, boolean opaque, Color background, Color foreground, Font font, javax.swing.border.Border border, boolean focusable, java.awt.Cursor cursor, boolean enabled, String tooltip, Object focusId, float alignmentX, String accessibleName, String accessibleDescription, String text, javax.swing.Icon icon, int horizontalAlignment, int columns, boolean focusPainted, java.awt.event.ActionListener[] listeners, InputIngress inputIngress) {
         private static ComponentState capture(JComponent component) {
             String text = component instanceof JLabel value ? value.getText() : component instanceof JTextField value ? value.getText() : component instanceof JButton value ? value.getText() : null;
             javax.swing.Icon icon = component instanceof JLabel value ? value.getIcon() : component instanceof JButton value ? value.getIcon() : null;
             int alignment = component instanceof JLabel value ? value.getHorizontalAlignment() : 0;
             int columns = component instanceof JTextField value ? value.getColumns() : 0;
             boolean focusPainted = component instanceof JButton value && value.isFocusPainted();
-            java.awt.event.ActionListener[] listeners = component instanceof JTextField value ? value.getActionListeners() : component instanceof JButton value ? value.getActionListeners() : new java.awt.event.ActionListener[0];
-            return new ComponentState(component, component.getName(), component.isOpaque(), component.getBackground(), component.getForeground(), component.getFont(), component.getBorder(), component.isFocusable(), component.getCursor(), component.isEnabled(), component.getToolTipText(), component.getClientProperty("deal.focusId"), component.getAlignmentX(), component.getAccessibleContext().getAccessibleName(), component.getAccessibleContext().getAccessibleDescription(), text, icon, alignment, columns, focusPainted, listeners);
+            InputIngress ingress = component instanceof JTextField value ? SwingUiRuntime.inputIngress(value) : null;
+            java.awt.event.ActionListener[] listeners = component instanceof JTextField value ? java.util.Arrays.stream(value.getActionListeners()).filter(listener -> ingress == null || listener != ingress.actionListener).toArray(java.awt.event.ActionListener[]::new) : component instanceof JButton value ? value.getActionListeners() : new java.awt.event.ActionListener[0];
+            return new ComponentState(component, component.getName(), component.isOpaque(), component.getBackground(), component.getForeground(), component.getFont(), component.getBorder(), component.isFocusable(), component.getCursor(), component.isEnabled(), component.getToolTipText(), component.getClientProperty("deal.focusId"), component.getAlignmentX(), component.getAccessibleContext().getAccessibleName(), component.getAccessibleContext().getAccessibleDescription(), text, icon, alignment, columns, focusPainted, listeners, ingress);
         }
         private void restore() {
             component.setName(name); component.setOpaque(opaque); component.setBackground(background); component.setForeground(foreground); component.setFont(font); component.setBorder(border); component.setFocusable(focusable); component.setCursor(cursor); component.setEnabled(enabled); component.setToolTipText(tooltip); component.putClientProperty("deal.focusId", focusId); component.setAlignmentX(alignmentX); component.getAccessibleContext().setAccessibleName(accessibleName); component.getAccessibleContext().setAccessibleDescription(accessibleDescription);
             if (component instanceof JLabel value) { value.setText(text); value.setIcon(icon); value.setHorizontalAlignment(horizontalAlignment); }
-            if (component instanceof JTextField value) { value.setText(text); value.setColumns(columns); for (var listener : value.getActionListeners()) value.removeActionListener(listener); for (var listener : listeners) value.addActionListener(listener); }
+            if (component instanceof JTextField value) { InputIngress current = SwingUiRuntime.inputIngress(value); if (current != null) current.suspend(); try { value.setText(text); } finally { if (current != null) current.resume(); } value.setColumns(columns); configureInputIngress(value, inputIngress == null ? null : inputIngress.copyFor(value)); InputIngress restored = SwingUiRuntime.inputIngress(value); for (var listener : value.getActionListeners()) if (restored == null || listener != restored.actionListener) value.removeActionListener(listener); for (var listener : listeners) value.addActionListener(listener); }
             if (component instanceof JButton value) { value.setText(text); value.setIcon(icon); value.setFocusPainted(focusPainted); for (var listener : value.getActionListeners()) value.removeActionListener(listener); for (var listener : listeners) value.addActionListener(listener); }
         }
     }

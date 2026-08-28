@@ -11,10 +11,12 @@ export class SearchState {
   generation: int = 0;
   activeGeneration: int = -1;
   errorMessage: string = "";
+  searchesStarted: int = 0;
 }
 export class Search { query: string = ""; }
 export class Cancel {}
 export class Retry {}
+export class DebounceCompleted { generation: int = 0; query: string = ""; }
 export class SearchCompleted { generation: int = 0; matches: MailRecord[] = []; value: string = ""; }
 export class SearchFailed { generation: int = 0; message: string = "Search failed"; }
 export class EffectCommand { operation: string = "none"; key: string = "mail-search"; delayMillis: int = 0; cancellationMode: string = "replace"; }
@@ -29,13 +31,43 @@ function mailboxRecords(): MailRecord[] {
 
 export function initialState(): SearchState { return { mailbox: mailboxRecords() }; }
 
+function normalizeCase(value: string): string {
+  let result: string = strings.trim(value);
+  result = strings.replace(result, "A", "a");
+  result = strings.replace(result, "B", "b");
+  result = strings.replace(result, "C", "c");
+  result = strings.replace(result, "D", "d");
+  result = strings.replace(result, "E", "e");
+  result = strings.replace(result, "F", "f");
+  result = strings.replace(result, "G", "g");
+  result = strings.replace(result, "H", "h");
+  result = strings.replace(result, "I", "i");
+  result = strings.replace(result, "J", "j");
+  result = strings.replace(result, "K", "k");
+  result = strings.replace(result, "L", "l");
+  result = strings.replace(result, "M", "m");
+  result = strings.replace(result, "N", "n");
+  result = strings.replace(result, "O", "o");
+  result = strings.replace(result, "P", "p");
+  result = strings.replace(result, "Q", "q");
+  result = strings.replace(result, "R", "r");
+  result = strings.replace(result, "S", "s");
+  result = strings.replace(result, "T", "t");
+  result = strings.replace(result, "U", "u");
+  result = strings.replace(result, "V", "v");
+  result = strings.replace(result, "W", "w");
+  result = strings.replace(result, "X", "x");
+  result = strings.replace(result, "Y", "y");
+  return strings.replace(result, "Z", "z");
+}
+
 function beginRequest(state: SearchState, query: string, status: string): SearchState {
   let next: int = state.generation + 1;
-  return { mailbox: state.mailbox, matches: state.matches, query: query, status: status, result: state.result, generation: next, activeGeneration: next };
+  return { mailbox: state.mailbox, matches: state.matches, query: query, status: status, result: state.result, generation: next, activeGeneration: next, searchesStarted: state.searchesStarted };
 }
 
 function matchesQuery(record: MailRecord, query: string): boolean {
-  return strings.contains(record.sender, query) || strings.contains(record.subject, query) || strings.contains(record.body, query);
+  return strings.contains(normalizeCase(record.sender), query) || strings.contains(normalizeCase(record.subject), query) || strings.contains(normalizeCase(record.body), query);
 }
 
 function searchMailbox(mailbox: MailRecord[], query: string): MailRecord[] {
@@ -56,53 +88,70 @@ function resultLabel(matches: MailRecord[], query: string): string {
 
 // @ui-update
 export function beginSearch(state: SearchState, action: Search): SearchState {
-  let query: string = action.query;
-  if (query === "") { return { mailbox: state.mailbox, query: query, status: "idle", result: "Enter a query to search 4 messages", generation: state.generation, activeGeneration: -1 }; }
+  let query: string = normalizeCase(action.query);
+  if (query === "") { return { mailbox: state.mailbox, query: query, status: "idle", result: "Enter a query to search 4 messages", generation: state.generation, activeGeneration: -1, searchesStarted: state.searchesStarted }; }
   return beginRequest(state, query, "debouncing");
 }
 
 // @ui-effect-policy
 export function searchPolicy(state: SearchState, action: Search): EffectCommand {
-  if (action.query === "") { return { operation: "cancel", cancellationMode: "interrupt" }; }
+  if (normalizeCase(action.query) === "") { return { operation: "cancel", cancellationMode: "interrupt" }; }
   return { operation: "start", delayMillis: 250 };
 }
 
 // @ui-effect
-export async function search(state: SearchState, action: Search): SearchCompleted {
-  let query: string = state.query;
-  let matches: MailRecord[] = searchMailbox(state.mailbox, query);
-  return { generation: state.activeGeneration, matches: matches, value: resultLabel(matches, query) };
+export async function debounceSearch(state: SearchState, action: Search): DebounceCompleted {
+  return { generation: state.activeGeneration, query: state.query };
+}
+
+// @ui-update
+export function startSearch(state: SearchState, action: DebounceCompleted): SearchState {
+  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "debouncing")) { return state; }
+  return { mailbox: state.mailbox, matches: state.matches, query: action.query, status: "loading", result: state.result, generation: state.generation, activeGeneration: state.activeGeneration, searchesStarted: state.searchesStarted + 1 };
+}
+
+// @ui-effect-policy
+export function loadPolicy(state: SearchState, action: DebounceCompleted): EffectCommand { return { operation: "start", delayMillis: 150 }; }
+
+// @ui-effect
+export async function search(state: SearchState, action: DebounceCompleted): SearchCompleted {
+  if (action.query === "fail") { throw { code: "SEARCH_LOCAL_FAILURE", message: "Local search failed for 'fail'" }; }
+  let matches: MailRecord[] = searchMailbox(state.mailbox, action.query);
+  return { generation: action.generation, matches: matches, value: resultLabel(matches, action.query) };
 }
 
 // @ui-effect-failure
-export function searchFailure(state: SearchState, action: Search, message: string): SearchFailed {
-  return { generation: state.activeGeneration, message: message };
+export function searchFailure(state: SearchState, action: DebounceCompleted, message: string): SearchFailed {
+  return { generation: action.generation, message: message };
 }
 
 // @ui-update
 export function finishSearch(state: SearchState, action: SearchCompleted): SearchState {
-  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "debouncing" || state.status === "loading")) { return state; }
-  return { mailbox: state.mailbox, matches: action.matches, query: state.query, status: "ready", result: action.value, generation: state.generation, activeGeneration: -1 };
+  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "loading")) { return state; }
+  return { mailbox: state.mailbox, matches: action.matches, query: state.query, status: "ready", result: action.value, generation: state.generation, activeGeneration: -1, searchesStarted: state.searchesStarted };
 }
 
 // @ui-update
 export function failSearch(state: SearchState, action: SearchFailed): SearchState {
-  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "debouncing" || state.status === "loading")) { return state; }
-  return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "error", result: state.result, generation: state.generation, activeGeneration: -1, errorMessage: action.message };
+  if (!interaction.completionActive(state.activeGeneration, action.generation, state.status === "loading")) { return state; }
+  return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "error", result: state.result, generation: state.generation, activeGeneration: -1, errorMessage: action.message, searchesStarted: state.searchesStarted };
 }
 
 // @ui-update
-export function cancelSearch(state: SearchState, action: Cancel): SearchState { return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "cancelled", result: state.result, generation: state.generation, activeGeneration: -1 }; }
+export function cancelSearch(state: SearchState, action: Cancel): SearchState { return { mailbox: state.mailbox, matches: state.matches, query: state.query, status: "cancelled", result: state.result, generation: state.generation, activeGeneration: -1, searchesStarted: state.searchesStarted }; }
+
+// @ui-effect-policy
+export function cancelPolicy(state: SearchState, action: Cancel): EffectCommand { return { operation: "cancel", key: "mail-search", cancellationMode: "interrupt" }; }
 
 // @ui-update
-export function retrySearch(state: SearchState, action: Retry): SearchState { return beginRequest(state, state.query, "loading"); }
+export function retrySearch(state: SearchState, action: Retry): SearchState { return beginRequest(state, normalizeCase(state.query), "loading"); }
 
 // @ui-effect-policy
 export function retryPolicy(state: SearchState, action: Retry): EffectCommand { return { operation: "start" }; }
 
 // @ui-effect
 export async function retry(state: SearchState, action: Retry): SearchCompleted {
-  let query: string = state.query;
+  let query: string = normalizeCase(state.query);
   let matches: MailRecord[] = searchMailbox(state.mailbox, query);
   return { generation: state.activeGeneration, matches: matches, value: resultLabel(matches, query) };
 }

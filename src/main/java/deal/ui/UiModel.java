@@ -63,7 +63,7 @@ public final class UiModel {
     }
 
     public record DealClass(String name, Map<String, Field> fields, boolean exported) { public DealClass { fields = immutable(fields); } }
-    public record Handler(String name, String stateType, String actionType, String returnType, String kind, Span span) {
+    public record Handler(String name, String stateType, String actionType, String returnType, String kind, boolean mayStartEffect, Span span) {
         public boolean effect() { return kind.equals("ui-effect"); }
     }
     public record DealFunction(String name, List<TypeRef> parameters, TypeRef returnType, boolean exported, boolean async, Span span) {

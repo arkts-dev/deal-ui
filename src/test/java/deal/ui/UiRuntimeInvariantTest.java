@@ -8,6 +8,7 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.event.FocusEvent;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -54,6 +55,7 @@ public final class UiRuntimeInvariantTest {
         rejectedCompletionSubmissionTerminatesRuntime();
         initializationFailureCleansOwnedResources();
         compatibleIdentityIsRetained();
+        inputIngressReconfiguresWithoutDuplicatesAndDisposes();
         mutationFailuresRestoreExactLiveGraph();
         sameIdentityReplacementPublishesNewComponent();
         modalFocusTraversalIsConstrainedAndWraps();
@@ -454,6 +456,46 @@ public final class UiRuntimeInvariantTest {
         renderer.close();
     }
 
+    private static void inputIngressReconfiguresWithoutDuplicatesAndDisposes() throws Exception {
+        UiRendererBindings.Binding inputBinding = UiRendererBindings.binding("input", JTextField::new, UiRendererBindings::configure);
+        UiRendererBindings.Binding textBinding = UiRendererBindings.binding("text", JLabel::new, UiRendererBindings::configure);
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("input", inputBinding, "text", textBinding), Map.of(), Color.WHITE, Color.BLACK);
+        ProtocolBridge bridge = new ProtocolBridge();
+        List<String> actions = new ArrayList<>();
+        deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Input ingress", bindings, bridge, action -> actions.add(((TestAction) action.abi()).name()));
+        UiBridge.Identity identity = new UiBridge.Identity("input", new UiBridge.Key("none", 0, ""));
+        UiBridge.Node first = inputNode(identity, "", 1, 2);
+        JTextField field = (JTextField) renderer.componentForTesting(first);
+        SwingUtilities.invokeAndWait(() -> field.setText("first"));
+        check(actions.equals(List.of("1:first")), "document ingress dispatches one atomic value snapshot without Enter");
+        actions.clear();
+        UiBridge.Node next = inputNode(identity, "first", 3, 4);
+        renderer.apply(List.of(new UiBridge.Patch("update", identity, identity, true, 0, next)), next);
+        check(renderer.componentForTesting(next) == field && actions.isEmpty(), "renderer value synchronization emits no change action");
+        SwingUtilities.invokeAndWait(() -> {
+            field.setText("second");
+            for (var listener : field.getFocusListeners()) listener.focusLost(new FocusEvent(field, FocusEvent.FOCUS_LOST, false));
+        });
+        check(actions.equals(List.of("3:", "3:second", "4:null")), "reconfiguration replaces change and blur ingress without duplicate dispatch");
+        actions.clear();
+        UiBridge.Node replacement = new UiBridge.Node("text", identity, Map.of("value", new UiBridge.Prop("value", "string", "done", -1)), List.of());
+        renderer.apply(List.of(new UiBridge.Patch("dispose", identity, identity, true, 0, first), new UiBridge.Patch("create", identity, identity, true, 0, replacement)), replacement);
+        SwingUtilities.invokeAndWait(() -> {
+            field.setText("detached");
+            for (var listener : field.getFocusListeners()) listener.focusLost(new FocusEvent(field, FocusEvent.FOCUS_LOST, false));
+        });
+        check(actions.isEmpty(), "disposed input removes document and focus ingress");
+        renderer.close();
+    }
+
+    private static UiBridge.Node inputNode(UiBridge.Identity identity, String value, int changeSlot, int blurSlot) {
+        return new UiBridge.Node("input", identity, Map.of(
+            "value", new UiBridge.Prop("value", "string", value, -1),
+            "onChange", new UiBridge.Prop("onChange", "action", "", changeSlot),
+            "onBlur", new UiBridge.Prop("onBlur", "action", "", blurSlot)
+        ), List.of());
+    }
+
     private static void mutationFailuresRestoreExactLiveGraph() {
         for (String point : List.of("child-install", "configuration-copy", "host-install")) {
             UiRendererBindings.Binding panel = UiRendererBindings.binding("panel", JPanel::new, UiRendererBindings::configure);
@@ -702,7 +744,7 @@ public final class UiRuntimeInvariantTest {
             if (effect >= 0) startedEffects++;
             return transitionValue(new TestState(value), store, actionValue, next, effect, actionValue);
         }
-        @Override public ActionValue action(int slot, Object payload) { return UiRuntimeInvariantTest.action(String.valueOf(payload)); }
+        @Override public ActionValue action(int slot, Object payload) { return UiRuntimeInvariantTest.action(slot + ":" + payload); }
         @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { effectRuns++; if (failEffect) throw new IllegalStateException("effect failure"); return effectBody == null ? UiRuntimeInvariantTest.action("C" + effectId) : effectBody.apply(effectId); }
         @Override public ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { return mapEffectFailure ? UiRuntimeInvariantTest.action("F" + effectId) : null; }
         @Override public Map<String, Object> stateSnapshot(StateValue state) { return Map.of("value", ((TestState) state.abi()).value()); }

@@ -59,17 +59,19 @@ public final class SemanticExamplesVisibleSmoke {
     }
 
     private static void checkout(UiProgramRuntime runtime, Path evidence) throws Exception {
+        type(runtime, "Email address", "invalid");
+        runtime.awaitActions();
+        check(state(runtime, "dirty").equals(true) && state(runtime, "touched").equals(false) && state(runtime, "valid").equals(false), "checkout change did not remain untouched before blur");
+        blur(runtime, "Email address");
+        runtime.awaitActions();
+        check(state(runtime, "touched").equals(true) && texts(runtime.tree()).contains("Enter an email such as name@example.com"), "checkout blur did not reveal invalid state");
         click(runtime, "Continue to payment");
         runtime.awaitActions();
-        check(state(runtime, "route").equals("checkout/contact") && state(runtime, "touched").equals(true), "checkout accepted an empty contact");
-        submit(runtime, "Email address", "invalid");
-        runtime.awaitActions();
-        click(runtime, "Continue to payment");
-        runtime.awaitActions();
-        check(state(runtime, "route").equals("checkout/contact") && state(runtime, "valid").equals(false), "checkout accepted an invalid email");
+        check(state(runtime, "route").equals("checkout/contact") && state(runtime, "guardMessage").equals("Resolve invalid fields before continuing"), "checkout accepted an invalid email");
         runtime.renderer().capture(evidence.resolve("checkout-invalid.png"));
-        submit(runtime, "Email address", "user@example.com");
+        type(runtime, "Email address", "user@example.com");
         runtime.awaitActions();
+        check(state(runtime, "email").equals("user@example.com") && state(runtime, "valid").equals(true), "checkout did not accept correction without Enter");
         click(runtime, "Continue to payment");
         runtime.awaitActions();
         check(state(runtime, "route").equals("checkout/payment") && state(runtime, "email").equals("user@example.com"), "checkout did not navigate after valid input");
@@ -80,28 +82,53 @@ public final class SemanticExamplesVisibleSmoke {
         submit(runtime, "Search messages", "policy");
         runtime.awaitActions();
         long firstGeneration = (Long) state(runtime, "activeGeneration");
-        check(state(runtime, "status").equals("debouncing"), "search did not enter debounce");
-        submit(runtime, "Search messages", "renderer");
+        check(state(runtime, "status").equals("debouncing") && state(runtime, "searchesStarted").equals(0L), "search did not enter isolated debounce");
+        submit(runtime, "Search messages", "  ReNdErEr  ");
+        await(() -> state(runtime, "status").equals("loading"), 2000, "search did not expose loading after debounce");
+        runtime.renderer().capture(evidence.resolve("search-mail-loading.png"));
         runtime.awaitIdle();
         check(state(runtime, "generation").equals(firstGeneration + 1) && state(runtime, "activeGeneration").equals(-1L), "search replacement generation did not complete");
-        check(state(runtime, "result").equals("1 message matches renderer"), "search effect did not produce renderer results");
+        check(state(runtime, "query").equals("renderer") && state(runtime, "result").equals("1 message matches renderer"), "search effect did not normalize and produce renderer results");
         check(texts(runtime.tree()).containsAll(List.of("Renderer release", "release@deal.dev")) && !texts(runtime.tree()).contains("Portable policy review"), "search rendered the wrong mailbox result");
         runtime.renderer().capture(evidence.resolve("search-mail-results.png"));
+        submit(runtime, "Search messages", "fail");
+        runtime.awaitIdle();
+        check(state(runtime, "status").equals("error") && texts(runtime.tree()).contains("Local search failed for 'fail'"), "search failure UI was not visible");
+        runtime.renderer().capture(evidence.resolve("search-mail-error.png"));
+        click(runtime, "Retry");
+        runtime.awaitIdle();
+        check(state(runtime, "status").equals("ready") && state(runtime, "result").equals("No messages match fail"), "search retry did not recover");
+        runtime.renderer().capture(evidence.resolve("search-mail-retry.png"));
     }
 
     private static void kanban(UiProgramRuntime runtime, Path evidence) throws Exception {
-        click(runtime, "Move first to doing");
+        await(() -> focusId().equals("card-1"), 1000, "kanban initial native focus was not applied");
+        click(runtime, "Select Review renderer");
         runtime.awaitActions();
-        check(state(runtime, "pendingRevision").equals(1L) && cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban did not render its optimistic move");
+        await(() -> focusId().equals("card-2"), 1000, "kanban did not apply native focus to the second card");
+        check(state(runtime, "selectedId").equals(2L) && runtime.renderer().requestedFocusIdForTesting().equals("card-2"), "kanban did not select and request focus for the second card");
+        click(runtime, "Move Review renderer to done");
+        runtime.awaitActions();
+        await(() -> focusId().equals("card-2-done"), 1000, "kanban did not apply native focus to the destination action");
+        check(state(runtime, "pendingRevision").equals(1L) && cardColumn(runtime.tree(), "Review renderer").equals("done"), "kanban did not render its non-first optimistic move");
         runtime.awaitIdle();
-        check(state(runtime, "revision").equals(1L) && state(runtime, "pendingRevision").equals(0L) && state(runtime, "message").equals("Move accepted"), "kanban valid move did not commit");
+        await(() -> focusId().equals("card-2"), 1000, "kanban commit did not restore native card focus");
+        check(state(runtime, "revision").equals(1L) && state(runtime, "pendingRevision").equals(0L), "kanban valid move did not commit");
         runtime.renderer().capture(evidence.resolve("kanban-committed.png"));
-        click(runtime, "Try denied archive move");
+        click(runtime, "Next page");
         runtime.awaitActions();
-        check(state(runtime, "pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Ship portable policy").equals("archive"), "kanban did not expose its denied optimistic move");
+        await(() -> focusId().equals("card-3"), 1000, "kanban next window did not receive native focus");
+        check(state(runtime, "pageOffset").equals(2L), "kanban did not render the next window");
+        click(runtime, "Select Verify rollback");
+        runtime.awaitActions();
+        click(runtime, "Try denied archive move for Verify rollback");
+        runtime.awaitActions();
+        await(() -> focusId().equals("card-3-archive"), 1000, "kanban did not apply native focus to the denied destination action");
+        check(state(runtime, "pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Verify rollback").equals("archive"), "kanban did not expose its later-card denied optimistic move");
         runtime.awaitIdle();
+        await(() -> focusId().equals("card-3"), 1000, "kanban rollback did not restore native card focus");
         check(state(runtime, "revision").equals(1L) && state(runtime, "rollbackRevision").equals(1L) && state(runtime, "pendingRevision").equals(0L), "kanban denied move did not roll back");
-        check(cardColumn(runtime.tree(), "Ship portable policy").equals("doing") && state(runtime, "message").equals("Destination 'archive' is not part of this board"), "kanban rollback restored the wrong state");
+        check(cardColumn(runtime.tree(), "Verify rollback").equals("todo") && state(runtime, "message").equals("Destination 'archive' is not part of this board"), "kanban rollback restored the wrong later-card state");
         runtime.renderer().capture(evidence.resolve("kanban-rollback.png"));
     }
 
@@ -139,12 +166,32 @@ public final class SemanticExamplesVisibleSmoke {
 
     private static void submit(UiProgramRuntime runtime, String accessibleName, String value) throws Exception {
         onEdt(() -> {
-            JTextField field = find(component(runtime), JTextField.class, candidate -> accessibleName.equals(candidate.getAccessibleContext().getAccessibleName()));
-            if (field == null) throw new IllegalArgumentException("Input not found: " + accessibleName);
+            JTextField field = input(runtime, accessibleName);
             field.requestFocusInWindow();
             field.setText(value);
             field.postActionEvent();
         });
+    }
+
+    private static void type(UiProgramRuntime runtime, String accessibleName, String value) throws Exception {
+        onEdt(() -> {
+            JTextField field = input(runtime, accessibleName);
+            field.requestFocusInWindow();
+            field.setText(value);
+        });
+    }
+
+    private static void blur(UiProgramRuntime runtime, String accessibleName) throws Exception {
+        onEdt(() -> {
+            JTextField field = input(runtime, accessibleName);
+            for (var listener : field.getFocusListeners()) listener.focusLost(new java.awt.event.FocusEvent(field, java.awt.event.FocusEvent.FOCUS_LOST, false));
+        });
+    }
+
+    private static JTextField input(UiProgramRuntime runtime, String accessibleName) {
+        JTextField field = find(component(runtime), JTextField.class, candidate -> accessibleName.equals(candidate.getAccessibleContext().getAccessibleName()));
+        if (field == null) throw new IllegalArgumentException("Input not found: " + accessibleName);
+        return field;
     }
 
     private static void pressEscape(UiProgramRuntime runtime) throws Exception {

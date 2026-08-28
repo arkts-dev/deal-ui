@@ -72,13 +72,29 @@ public final class UiFrameworkTest {
         expect("UI2031", source(root).replace("ui.IntText(value: state.count)", "ui.IntText(value: state.title)"));
         expect("UI2015", source(root).replace("key: item.id", "key: item"));
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
-        expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string = \"start\"; key: string = \"test\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return {}; }\n");
+        compilePolicyOnlyCancellation(root, outputs, compiler);
+        expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string = \"start\"; key: string = \"test\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return { operation: \"start\" }; }\n");
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
         dependencyStaging(root, outputs);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
+    }
+
+    private static void compilePolicyOnlyCancellation(Path root, Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("policy-only");
+        Files.createDirectories(fixture);
+        Path logic = fixture.resolve("policy-only.deal");
+        Path pack = fixture.resolve("policy-only.dealui-pack");
+        Path view = fixture.resolve("policy-only.dealui");
+        Files.writeString(logic, "export class State { status: string = \"idle\"; }\nexport class Cancel {}\nexport class EffectCommand { operation: string = \"none\"; key: string = \"work\"; delayMillis: int = 0; cancellationMode: string = \"none\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function cancel(state: State, action: Cancel): State { return { status: \"cancelled\" }; }\n// @ui-effect-policy\nexport function cancelPolicy(state: State, action: Cancel): EffectCommand { return { operation: \"cancel\", cancellationMode: \"interrupt\" }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { text: string = \"\"; onClick?: Action; }\nexport component Button(props: Props): View { event onClick; capability \"renderer.swing.button\"; }\n");
+        Files.writeString(view, "import * as app from \"./policy-only\";\nimport * as ui from \"./policy-only.dealui-pack\";\n// @ui-root\nexport view PolicyOnly(state: app.State): View { ui.Button(text: \"Cancel\", onClick: action app.Cancel {}) }\n");
+        UiCompiler.Result result = compiler.compile(view, outputs.resolve("policy-only-output"));
+        compiler.build(result, runtimeClasses());
+        String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
+        check(generated.contains("app.cancelPolicy") && !generated.contains("app.cancel(state, action"), "policy-only cancellation is generated without an effect body");
     }
 
     private static void compileSemanticExamples(Path root, Path outputs, UiCompiler compiler) throws Exception {
@@ -135,20 +151,27 @@ public final class UiFrameworkTest {
     }
 
     private static void exerciseCheckout(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
+        JComponent component = runtime.renderer().componentForTesting(runtime.tree());
+        JTextField initialEmail = input(component);
+        javax.swing.SwingUtilities.invokeAndWait(() -> initialEmail.setText("invalid"));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("dirty").equals(true) && runtime.stateSnapshot().get("touched").equals(false) && runtime.stateSnapshot().get("valid").equals(false), "checkout change marks malformed email dirty without touching it");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { for (var listener : initialEmail.getFocusListeners()) listener.focusLost(new java.awt.event.FocusEvent(initialEmail, java.awt.event.FocusEvent.FOCUS_LOST, false)); });
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("touched").equals(true) && texts(runtime.tree()).contains("Enter an email such as name@example.com"), "checkout blur touches and exposes validation");
         runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("route").equals("checkout/contact") && runtime.stateSnapshot().get("touched").equals(true), "checkout blocks untouched invalid continuation");
-        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "invalid"));
-        runtime.awaitActions();
-        check(runtime.stateSnapshot().get("dirty").equals(true) && runtime.stateSnapshot().get("valid").equals(false), "checkout rejects malformed email");
+        check(runtime.stateSnapshot().get("route").equals("checkout/contact") && runtime.stateSnapshot().get("guardMessage").equals("Resolve invalid fields before continuing"), "checkout guard blocks invalid continuation");
         runtime.dispatch(action(runtime.tree(), "Leave checkout", bridge, null));
         runtime.awaitActions();
         check(runtime.stateSnapshot().get("leavePending").equals(true) && runtime.stateSnapshot().get("route").equals("checkout/contact"), "checkout requests confirmation for dirty leave");
         runtime.dispatch(action(runtime.tree(), "Stay in checkout", bridge, null));
         runtime.awaitActions();
         check(runtime.stateSnapshot().get("leavePending").equals(false), "checkout cancellation retains route");
-        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "user@example.com"));
+        JTextField corrected = input(runtime.renderer().componentForTesting(runtime.tree()));
+        javax.swing.SwingUtilities.invokeAndWait(() -> corrected.setText("user@example.com"));
         runtime.awaitActions();
+        check(runtime.stateSnapshot().get("email").equals("user@example.com") && runtime.stateSnapshot().get("valid").equals(true) && runtime.stateSnapshot().get("touched").equals(true), "checkout accepts valid correction without Enter and preserves touched state");
         runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null));
         runtime.awaitActions();
         check(runtime.stateSnapshot().get("route").equals("checkout/payment"), "checkout permits valid nested navigation");
@@ -166,50 +189,62 @@ public final class UiFrameworkTest {
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
         runtime.awaitActions();
         long firstGeneration = (Long) runtime.stateSnapshot().get("activeGeneration");
-        check(runtime.stateSnapshot().get("status").equals("debouncing") && texts(runtime.tree()).contains("Waiting to search"), "search exposes its debounce loading boundary");
+        check(runtime.stateSnapshot().get("status").equals("debouncing") && runtime.stateSnapshot().get("searchesStarted").equals(0L) && texts(runtime.tree()).contains("Waiting to search"), "search exposes debounce before loading or search execution");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "renderer"));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("generation").equals(firstGeneration + 1) && runtime.stateSnapshot().get("activeGeneration").equals(-1L), "search replacement advances and completes only the active generation");
+        check(runtime.stateSnapshot().get("generation").equals(firstGeneration + 1) && runtime.stateSnapshot().get("activeGeneration").equals(-1L) && runtime.stateSnapshot().get("searchesStarted").equals(1L), "search replacement suppresses stale debounce and completes only the active generation");
         check(runtime.stateSnapshot().get("result").equals("1 message matches renderer") && texts(runtime.tree()).containsAll(List.of("Renderer release", "release@deal.dev")) && !texts(runtime.tree()).contains("Portable policy review"), "search matches actual mailbox records");
-        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "checks are ready"));
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "  ReNdErEr  "));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("result").equals("1 message matches checks are ready") && texts(runtime.tree()).containsAll(List.of("Renderer release", "The Swing renderer checks are ready.")), "arbitrary input matches mailbox body text rather than a fixed query list");
-        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "unknown phrase"));
-        runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("result").equals("No messages match unknown phrase") && texts(runtime.tree()).contains("No messages match unknown phrase"), "arbitrary unmatched input returns an honest empty result");
+        check(runtime.stateSnapshot().get("query").equals("renderer") && runtime.stateSnapshot().get("result").equals("1 message matches renderer"), "search normalizes surrounding whitespace and case");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
         runtime.awaitActions();
+        long beforeCancel = (Long) runtime.stateSnapshot().get("searchesStarted");
         runtime.dispatch(action(runtime.tree(), "Cancel", bridge, null));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("status").equals("cancelled") && runtime.stateSnapshot().get("activeGeneration").equals(-1L), "search cancellation retires keyed delayed work");
+        check(runtime.stateSnapshot().get("status").equals("cancelled") && runtime.stateSnapshot().get("activeGeneration").equals(-1L) && runtime.stateSnapshot().get("searchesStarted").equals(beforeCancel), "policy-only Cancel retires keyed debounce before its effect body executes");
+        runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "fail"));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("status").equals("error") && runtime.stateSnapshot().get("errorMessage").equals("Local search failed for 'fail'") && texts(runtime.tree()).contains("Local search failed for 'fail'"), "throwing search effect reaches typed error UI");
+        long failedGeneration = (Long) runtime.stateSnapshot().get("generation");
+        runtime.dispatch(action(runtime.tree(), "Retry", bridge, null));
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("status").equals("ready") && runtime.stateSnapshot().get("generation").equals(failedGeneration + 1) && runtime.stateSnapshot().get("result").equals("No messages match fail"), "Retry starts a fresh generation with defined successful local retry behavior");
     }
 
     private static void exerciseKanban(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
         check(texts(runtime.tree()).containsAll(List.of("Ship portable policy", "Review renderer")) && !texts(runtime.tree()).contains("Verify rollback"), "kanban initial window contains exactly the first page");
-        runtime.dispatch(action(runtime.tree(), "Move first to doing", bridge, null));
+        runtime.renderer().componentForTesting(runtime.tree());
+        check(runtime.renderer().requestedFocusIdForTesting().equals("card-1") && focusIds(runtime.tree()).containsAll(List.of("card-1", "card-2", "card-1-doing", "card-2-done")), "kanban root and per-card controls expose the active focus domain: requested=" + runtime.renderer().requestedFocusIdForTesting() + ", ids=" + focusIds(runtime.tree()));
+        JComponent retained = runtime.renderer().componentForTesting(nodeWithFocus(runtime.tree(), "card-2"));
+        runtime.dispatch(action(runtime.tree(), "Select Review renderer", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(1L) && runtime.stateSnapshot().get("rollbackRevision").equals(0L), "kanban begins an optimistic revision");
-        check(texts(runtime.tree()).contains("Validating move") && cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban mutates card optimistically while validation is delayed");
+        check(runtime.stateSnapshot().get("selectedId").equals(2L) && runtime.stateSnapshot().get("focusRevision").equals(1L) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && texts(runtime.tree()).contains("Selected"), "kanban selects a non-first keyed card and focuses its control");
+        check(runtime.renderer().componentForTesting(nodeWithFocus(runtime.tree(), "card-2")) == retained, "kanban selection retains keyed native card-control identity");
+        runtime.dispatch(action(runtime.tree(), "Move Review renderer to done", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(1L) && runtime.stateSnapshot().get("focusRevision").equals(2L), "kanban begins an optimistic revision for the selected non-first card");
+        check(cardColumn(runtime.tree(), "Review renderer").equals("done") && runtime.renderer().requestedFocusIdForTesting().equals("card-2-done"), "kanban renders and focuses the selected destination action optimistically");
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("message").equals("Move accepted") && cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban commits a validated move through the real effect");
-        runtime.dispatch(action(runtime.tree(), "Try denied archive move", bridge, null));
-        runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Ship portable policy").equals("archive"), "kanban exposes the denied optimistic workflow");
-        runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("rollbackRevision").equals(1L) && runtime.stateSnapshot().get("message").equals("Destination 'archive' is not part of this board"), "kanban rolls back denied destination completion");
-        check(cardColumn(runtime.tree(), "Ship portable policy").equals("doing"), "kanban restores the prior card column after denial");
-        runtime.dispatch(action(runtime.tree(), "Previous page", bridge, null));
-        runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(0L), "kanban clamps previous boundary");
+        check(runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("focusRevision").equals(3L) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && cardColumn(runtime.tree(), "Review renderer").equals("done"), "kanban commits and returns focus to the selected card");
         runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && texts(runtime.tree()).containsAll(List.of("Verify rollback", "Publish completion")), "kanban advances to the next complete window");
+        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && runtime.stateSnapshot().get("focusRevision").equals(4L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3") && texts(runtime.tree()).containsAll(List.of("Verify rollback", "Publish completion")), "kanban advances to and focuses the next complete window");
+        runtime.dispatch(action(runtime.tree(), "Select Verify rollback", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("selectedId").equals(3L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban selects a card from a later window");
+        runtime.dispatch(action(runtime.tree(), "Try denied archive move for Verify rollback", bridge, null));
+        runtime.awaitActions();
+        check(runtime.stateSnapshot().get("pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Verify rollback").equals("archive") && runtime.renderer().requestedFocusIdForTesting().equals("card-3-archive"), "kanban exposes a denied optimistic move for a later card");
+        runtime.awaitIdle();
+        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("rollbackRevision").equals(1L) && runtime.stateSnapshot().get("focusRevision").equals(7L), "kanban rolls back denied destination completion and advances focus revision");
+        check(cardColumn(runtime.tree(), "Verify rollback").equals("todo") && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban rollback restores the later card and its focus");
         runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(2L), "kanban clamps next boundary");
+        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban clamps and focuses within the next boundary");
         runtime.dispatch(action(runtime.tree(), "Previous page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(0L), "kanban returns to the first window");
+        check(runtime.stateSnapshot().get("pageOffset").equals(0L) && runtime.renderer().requestedFocusIdForTesting().equals("card-1"), "kanban returns focus to an ID present in the first window");
     }
 
     private static String cardColumn(UiBridge.Node node, String title) {
@@ -219,11 +254,28 @@ public final class UiFrameworkTest {
         return values.get(index + 1);
     }
 
+    private static List<String> focusIds(UiBridge.Node node) {
+        List<String> result = new ArrayList<>();
+        UiBridge.Prop focus = node.props().get("focusId");
+        if (focus != null) result.add(String.valueOf(focus.value()));
+        for (UiBridge.Node child : node.children()) result.addAll(focusIds(child));
+        return result;
+    }
+
+    private static UiBridge.Node nodeWithFocus(UiBridge.Node node, String focusId) {
+        UiBridge.Prop focus = node.props().get("focusId");
+        if (focus != null && focus.value().equals(focusId)) return node;
+        for (UiBridge.Node child : node.children()) {
+            try { return nodeWithFocus(child, focusId); } catch (IllegalArgumentException ignored) {}
+        }
+        throw new IllegalArgumentException("Focus ID not found: " + focusId);
+    }
+
     private static UiBridge.ActionValue action(UiBridge.Node node, String textOrProp, UiBridge bridge, Object payload) {
         UiBridge.Prop direct = node.props().get(textOrProp);
         if (direct != null && direct.actionSlot() >= 0) return bridge.action(direct.actionSlot(), payload);
         UiBridge.Prop text = node.props().get("text");
-        if (text != null && text.value().equals(textOrProp)) for (UiBridge.Prop prop : node.props().values()) if (prop.actionSlot() >= 0) return bridge.action(prop.actionSlot(), payload);
+        if (text != null && text.value().equals(textOrProp)) for (UiBridge.Prop prop : node.props().values()) if (prop.actionSlot() >= 0) { UiBridge.Prop actionPayload = node.props().get("actionPayload"); return bridge.action(prop.actionSlot(), payload == null && actionPayload != null ? actionPayload.value() : payload); }
         for (UiBridge.Node child : node.children()) { try { return action(child, textOrProp, bridge, payload); } catch (IllegalArgumentException ignored) {} }
         throw new IllegalArgumentException("Action not found: " + textOrProp);
     }
