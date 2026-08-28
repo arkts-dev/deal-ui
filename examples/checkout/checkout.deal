@@ -1,0 +1,49 @@
+import * as interaction from "../../ui/interaction";
+
+export class CheckoutState {
+  route: string = "contact";
+  parentRoute: string = "checkout";
+  email: string = "";
+  dirty: boolean = false;
+  touched: boolean = false;
+  valid: boolean = false;
+  guardMessage: string = "";
+}
+
+export class EditEmail { value: string = ""; }
+export class TouchEmail {}
+export class Continue {}
+export class ReturnToContact {}
+
+export function initialState(): CheckoutState { return {}; }
+
+// @ui-update
+export function editEmail(state: CheckoutState, action: EditEmail): CheckoutState {
+  let message: string = "";
+  if (action.value === "") { message = "Email is required"; }
+  let field: interaction.FieldStatus = interaction.editField(action.value !== "", message);
+  return { route: state.route, parentRoute: state.parentRoute, email: action.value, dirty: field.dirty, touched: field.touched, valid: field.valid, guardMessage: field.message };
+}
+
+// @ui-update
+export function touchEmail(state: CheckoutState, action: TouchEmail): CheckoutState {
+  let current: interaction.FieldStatus = { dirty: state.dirty, touched: state.touched, valid: state.valid, message: state.guardMessage };
+  let field: interaction.FieldStatus = interaction.touchField(current);
+  return { route: state.route, parentRoute: state.parentRoute, email: state.email, dirty: field.dirty, touched: field.touched, valid: field.valid, guardMessage: field.message };
+}
+
+// @ui-update
+export function continueCheckout(state: CheckoutState, action: Continue): CheckoutState {
+  let decision: interaction.NavigationDecision = interaction.guardNavigation("checkout/payment", state.dirty, state.valid);
+  let route: string = state.route;
+  if (decision.allowed) { route = decision.route; }
+  return { route: route, parentRoute: state.parentRoute, email: state.email, dirty: state.dirty, touched: state.touched, valid: state.valid, guardMessage: decision.reason };
+}
+
+// @ui-update
+export function returnToContact(state: CheckoutState, action: ReturnToContact): CheckoutState {
+  let decision: interaction.NavigationDecision = interaction.allowNavigation("contact");
+  return { route: decision.route, parentRoute: "checkout", email: state.email, dirty: state.dirty, touched: state.touched, valid: state.valid };
+}
+
+export function main(): null { return null; }

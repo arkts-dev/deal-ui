@@ -1,0 +1,24 @@
+import * as interaction from "../../ui/interaction";
+
+export class Card { id: int = 0; title: string = ""; column: string = "todo"; }
+export class BoardState { cards: Card[] = []; selectedId: int = 0; focusIntent: string = "board"; pageOffset: int = 0; pageLimit: int = 1; total: int = 0; revision: int = 0; pendingRevision: int = 0; rollbackRevision: int = 0; message: string = ""; }
+export class Select { id: int = 0; }
+export class Move { id: int = 0; }
+export class NextPage {}
+export class PreviousPage {}
+export class MoveCommitted { revision: int = 0; }
+
+export function initialState(): BoardState { let first: Card = { id: 1, title: "Ship portable policy", column: "todo" }; let second: Card = { id: 2, title: "Review renderer", column: "doing" }; let window: interaction.WindowPolicy = interaction.clampWindow(0, 1, 2); return { cards: [first, second], pageOffset: window.offset, pageLimit: window.limit, total: window.total }; }
+// @ui-update
+export function select(state: BoardState, action: Select): BoardState { return { cards: state.cards, selectedId: action.id, focusIntent: "card", pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+// @ui-update
+export function move(state: BoardState, action: Move): BoardState { let current: interaction.OptimisticPolicy = { revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; let policy: interaction.OptimisticPolicy = interaction.beginOptimistic(current); return { cards: state.cards, selectedId: action.id, focusIntent: "column-doing", pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: policy.revision, pendingRevision: policy.pendingRevision, rollbackRevision: policy.rollbackRevision, message: "Move pending" }; }
+// @ui-effect
+export async function persistMove(state: BoardState, action: Move): MoveCommitted { return { revision: state.pendingRevision }; }
+// @ui-update
+export function moved(state: BoardState, action: MoveCommitted): BoardState { let current: interaction.OptimisticPolicy = { revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; let policy: interaction.OptimisticPolicy = interaction.commitOptimistic(current, action.revision); return { cards: state.cards, selectedId: state.selectedId, focusIntent: state.focusIntent, pageOffset: state.pageOffset, pageLimit: state.pageLimit, total: state.total, revision: policy.revision, pendingRevision: policy.pendingRevision, rollbackRevision: policy.rollbackRevision, message: "Move saved" }; }
+// @ui-update
+export function nextPage(state: BoardState, action: NextPage): BoardState { let current: interaction.WindowPolicy = { offset: state.pageOffset, limit: state.pageLimit, total: state.total }; let window: interaction.WindowPolicy = interaction.nextWindow(current); return { cards: state.cards, selectedId: state.selectedId, focusIntent: "grid", pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+// @ui-update
+export function previousPage(state: BoardState, action: PreviousPage): BoardState { let current: interaction.WindowPolicy = { offset: state.pageOffset, limit: state.pageLimit, total: state.total }; let window: interaction.WindowPolicy = interaction.previousWindow(current); return { cards: state.cards, selectedId: state.selectedId, focusIntent: "grid", pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: state.revision, pendingRevision: state.pendingRevision, rollbackRevision: state.rollbackRevision }; }
+export function main(): null { return null; }

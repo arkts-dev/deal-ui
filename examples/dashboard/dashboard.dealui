@@ -1,0 +1,20 @@
+import * as app from "./dashboard";
+import * as ui from "./platform-ui.dealui-pack";
+// @ui-root
+export view Dashboard(state: app.DashboardState): View {
+  ui.Card() { ui.Column(spacing: ui.spaceMd) {
+    ui.Text(value: "OPERATIONS DASHBOARD")
+    ui.Text(value: state.announcement)
+    ui.Text(value: state.command)
+    ui.Button(text: "Open settings", accessibilityLabel: "Open settings dialog", onClick: action app.OpenModal {})
+    When(state.subscribedScope > 0) {
+      ui.Card() { ui.Column(spacing: ui.spaceMd) {
+        ui.Text(value: "SETTINGS DIALOG")
+        ui.Text(value: "Subscription scope active")
+        ui.Button(text: "Close settings", accessibilityLabel: "Close settings and restore focus", onClick: action app.CloseModal {})
+        ui.Button(text: "Refresh subscription", accessibilityLabel: "Refresh scoped subscription", onClick: action app.SubscriptionTick { scope: 1 })
+        ui.Button(text: "Escape", accessibilityLabel: "Close settings with Escape command", onClick: action app.EscapeCommand {})
+      } }
+    } Else { ui.Text(value: "No overlay open") }
+  } }
+}

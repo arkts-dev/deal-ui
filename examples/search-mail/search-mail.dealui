@@ -1,0 +1,12 @@
+import * as app from "./search-mail";
+import * as ui from "./platform-ui.dealui-pack";
+// @ui-root
+export view SearchMail(state: app.SearchState): View {
+  ui.Card() { ui.Column(spacing: ui.spaceMd) {
+    ui.Text(value: "SEARCH MAIL")
+    ui.Input(value: state.query, accessibilityLabel: "Search messages", onSubmit: action app.Search { query: payload })
+    ui.Text(value: state.status)
+    When(state.status === "loading" || state.status === "debouncing") { ui.Spinner() } Else { ui.Text(value: state.result) }
+    When(state.status === "error") { ui.Button(text: "Retry", accessibilityLabel: "Retry search", onClick: action app.Retry {}) } Else { ui.Button(text: "Cancel", accessibilityLabel: "Cancel search", onClick: action app.Cancel {}) }
+  } }
+}

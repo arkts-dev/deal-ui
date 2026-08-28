@@ -1,0 +1,143 @@
+export class NavigationDecision {
+  allowed: boolean = false;
+  route: string = "";
+  reason: string = "";
+}
+
+export class FieldStatus {
+  dirty: boolean = false;
+  touched: boolean = false;
+  valid: boolean = true;
+  message: string = "";
+}
+
+export class RequestPolicy {
+  generation: int = 0;
+  activeGeneration: int = 0;
+  debounceRevision: int = 0;
+  loading: boolean = false;
+  failed: boolean = false;
+}
+
+export class WindowPolicy {
+  offset: int = 0;
+  limit: int = 10;
+  total: int = 0;
+}
+
+export class OptimisticPolicy {
+  revision: int = 0;
+  pendingRevision: int = 0;
+  rollbackRevision: int = 0;
+}
+
+export class OverlayPolicy {
+  open: boolean = false;
+  scopeRevision: int = 0;
+  restoreFocus: string = "";
+  focusIntent: string = "";
+}
+
+export function allowNavigation(route: string): NavigationDecision {
+  return { allowed: true, route: route };
+}
+
+export function guardNavigation(route: string, dirty: boolean, valid: boolean): NavigationDecision {
+  if (dirty && !valid) {
+    return { route: route, reason: "Resolve invalid fields before continuing" };
+  }
+  return { allowed: true, route: route };
+}
+
+export function untouchedField(): FieldStatus {
+  return {};
+}
+
+export function editField(valid: boolean, message: string): FieldStatus {
+  return { dirty: true, touched: true, valid: valid, message: message };
+}
+
+export function touchField(current: FieldStatus): FieldStatus {
+  return { dirty: current.dirty, touched: true, valid: current.valid, message: current.message };
+}
+
+export function beginRequest(current: RequestPolicy): RequestPolicy {
+  let next: int = current.generation + 1;
+  return { generation: next, activeGeneration: next, debounceRevision: current.debounceRevision + 1, loading: true };
+}
+
+export function cancelRequest(current: RequestPolicy): RequestPolicy {
+  return { generation: current.generation, activeGeneration: -1, debounceRevision: current.debounceRevision + 1 };
+}
+
+export function acceptResponse(current: RequestPolicy, generation: int): boolean {
+  return current.loading && current.activeGeneration === generation;
+}
+
+export function finishRequest(current: RequestPolicy, generation: int): RequestPolicy {
+  if (!acceptResponse(current, generation)) {
+    return current;
+  }
+  return { generation: current.generation, activeGeneration: -1, debounceRevision: current.debounceRevision };
+}
+
+export function failRequest(current: RequestPolicy, generation: int): RequestPolicy {
+  if (!acceptResponse(current, generation)) {
+    return current;
+  }
+  return { generation: current.generation, activeGeneration: -1, debounceRevision: current.debounceRevision, failed: true };
+}
+
+export function retryRequest(current: RequestPolicy): RequestPolicy {
+  return beginRequest(current);
+}
+
+export function clampWindow(offset: int, limit: int, total: int): WindowPolicy {
+  let safeLimit: int = limit;
+  if (safeLimit < 1) { safeLimit = 1; }
+  let maximum: int = total - safeLimit;
+  if (maximum < 0) { maximum = 0; }
+  let safeOffset: int = offset;
+  if (safeOffset < 0) { safeOffset = 0; }
+  if (safeOffset > maximum) { safeOffset = maximum; }
+  return { offset: safeOffset, limit: safeLimit, total: total };
+}
+
+export function nextWindow(current: WindowPolicy): WindowPolicy {
+  return clampWindow(current.offset + current.limit, current.limit, current.total);
+}
+
+export function previousWindow(current: WindowPolicy): WindowPolicy {
+  return clampWindow(current.offset - current.limit, current.limit, current.total);
+}
+
+export function beginOptimistic(current: OptimisticPolicy): OptimisticPolicy {
+  let next: int = current.revision + 1;
+  return { revision: next, pendingRevision: next, rollbackRevision: current.revision };
+}
+
+export function commitOptimistic(current: OptimisticPolicy, revision: int): OptimisticPolicy {
+  if (current.pendingRevision !== revision) { return current; }
+  return { revision: current.revision };
+}
+
+export function rollbackOptimistic(current: OptimisticPolicy, revision: int): OptimisticPolicy {
+  if (current.pendingRevision !== revision) { return current; }
+  return { revision: current.rollbackRevision, rollbackRevision: current.rollbackRevision };
+}
+
+export function openOverlay(current: OverlayPolicy, restoreFocus: string, focusIntent: string): OverlayPolicy {
+  return { open: true, scopeRevision: current.scopeRevision + 1, restoreFocus: restoreFocus, focusIntent: focusIntent };
+}
+
+export function closeOverlay(current: OverlayPolicy): OverlayPolicy {
+  return { scopeRevision: current.scopeRevision + 1, restoreFocus: current.restoreFocus, focusIntent: current.restoreFocus };
+}
+
+export function commandMatches(actual: string, expected: string, overlayOpen: boolean): boolean {
+  return overlayOpen && actual === expected;
+}
+
+export function subscriptionActive(scopeRevision: int, completionScope: int, open: boolean): boolean {
+  return open && scopeRevision === completionScope;
+}

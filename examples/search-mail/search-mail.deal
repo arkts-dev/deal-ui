@@ -1,0 +1,32 @@
+import * as interaction from "../../ui/interaction";
+
+export class SearchState {
+  query: string = "";
+  status: string = "idle";
+  result: string = "";
+  generation: int = 0;
+  activeGeneration: int = -1;
+  debounceRevision: int = 0;
+  errorMessage: string = "";
+}
+export class Search { query: string = ""; }
+export class Cancel {}
+export class Retry {}
+export class SearchCompleted { generation: int = 0; value: string = ""; }
+
+export function policy(state: SearchState): interaction.RequestPolicy { return { generation: state.generation, activeGeneration: state.activeGeneration, debounceRevision: state.debounceRevision, loading: state.status === "loading" || state.status === "debouncing", failed: state.status === "error" }; }
+export function initialState(): SearchState { return {}; }
+
+// @ui-update
+export function beginSearch(state: SearchState, action: Search): SearchState { let request: interaction.RequestPolicy = interaction.beginRequest(policy(state)); return { query: action.query, status: "debouncing", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+// @ui-effect
+export async function search(state: SearchState, action: Search): SearchCompleted { return { generation: state.activeGeneration, value: "Results for " + action.query }; }
+// @ui-update
+export function finishSearch(state: SearchState, action: SearchCompleted): SearchState { let current: interaction.RequestPolicy = policy(state); if (!interaction.acceptResponse(current, action.generation)) { return state; } let request: interaction.RequestPolicy = interaction.finishRequest(current, action.generation); return { query: state.query, status: "ready", result: action.value, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+// @ui-update
+export function cancelSearch(state: SearchState, action: Cancel): SearchState { let request: interaction.RequestPolicy = interaction.cancelRequest(policy(state)); return { query: state.query, status: "cancelled", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+// @ui-update
+export function retrySearch(state: SearchState, action: Retry): SearchState { let request: interaction.RequestPolicy = interaction.retryRequest(policy(state)); return { query: state.query, status: "loading", result: state.result, generation: request.generation, activeGeneration: request.activeGeneration, debounceRevision: request.debounceRevision }; }
+// @ui-effect
+export async function retry(state: SearchState, action: Retry): SearchCompleted { return { generation: state.generation + 1, value: "Results for " + state.query }; }
+export function main(): null { return null; }

@@ -53,8 +53,9 @@ public final class UiCompiler {
         Path project = destination.resolve("deal");
         Path framework = project.resolve("ui");
         Files.createDirectories(framework);
-        Files.writeString(project.resolve(deal.getFileName()), Files.readString(deal) + generatedDeal.appAugmentation());
-        for (String module : List.of("core", "store", "reconcile", "actions", "effects")) Files.copy(frameworkRoot.resolve("ui/" + module + ".deal"), framework.resolve(module + ".deal"), StandardCopyOption.REPLACE_EXISTING);
+        String appSource = Files.readString(deal).replace("from \"../../ui/interaction\"", "from \"./ui/interaction\"");
+        Files.writeString(project.resolve(deal.getFileName()), appSource + generatedDeal.appAugmentation());
+        for (String module : List.of("core", "store", "reconcile", "actions", "effects", "interaction")) Files.copy(frameworkRoot.resolve("ui/" + module + ".deal"), framework.resolve(module + ".deal"), StandardCopyOption.REPLACE_EXISTING);
         Path entry = project.resolve("ui_application.deal");
         Files.writeString(entry, generatedDeal.source());
 

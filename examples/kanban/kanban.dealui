@@ -1,0 +1,16 @@
+import * as app from "./kanban";
+import * as ui from "./platform-ui.dealui-pack";
+// @ui-root
+export view Kanban(state: app.BoardState): View {
+  ui.Card() { ui.Column(spacing: ui.spaceMd) {
+    ui.Text(value: "KANBAN / VIRTUAL GRID")
+    ui.Text(value: state.focusIntent)
+    ui.IntText(value: state.selectedId)
+    ForEach(state.cards, card: app.Card, key: card.id) { ui.Text(value: card.title) }
+    ui.Button(text: "Select first", accessibilityLabel: "Select first card", onClick: action app.Select { id: 1 })
+    ui.Button(text: "Move first", accessibilityLabel: "Move first card", onClick: action app.Move { id: 1 })
+    ui.Button(text: "Previous page", accessibilityLabel: "Previous page", onClick: action app.PreviousPage {})
+    ui.Button(text: "Next page", accessibilityLabel: "Next page", onClick: action app.NextPage {})
+    ui.Text(value: state.message)
+  } }
+}

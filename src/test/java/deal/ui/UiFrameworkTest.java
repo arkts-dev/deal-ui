@@ -75,7 +75,42 @@ public final class UiFrameworkTest {
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
+        compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
+    }
+
+    private static void compileSemanticExamples(Path root, Path outputs, UiCompiler compiler) throws Exception {
+        for (String name : List.of("checkout", "search-mail", "kanban", "dashboard")) {
+            UiCompiler.Result result = compiler.compile(root.resolve("examples").resolve(name).resolve(name + ".dealui"), outputs.resolve(name));
+            compiler.build(result, root.resolve("build/classes"));
+            String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
+            check(generated.contains("class NavigationDecision") && generated.contains("class RequestPolicy") && generated.contains("class WindowPolicy") && generated.contains("class OverlayPolicy"), name + " compiles with identical portable interaction policy");
+            exerciseSemanticExample(result, name);
+        }
+    }
+
+    private static void exerciseSemanticExample(UiCompiler.Result result, String name) throws Exception {
+        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiBridge bridge = Main.bridge(result, loader);
+            try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
+                switch (name) {
+                    case "checkout" -> { runtime.dispatch(action(runtime.tree(), "Continue to payment", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("route").equals("checkout/payment"), "checkout guard permits clean nested navigation"); }
+                    case "search-mail" -> { runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy")); runtime.awaitIdle(); check(runtime.stateSnapshot().get("result").equals("Results for policy"), "search completion respects active generation"); }
+                    case "kanban" -> { runtime.dispatch(action(runtime.tree(), "Next page", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("pageOffset").equals(1L), "kanban pagination uses shared clamped window policy"); }
+                    case "dashboard" -> { runtime.dispatch(action(runtime.tree(), "Open settings", bridge, null)); runtime.awaitActions(); check(runtime.stateSnapshot().get("subscribedScope").equals(1L), "dashboard overlay opens scoped subscription and focus lifecycle"); }
+                    default -> throw new IllegalArgumentException(name);
+                }
+            }
+        }
+    }
+
+    private static UiBridge.ActionValue action(UiBridge.Node node, String textOrProp, UiBridge bridge, Object payload) {
+        UiBridge.Prop direct = node.props().get(textOrProp);
+        if (direct != null && direct.actionSlot() >= 0) return bridge.action(direct.actionSlot(), payload);
+        UiBridge.Prop text = node.props().get("text");
+        if (text != null && text.value().equals(textOrProp)) for (UiBridge.Prop prop : node.props().values()) if (prop.actionSlot() >= 0) return bridge.action(prop.actionSlot(), payload);
+        for (UiBridge.Node child : node.children()) { try { return action(child, textOrProp, bridge, payload); } catch (IllegalArgumentException ignored) {} }
+        throw new IllegalArgumentException("Action not found: " + textOrProp);
     }
 
     private static void typedPayloadContracts(Path root, Path outputs, UiCompiler compiler) throws Exception {

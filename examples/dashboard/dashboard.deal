@@ -1,0 +1,19 @@
+import * as interaction from "../../ui/interaction";
+
+export class DashboardState { overlayOpen: boolean = false; scopeRevision: int = 0; restoreFocus: string = ""; focusIntent: string = ""; subscribedScope: int = 0; command: string = ""; announcement: string = "Dashboard ready"; }
+export class OpenModal {}
+export class CloseModal {}
+export class EscapeCommand {}
+export class SubscriptionTick { scope: int = 0; }
+
+export function overlay(state: DashboardState): interaction.OverlayPolicy { return { open: state.overlayOpen, scopeRevision: state.scopeRevision, restoreFocus: state.restoreFocus, focusIntent: state.focusIntent }; }
+export function initialState(): DashboardState { return {}; }
+// @ui-update
+export function openModal(state: DashboardState, action: OpenModal): DashboardState { let value: interaction.OverlayPolicy = interaction.openOverlay(overlay(state), "open-settings", "settings-name"); return { overlayOpen: value.open, scopeRevision: value.scopeRevision, restoreFocus: value.restoreFocus, focusIntent: value.focusIntent, subscribedScope: value.scopeRevision, announcement: "Settings dialog opened" }; }
+// @ui-update
+export function closeModal(state: DashboardState, action: CloseModal): DashboardState { let value: interaction.OverlayPolicy = interaction.closeOverlay(overlay(state)); return { overlayOpen: value.open, scopeRevision: value.scopeRevision, restoreFocus: value.restoreFocus, focusIntent: value.focusIntent, subscribedScope: -1, announcement: "Settings dialog closed" }; }
+// @ui-update
+export function escape(state: DashboardState, action: EscapeCommand): DashboardState { if (!interaction.commandMatches("Escape", "Escape", state.overlayOpen)) { return state; } let value: interaction.OverlayPolicy = interaction.closeOverlay(overlay(state)); return { overlayOpen: value.open, scopeRevision: value.scopeRevision, restoreFocus: value.restoreFocus, focusIntent: value.focusIntent, subscribedScope: -1, command: "Escape", announcement: "Settings dialog closed" }; }
+// @ui-update
+export function subscriptionTick(state: DashboardState, action: SubscriptionTick): DashboardState { if (!interaction.subscriptionActive(state.scopeRevision, action.scope, state.overlayOpen)) { return state; } return { overlayOpen: state.overlayOpen, scopeRevision: state.scopeRevision, restoreFocus: state.restoreFocus, focusIntent: state.focusIntent, subscribedScope: state.subscribedScope, command: state.command, announcement: "Settings refreshed" }; }
+export function main(): null { return null; }

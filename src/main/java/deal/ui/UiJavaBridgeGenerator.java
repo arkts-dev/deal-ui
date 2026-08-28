@@ -70,6 +70,7 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateEffects(StringBuilder out) {
+        if (generated.effectIds().isEmpty()) { out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { throw new IllegalArgumentException(\"Unknown generated effect: \" + effectId); }\n"); return; }
         out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { var value = (").append(ui).append(".$C_UiAction) action.abi(); return new ActionValue(switch (effectId) {\n");
         for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
             int id = generated.actionIds().get(entry.getKey());

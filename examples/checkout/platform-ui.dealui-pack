@@ -1,0 +1,12 @@
+export class Space { value: int = 0; }
+export class TextProps { value: string = ""; }
+export class InputProps { value: string = ""; onSubmit?: Action; accessibilityLabel?: string; }
+export class ButtonProps { text: string = ""; onClick?: Action; accessibilityLabel?: string; }
+export class ColumnProps { spacing?: Space; }
+export class EmptyProps {}
+export component Text(props: TextProps): View { capability "renderer.swing.text"; }
+export component Input(props: InputProps): View { event onSubmit(payload: string); accessibility accessibilityLabel; capability "renderer.swing.input"; }
+export component Button(props: ButtonProps): View { event onClick; accessibility accessibilityLabel; capability "renderer.swing.button"; }
+export component Column(props: ColumnProps): View { children optional; token spacing; capability "renderer.swing.column"; }
+export component Card(props: EmptyProps): View { children optional; capability "renderer.swing.card"; }
+export token spaceMd: Space = { value: 14 };

@@ -50,7 +50,7 @@ final class UiDealGenerator {
     private String flattenFramework(String generatedSource) {
         try {
             StringBuilder source = new StringBuilder("import * as app from \"./").append(moduleName(program.dealSource())).append("\";\n\n");
-            for (String module : List.of("core", "store", "actions", "effects", "reconcile")) {
+            for (String module : List.of("core", "store", "actions", "effects", "interaction", "reconcile")) {
                 String value = java.nio.file.Files.readString(frameworkRoot.resolve("ui/" + module + ".deal"));
                 value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
                 if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");
