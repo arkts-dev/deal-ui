@@ -241,13 +241,13 @@ public final class UiRuntimeInvariantTest {
         UiBridge.Patch update = new UiBridge.Patch("update", next.identity(), next.identity(), true, 0, next);
         try { renderer.apply(List.of(update), next); throw new AssertionError("Expected replacement disposal failure"); }
         catch (IllegalStateException failure) { check(failure.getMessage().equals("replacement disposal failure"), "replacement disposal preparation failure is surfaced"); }
-        check(renderer.componentForTesting(prior) == old && commits[0] == 1 && disposals[0] == 0, "failed replacement retains old identity and resources");
+        check(renderer.componentForTesting(prior) == old && commits[0] == 1 && disposals[0] == 1, "failed replacement retains old identity and releases abandoned replacement");
         fail[0] = false;
         renderer.apply(List.of(update), next);
         JComponent replacement = renderer.componentForTesting(next);
         check(replacement instanceof JPanel && replacement != old, "prepared incompatible replacement is installed");
         check(replacement.getName().equals("panel") && commits[0] == 2, "prepared replacement commits configuration once");
-        check(disposals[0] == 1 && renderer.disposedComponents() == 1, "displaced component is disposed exactly once");
+        check(disposals[0] == 2 && renderer.disposedComponents() == 1, "displaced component is disposed once after abandoned replacement cleanup");
         renderer.close();
     }
 

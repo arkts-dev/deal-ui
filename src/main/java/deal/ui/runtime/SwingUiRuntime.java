@@ -67,6 +67,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             lastApplyOnEdt = SwingUtilities.isEventDispatchThread();
             PreparedPlan prepared = stagePatches(patches, next);
             try {
+                prepared.commitConfigurations();
                 for (UiBridge.Patch patch : patches) applyPatch(patch, prepared);
                 for (UiBridge.Patch patch : patches) if (!patch.kind().equals("dispose")) syncChildren(patch.node());
                 tree = Objects.requireNonNull(next);
@@ -111,7 +112,7 @@ public final class SwingUiRuntime implements AutoCloseable {
     }
 
     private PreparedPlan stagePatches(List<UiBridge.Patch> patches, UiBridge.Node next) {
-        Map<UiBridge.Identity, JComponent> staged = new LinkedHashMap<>();
+        Map<UiBridge.Identity, PreparedComponent> staged = new LinkedHashMap<>();
         Map<UiBridge.Identity, Runnable> commits = new LinkedHashMap<>();
         java.util.Set<JComponent> disposals = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         try {
@@ -122,7 +123,7 @@ public final class SwingUiRuntime implements AutoCloseable {
             stageNode(next, staged, commits, disposals);
             return new PreparedPlan(staged, commits, disposals);
         } catch (RuntimeException | Error failure) {
-            for (JComponent component : staged.values()) bindings.dispose(component);
+            for (PreparedComponent component : staged.values()) component.binding().disposer().accept(component.component());
             throw failure;
         }
     }
@@ -133,12 +134,12 @@ public final class SwingUiRuntime implements AutoCloseable {
         bindings.prepareDisposal(component);
     }
 
-    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, JComponent> staged, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) {
+    private void stageNode(UiBridge.Node node, Map<UiBridge.Identity, PreparedComponent> staged, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) {
         if (commits.containsKey(node.identity())) return;
         JComponent live = retained.get(node.identity());
         UiRendererBindings.Binding binding = bindings.require(node.component());
         JComponent component = live != null && compatible(live, node.component()) ? live : binding.factory().get();
-        if (component != live) { staged.put(node.identity(), component); stageDisposal(live, disposals); }
+        if (component != live) { staged.put(node.identity(), new PreparedComponent(component, binding)); stageDisposal(live, disposals); }
         commits.put(node.identity(), binding.preparer().prepare(component, node, bridge, dispatch::accept, bindings));
         for (UiBridge.Node child : node.children()) stageNode(child, staged, commits, disposals);
     }
@@ -158,7 +159,6 @@ public final class SwingUiRuntime implements AutoCloseable {
                 disposeDetached(displaced);
             }
         } else if (component == null) throw new IllegalStateException("Missing prepared component " + patch.identity());
-        prepared.commit(patch.identity());
         java.awt.Container parent = null;
         if (patch.rootParent()) parent = root;
         else {
@@ -175,15 +175,16 @@ public final class SwingUiRuntime implements AutoCloseable {
         }
     }
 
+    private record PreparedComponent(JComponent component, UiRendererBindings.Binding binding) {}
     private static final class PreparedPlan {
-        private final Map<UiBridge.Identity, JComponent> components;
+        private final Map<UiBridge.Identity, PreparedComponent> components;
         private final Map<UiBridge.Identity, Runnable> commits;
         private final java.util.Set<JComponent> disposals;
-        private PreparedPlan(Map<UiBridge.Identity, JComponent> components, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) { this.components = components; this.commits = commits; this.disposals = disposals; }
-        private JComponent take(UiBridge.Identity identity) { return components.remove(identity); }
-        private void commit(UiBridge.Identity identity) { Runnable action = commits.remove(identity); if (action != null) action.run(); }
+        private PreparedPlan(Map<UiBridge.Identity, PreparedComponent> components, Map<UiBridge.Identity, Runnable> commits, java.util.Set<JComponent> disposals) { this.components = components; this.commits = commits; this.disposals = disposals; }
+        private JComponent take(UiBridge.Identity identity) { PreparedComponent value = components.remove(identity); return value == null ? null : value.component(); }
+        private void commitConfigurations() { for (Runnable action : commits.values()) action.run(); commits.clear(); }
         private java.util.Set<JComponent> disposals() { return disposals; }
-        private void releaseUnused(UiRendererBindings bindings) { for (JComponent component : components.values()) bindings.dispose(component); components.clear(); }
+        private void releaseUnused(UiRendererBindings bindings) { for (PreparedComponent component : components.values()) component.binding().disposer().accept(component.component()); components.clear(); }
     }
 
     private void syncChildren(UiBridge.Node node) {
