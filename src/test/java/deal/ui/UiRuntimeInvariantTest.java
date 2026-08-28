@@ -31,6 +31,9 @@ public final class UiRuntimeInvariantTest {
         initializationFailureCleansOwnedResources();
         disposerPreflightProtectsLiveGraph();
         preparedReplacementIsInstalled();
+        detachedSnapshotSurvivesCandidateRelease();
+        stagedCleanupIsExhaustive();
+        cleanupReportingNeverEscapes();
         windowCloseDisposesRuntimeOnce();
         System.out.println("Runtime invariants passed: " + passed);
     }
@@ -249,6 +252,46 @@ public final class UiRuntimeInvariantTest {
         check(replacement.getName().equals("panel") && commits[0] == 3, "prepared replacement commits configuration once");
         check(disposals[0] == 2 && renderer.disposedComponents() == 1, "displaced component is disposed once after abandoned replacement cleanup");
         renderer.close();
+    }
+
+    private static void detachedSnapshotSurvivesCandidateRelease() {
+        UiRendererBindings.Binding binding = new UiRendererBindings.Binding("text", JLabel::new, UiRendererBindings::configure, ignored -> {}, component -> { ((JLabel) component).setText("released"); component.setName(null); });
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", binding), Map.of(), Color.WHITE, Color.BLACK);
+        ProtocolBridge bridge = new ProtocolBridge();
+        deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Snapshot", bindings, bridge, action -> {});
+        UiBridge.Node prior = bridge.node("text", "before");
+        JLabel retained = (JLabel) renderer.componentForTesting(prior);
+        UiBridge.Node next = bridge.node("text", "after");
+        renderer.apply(List.of(new UiBridge.Patch("update", next.identity(), next.identity(), true, 0, next)), next);
+        check(renderer.componentForTesting(next) == retained && retained.getText().equals("after"), "detached configuration snapshot survives destructive candidate release");
+        renderer.close();
+    }
+
+    private static void stagedCleanupIsExhaustive() {
+        int[] releases = {0};
+        UiRendererBindings.Binding panel = new UiRendererBindings.Binding("panel", JPanel::new, (component, node, bridge, dispatch, bindings) -> { component.setName("panel"); if (node.props().get("value").value().equals("fail")) throw new IllegalStateException("configuration failure"); }, ignored -> {}, component -> { releases[0]++; if (releases[0] == 1) throw new AssertionError("cleanup error"); });
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("panel", panel), Map.of(), Color.WHITE, Color.BLACK);
+        ProtocolBridge bridge = new ProtocolBridge();
+        deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Cleanup", bindings, bridge, action -> {});
+        UiBridge.Node first = bridge.node("panel", "ok");
+        UiBridge.Node second = new UiBridge.Node("panel", new UiBridge.Identity("second", new UiBridge.Key("none", 0, "")), Map.of("value", new UiBridge.Prop("value", "string", "fail", -1)), List.of());
+        UiBridge.Node root = new UiBridge.Node("panel", new UiBridge.Identity("root-cleanup", new UiBridge.Key("none", 0, "")), Map.of("value", new UiBridge.Prop("value", "string", "root", -1)), List.of(first, second));
+        try { renderer.apply(List.of(new UiBridge.Patch("create", root.identity(), root.identity(), true, 0, root)), root); throw new AssertionError("Expected configuration failure"); }
+        catch (IllegalStateException failure) { check(failure.getMessage().equals("configuration failure") && failure.getSuppressed().length == 1, "staged cleanup preserves primary failure and suppresses cleanup error"); }
+        check(releases[0] == 3, "staged cleanup attempts every owned candidate after individual failure");
+        renderer.close();
+    }
+
+    private static void cleanupReportingNeverEscapes() {
+        Thread thread = Thread.currentThread();
+        Thread.UncaughtExceptionHandler original = thread.getUncaughtExceptionHandler();
+        try {
+            thread.setUncaughtExceptionHandler(null);
+            UiRendererBindings.reportCleanupFailure(new IllegalStateException("unhandled cleanup"));
+            thread.setUncaughtExceptionHandler((ignored, failure) -> { throw new IllegalStateException("handler failure"); });
+            UiRendererBindings.reportCleanupFailure(new IllegalStateException("reported cleanup"));
+            check(true, "cleanup reporting tolerates absent and throwing handlers");
+        } finally { thread.setUncaughtExceptionHandler(original); }
     }
 
     private static void windowCloseDisposesRuntimeOnce() {
