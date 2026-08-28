@@ -2,6 +2,7 @@ package deal.ui;
 
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JPanel;
 import java.awt.Color;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -29,6 +30,7 @@ public final class UiRuntimeInvariantTest {
         rejectedCompletionSubmissionTerminatesRuntime();
         initializationFailureCleansOwnedResources();
         disposerPreflightProtectsLiveGraph();
+        preparedReplacementIsInstalled();
         windowCloseDisposesRuntimeOnce();
         System.out.println("Runtime invariants passed: " + passed);
     }
@@ -221,6 +223,26 @@ public final class UiRuntimeInvariantTest {
         fail[0] = false;
         renderer.apply(List.of(disposal), bridge.node("text", "next"));
         check(prepares[0] == 2 && disposals[0] == 1 && renderer.disposedComponents() == 1, "successful retry prepares before exactly-once destructive disposal");
+        renderer.close();
+    }
+
+    private static void preparedReplacementIsInstalled() {
+        int[] commits = {0};
+        int[] disposals = {0};
+        UiRendererBindings.Binding text = new UiRendererBindings.Binding("text", JLabel::new, (component, node, bridge, dispatch, bindings) -> () -> { component.setName("text"); commits[0]++; }, ignored -> {}, ignored -> disposals[0]++);
+        UiRendererBindings.Binding panel = new UiRendererBindings.Binding("panel", JPanel::new, (component, node, bridge, dispatch, bindings) -> () -> { component.setName("panel"); commits[0]++; }, ignored -> {}, ignored -> disposals[0]++);
+        UiRendererBindings bindings = new UiRendererBindings(Map.of("text", text, "panel", panel), Map.of(), Color.WHITE, Color.BLACK);
+        ProtocolBridge bridge = new ProtocolBridge();
+        deal.ui.runtime.SwingUiRuntime renderer = new deal.ui.runtime.SwingUiRuntime("Replacement", bindings, bridge, action -> {});
+        UiBridge.Node prior = bridge.node("text", "prior");
+        JComponent old = renderer.componentForTesting(prior);
+        UiBridge.Node next = bridge.node("panel", "next");
+        UiBridge.Patch update = new UiBridge.Patch("update", next.identity(), next.identity(), true, 0, next);
+        renderer.apply(List.of(update), next);
+        JComponent replacement = renderer.componentForTesting(next);
+        check(replacement instanceof JPanel && replacement != old, "prepared incompatible replacement is installed");
+        check(replacement.getName().equals("panel") && commits[0] == 2, "prepared replacement commits configuration once");
+        check(disposals[0] == 1 && renderer.disposedComponents() == 1, "displaced component is disposed exactly once");
         renderer.close();
     }
 
