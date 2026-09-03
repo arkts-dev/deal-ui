@@ -9,9 +9,9 @@ These rules apply to all Deal UI applications and framework work in this workspa
 - Platform-native code is allowed only as a reusable Deal UI runtime, renderer, component, or capability that is not specific to one application or game.
 - Generated JavaScript/JVM/native output is an implementation detail and must not require manual application-level edits.
 
-## Core Deal and Deal UI authoritative documents
+## Core Deal and Deal UI authorative documents
 
-- `./docs/deal-ui-frameworkp-design.md` is the only authorative document for Deal UI framework. No change should violate it or create duplicate functionality.
+- `./docs/deal-ui-framework-design.md` is the only authorative document for Deal UI framework. No change should violate it or create duplicate functionality.
   - In particular, all specified `@ui-*` annotations must be reused as the main framework mechanism.
 - `https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.2.md` is the only authorative document for the core Deal language.
 
@@ -20,8 +20,8 @@ These rules apply to all Deal UI applications and framework work in this workspa
 - Distinguish application side effects from presentation effects. Network, storage, loading, and other awaited work belong in `@ui-effect`; particles, tweening, sprite animation, glow, shake, fades, and similar presentation behavior belong in ordinary typed `.dealui-pack` components.
 - Express a presentation effect through component props derived from Deal state. If completion matters to business logic, expose a typed component event such as `onComplete` that dispatches a normal Deal action.
 - Implement frame timing, touch/pointer input, keyboard input, lifecycle, sensors, and similar platform event sources as reusable Deal UI components/capabilities. They dispatch typed actions through the existing native event-ingress mechanism.
-- For a game, a reusable `FrameClock`-style component may emit `deltaMillis`; Deal `@ui-update` code must perform the authoritative physics and gameplay transition unless the product requirement explicitly assigns physics to a reusable engine.
-- Keep renderer-owned interpolation and particles presentational. They must not silently change authoritative gameplay state.
+- For a game, a reusable `FrameClock`-style component may emit `deltaMillis`; Deal `@ui-update` code must perform the authorative physics and gameplay transition unless the product requirement explicitly assigns physics to a reusable engine.
+- Keep renderer-owned interpolation and particles presentational. They must not silently change authorative gameplay state.
 
 ## Repetition and generated content
 
@@ -45,7 +45,7 @@ These rules apply to all Deal UI applications and framework work in this workspa
 - Android work should add a reusable renderer abstraction, Android component pack, lifecycle/event ingress, resource management, and typed bindings once for all applications.
 - The desired application boundary is:
 
-  - `game.deal`: authoritative state, rules, physics, generation, progression;
+  - `game.deal`: authorative state, rules, physics, generation, progression;
   - `game.dealui`: declarative scene and UI;
   - reusable platform `.dealui-pack`: component contracts and tokens;
   - shared Android runtime/renderer implementation: platform mechanics only.
