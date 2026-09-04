@@ -156,6 +156,14 @@ public final class UiParser {
 
     private UiModel.Node node() {
         T start = peek();
+        if (atNamespacedStructural("When") || atNamespacedStructural("ForEach")) {
+            String structural = tokens.get(position + 2).text();
+            fail(
+                "UI1014",
+                "Structural control flow is not namespaced; write " + structural + "(...) instead of ui." + structural + "(...)",
+                start
+            );
+        }
         if (match("When")) {
             require("(");
             UiModel.Expr condition = expression();
@@ -308,6 +316,12 @@ public final class UiParser {
     private T peek() { return tokens.get(position); }
     private T previous() { return tokens.get(position - 1); }
     private T take() { return tokens.get(position++); }
+    private boolean atNamespacedStructural(String name) {
+        return position + 2 < tokens.size()
+            && tokens.get(position).text().equals("ui")
+            && tokens.get(position + 1).text().equals(".")
+            && tokens.get(position + 2).text().equals(name);
+    }
     private boolean at(K kind) { return peek().kind() == kind; }
     private boolean at(String text) { return peek().text().equals(text); }
     private boolean match(String text) { if (!at(text)) return false; position++; return true; }
