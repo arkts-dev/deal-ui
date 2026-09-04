@@ -39,12 +39,46 @@ public final class CanonicalCompiler {
             UiCompilerWorkspace.UiInspection dealUi,
             String packVersion,
             String packDigest,
+            ComponentPackSnapshot componentPack,
             boolean valid,
             List<StructuredDiagnostic> diagnostics) {
         public Inspection {
             diagnostics = List.copyOf(diagnostics);
         }
     }
+
+    /** Compact compiler-owned description used to derive an LLM agent surface. */
+    public record ComponentPackSnapshot(
+            String version,
+            String digest,
+            List<ComponentSnapshot> components,
+            List<TokenSnapshot> tokens) {
+        public ComponentPackSnapshot {
+            components = List.copyOf(components);
+            tokens = List.copyOf(tokens);
+        }
+    }
+
+    public record ComponentSnapshot(
+            String name,
+            List<PropertySnapshot> properties,
+            String children,
+            List<EventSnapshot> events,
+            List<String> capabilities) {
+        public ComponentSnapshot {
+            properties = List.copyOf(properties);
+            events = List.copyOf(events);
+            capabilities = List.copyOf(capabilities);
+        }
+    }
+
+    public record PropertySnapshot(String name, String type, boolean optional) {}
+
+    public record EventSnapshot(String property, String payloadType) {}
+
+    public record TokenSnapshot(String name, String type) {}
+
+    public record CanonicalBootstrap(String deal, String dealUi) {}
 
     public record EditContract(
             String code,
@@ -77,16 +111,110 @@ public final class CanonicalCompiler {
                     List.of(), List.of(), "inspectComponentPack");
             List<StructuredDiagnostic> diagnostics = new ArrayList<>(deal.diagnostics());
             diagnostics.add(diagnostic);
-            return new Inspection(deal, null, "", "", false, diagnostics);
+            return new Inspection(deal, null, "", "", null, false, diagnostics);
         }
+        ComponentPackSnapshot componentPack = componentPackSnapshot(pack);
         List<StructuredDiagnostic> diagnostics = new ArrayList<>(deal.diagnostics());
         if (hasErrors(diagnostics)) {
-            return new Inspection(deal, null, pack.version(), pack.digest(), false, diagnostics);
+            return new Inspection(deal, null, pack.version(), pack.digest(), componentPack, false, diagnostics);
         }
         var dealUi = UiCompilerWorkspace.inspect(dealSource, dealUiSource, packSource, packSpecifier);
         diagnostics.addAll(dealUi.diagnostics());
         return new Inspection(
-                deal, dealUi, pack.version(), pack.digest(), !hasErrors(diagnostics), diagnostics);
+                deal, dealUi, pack.version(), pack.digest(), componentPack,
+                !hasErrors(diagnostics), diagnostics);
+    }
+
+    public static ComponentPackSnapshot inspectComponentPack(String packSource) {
+        return componentPackSnapshot(UiParser.parsePack(
+                Path.of("/generated/platform-ui.dealui-pack"), packSource));
+    }
+
+    /** Creates the smallest valid source pair for compiler-mediated greenfield generation. */
+    public static CanonicalBootstrap bootstrapCanonicalApp(
+            String packSource,
+            String packSpecifier) {
+        UiModel.PackModule pack = UiParser.parsePack(
+                Path.of("/generated/platform-ui.dealui-pack"), packSource);
+        UiModel.Component root = pack.components().values().stream()
+                .filter(component -> component.contracts().stream().noneMatch(contract ->
+                        contract instanceof UiModel.Children children && children.required()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Component pack has no component suitable for a bootstrap root"));
+        UiModel.PackClass props = pack.classes().get(simpleName(root.propsType()));
+        List<String> arguments = new ArrayList<>();
+        if (props != null) {
+            for (UiModel.Field field : props.fields()) {
+                if (field.type().optional() || field.defaultValue() != null) continue;
+                arguments.add(field.name() + ": " + defaultExpression(field.type()));
+            }
+        }
+        String deal = "export class AppState { title: string = \"\"; }\n"
+                + "export function initialState(): AppState { return {title: \"\"}; }\n";
+        String dealUi = "import * as app from \"./app.deal\";\n"
+                + "import * as ui from \"" + packSpecifier + "\";\n"
+                + "// @ui-root\n"
+                + "export view App(state: app.AppState): View {\n"
+                + "  ui." + root.name() + "(" + String.join(", ", arguments) + ")\n"
+                + "}\n";
+        Inspection checked = inspectCanonicalApp(deal, dealUi, packSource, packSpecifier);
+        if (!checked.valid()) {
+            throw new IllegalStateException("Compiler produced an invalid bootstrap: " + checked.diagnostics());
+        }
+        return new CanonicalBootstrap(deal, dealUi);
+    }
+
+    private static ComponentPackSnapshot componentPackSnapshot(UiModel.PackModule pack) {
+        List<ComponentSnapshot> components = new ArrayList<>();
+        for (UiModel.Component component : pack.components().values()) {
+            UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
+            List<PropertySnapshot> properties = props == null ? List.of() : props.fields().stream()
+                    .map(field -> new PropertySnapshot(
+                            field.name(), typeText(field.type()), field.type().optional()))
+                    .toList();
+            String children = "none";
+            List<EventSnapshot> events = new ArrayList<>();
+            List<String> capabilities = new ArrayList<>();
+            for (UiModel.Contract contract : component.contracts()) {
+                if (contract instanceof UiModel.Children value) {
+                    children = (value.required() ? "required" : "optional")
+                            + (value.componentType() == null ? "" : ":" + value.componentType());
+                } else if (contract instanceof UiModel.Event value) {
+                    events.add(new EventSnapshot(
+                            value.prop(), value.payload() == null ? "none" : typeText(value.payload())));
+                } else if (contract instanceof UiModel.Capability value) {
+                    capabilities.add(value.name());
+                }
+            }
+            components.add(new ComponentSnapshot(
+                    component.name(), properties, children, events, capabilities));
+        }
+        List<TokenSnapshot> tokens = pack.tokens().values().stream()
+                .map(token -> new TokenSnapshot(token.name(), typeText(token.type())))
+                .toList();
+        return new ComponentPackSnapshot(pack.version(), pack.digest(), components, tokens);
+    }
+
+    private static String typeText(UiModel.TypeRef type) {
+        return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? "?" : "");
+    }
+
+    private static String defaultExpression(UiModel.TypeRef type) {
+        if (type.dimensions() > 0) return "[]";
+        return switch (type.name()) {
+            case "string" -> "\"\"";
+            case "boolean" -> "false";
+            case "int" -> "0";
+            case "number" -> "0.0";
+            default -> throw new IllegalArgumentException(
+                    "Required bootstrap property has no scalar default: " + typeText(type));
+        };
+    }
+
+    private static String simpleName(String qualified) {
+        int separator = qualified.lastIndexOf('.');
+        return separator < 0 ? qualified : qualified.substring(separator + 1);
     }
 
     public static Inspection compileCanonicalApp(
