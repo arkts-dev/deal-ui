@@ -1,6 +1,9 @@
 package deal.ui;
 
+import deal.compiler.CompilerProtocol;
+
 import java.util.List;
+import java.util.Map;
 
 /** Compiler-owned UI identities and atomic edit protocol tests. */
 public final class UiCompilerWorkspaceTest {
@@ -44,6 +47,8 @@ public final class UiCompilerWorkspaceTest {
         childInsertionUsesTheActualChildBlock();
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
+        semanticQueryScopesUiOperations();
+        checkedUiChangesRequireQueriedFingerprint();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
     }
 
@@ -140,6 +145,49 @@ public final class UiCompilerWorkspaceTest {
                 List.of(new UiCompilerWorkspace.ReplaceSubtree(
                         scoped.ownerId(), "ui.Text(value: state.label)")));
         check(repaired.accepted(), "semantic-invalid UI must remain locally repairable: " + repaired.diagnostics());
+    }
+
+    private static void semanticQueryScopesUiOperations() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var button = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Button"))
+                .findFirst().orElseThrow();
+        var slice = UiCompilerWorkspace.queryNode(DEAL, UI, PACK, "./ui.pack", button.id());
+        check(slice.source().startsWith("ui.Button"), "node query must return only the selected subtree");
+        check(slice.allowedOperations().stream()
+                        .anyMatch(value -> value.operation().equals(UiCompilerWorkspace.SET_PROPERTY)),
+                "component query must expose typed property editing");
+        check(slice.allowedOperations().stream()
+                        .noneMatch(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_VIEW_BODY)),
+                "node query must not authorize replacing its complete view");
+    }
+
+    private static void checkedUiChangesRequireQueriedFingerprint() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var button = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Button"))
+                .findFirst().orElseThrow();
+        var slice = UiCompilerWorkspace.queryNode(DEAL, UI, PACK, "./ui.pack", button.id());
+        var descriptor = slice.allowedOperations().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.SET_PROPERTY))
+                .findFirst().orElseThrow();
+        var operation = new UiCompilerWorkspace.SetProperty(button.id(), "text", "\"Increment\"");
+
+        var missing = UiCompilerWorkspace.applyChecked(
+                DEAL, UI, PACK, "./ui.pack",
+                new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(), Map.of()),
+                List.of(operation));
+        check(!missing.accepted() && missing.diagnostics().get(0).code().equals("CP1010"),
+                "unqueried UI targets must not be writable");
+
+        var accepted = UiCompilerWorkspace.applyChecked(
+                DEAL, UI, PACK, "./ui.pack",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        inspection.sourceDigest(),
+                        Map.of(button.id().value(), descriptor.targetFingerprint())),
+                List.of(operation));
+        check(accepted.accepted(), "queried UI target must be writable: " + accepted.diagnostics());
+        check(accepted.source().contains("text: \"Increment\""), "checked UI edit must commit");
     }
 
     private static void check(boolean condition, String message) {

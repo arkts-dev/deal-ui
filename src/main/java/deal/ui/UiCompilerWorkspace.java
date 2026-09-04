@@ -1,7 +1,10 @@
 package deal.ui;
 
 import deal.compiler.CompilerProtocol;
+import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
+import deal.compiler.CompilerProtocol.OperationDescriptor;
 import deal.compiler.CompilerProtocol.RepairScope;
+import deal.compiler.CompilerProtocol.RevisionRef;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SourceRange;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
@@ -108,6 +111,25 @@ public final class UiCompilerWorkspace {
         }
     }
 
+    public record UiSemanticSlice(
+            RevisionRef revision,
+            SemanticId ownerId,
+            String kind,
+            String source,
+            UiViewSnapshot view,
+            UiNodeSnapshot node,
+            List<UiNodeSnapshot> children,
+            List<OperationDescriptor> allowedOperations) {
+        public UiSemanticSlice {
+            Objects.requireNonNull(revision, "revision");
+            Objects.requireNonNull(ownerId, "ownerId");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(source, "source");
+            children = List.copyOf(children);
+            allowedOperations = List.copyOf(allowedOperations);
+        }
+    }
+
     public sealed interface Operation permits ReplaceViewBody, ReplaceSubtree, InsertChild, RemoveNode, MoveNode, SetProperty {
         SemanticId targetId();
     }
@@ -125,6 +147,82 @@ public final class UiCompilerWorkspace {
             String packSource,
             String packSpecifier) {
         return analyze(dealSource, dealUiSource, packSource, packSpecifier).inspection();
+    }
+
+    public static UiSemanticSlice queryView(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            SemanticId viewId) {
+        Analysis analysis = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        Target target = requireTarget(analysis, viewId, "view");
+        UiViewSnapshot view = analysis.inspection().views().stream()
+                .filter(value -> value.id().equals(viewId))
+                .findFirst().orElseThrow();
+        return new UiSemanticSlice(
+                revision(analysis), viewId, "view",
+                analysis.source().substring(target.start(), target.end()),
+                view, null,
+                childSnapshots(analysis, target.children()),
+                List.of(descriptor(analysis, target, REPLACE_VIEW_BODY, List.of("body"))));
+    }
+
+    public static UiSemanticSlice queryNode(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            SemanticId nodeId) {
+        Analysis analysis = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        Target target = requireTarget(analysis, nodeId, null);
+        if (target.kind().equals("view")) {
+            throw new IllegalArgumentException("Deal UI node query requires a node target");
+        }
+        UiNodeSnapshot node = nodeSnapshot(analysis, nodeId);
+        List<OperationDescriptor> operations = new ArrayList<>();
+        operations.add(descriptor(analysis, target, REPLACE_SUBTREE, List.of("source")));
+        operations.add(descriptor(analysis, target, REMOVE_NODE, List.of()));
+        operations.add(descriptor(analysis, target, MOVE_NODE, List.of("newParentId", "index")));
+        if (target.hasChildrenBlock()) {
+            operations.add(descriptor(analysis, target, INSERT_CHILD, List.of("index", "source")));
+        }
+        if (!target.writableProperties().isEmpty()) {
+            operations.add(descriptor(analysis, target, SET_PROPERTY, List.of("property", "expression")));
+        }
+        return new UiSemanticSlice(
+                revision(analysis), nodeId, target.kind(),
+                analysis.source().substring(target.start(), target.end()),
+                null, node,
+                childSnapshots(analysis, target.children()),
+                operations);
+    }
+
+    public static UiChangeResult applyChecked(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            ChangeSetPrecondition precondition,
+            List<? extends Operation> operations) {
+        Objects.requireNonNull(precondition, "precondition");
+        Analysis base = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        if (!base.inspection().sourceDigest().equals(precondition.baseDigest())) {
+            return rejected(base, diagnostic(
+                    "CP1001", "Stale Deal UI source digest", base.documentId(), null,
+                    base.inspection().sourceDigest(), precondition.baseDigest(), List.of(), "inspectCanonicalApp"));
+        }
+        for (Operation operation : operations) {
+            UiChangeResult rejected = requireFingerprint(base, precondition, operation.targetId());
+            if (rejected != null) return rejected;
+            if (operation instanceof MoveNode move) {
+                rejected = requireFingerprint(base, precondition, move.newParentId());
+                if (rejected != null) return rejected;
+            }
+        }
+        return apply(
+                dealSource, dealUiSource, packSource, packSpecifier,
+                precondition.baseDigest(), operations);
     }
 
     public static UiChangeResult apply(
@@ -353,6 +451,63 @@ public final class UiCompilerWorkspace {
                     ALLOWED_OPERATIONS, List.of(diagnostic));
             return new Analysis(uiSource, inspection, documentId, Map.of(), index);
         }
+    }
+
+    private static RevisionRef revision(Analysis analysis) {
+        return new RevisionRef(CompilerProtocol.VERSION, analysis.inspection().sourceDigest());
+    }
+
+    private static Target requireTarget(Analysis analysis, SemanticId id, String kind) {
+        Target target = analysis.targets().get(id);
+        if (target == null || kind != null && !target.kind().equals(kind)) {
+            throw new IllegalArgumentException("Unknown Deal UI target " + id.value());
+        }
+        return target;
+    }
+
+    private static UiNodeSnapshot nodeSnapshot(Analysis analysis, SemanticId id) {
+        return analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(id))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unknown Deal UI node " + id.value()));
+    }
+
+    private static List<UiNodeSnapshot> childSnapshots(Analysis analysis, List<SemanticId> children) {
+        Map<SemanticId, UiNodeSnapshot> snapshots = new LinkedHashMap<>();
+        analysis.inspection().nodes().forEach(value -> snapshots.put(value.id(), value));
+        return children.stream().map(snapshots::get).filter(Objects::nonNull).toList();
+    }
+
+    private static OperationDescriptor descriptor(
+            Analysis analysis, Target target, String operation, List<String> requiredFields) {
+        return new OperationDescriptor(
+                operation, target.id(), target.kind(), targetFingerprint(analysis, target.id()), requiredFields);
+    }
+
+    private static String targetFingerprint(Analysis analysis, SemanticId id) {
+        UiViewSnapshot view = analysis.inspection().views().stream()
+                .filter(value -> value.id().equals(id)).findFirst().orElse(null);
+        if (view != null) return view.fingerprint();
+        UiNodeSnapshot node = analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(id)).findFirst().orElse(null);
+        return node == null ? "" : node.fingerprint();
+    }
+
+    private static UiChangeResult requireFingerprint(
+            Analysis base, ChangeSetPrecondition precondition, SemanticId targetId) {
+        String expected = precondition.expectedTargetFingerprints().get(targetId.value());
+        String actual = targetFingerprint(base, targetId);
+        if (expected == null) {
+            return rejected(base, diagnostic(
+                    "CP1010", "Missing target fingerprint precondition", targetId, null,
+                    actual, "missing", List.of(), "queryDealUiNode"));
+        }
+        if (!expected.equals(actual)) {
+            return rejected(base, diagnostic(
+                    "CP1011", "Stale target fingerprint; query the target again before editing", targetId, null,
+                    actual, expected, List.of(), "queryDealUiNode"));
+        }
+        return null;
     }
 
     private static Target narrowestTarget(Iterable<Target> targets, int line, int column) {
