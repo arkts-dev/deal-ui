@@ -78,6 +78,9 @@ public final class UiFrameworkTest {
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
         dependencyStaging(root, outputs);
+        computedPropLowering(outputs, compiler);
+        storageHostCompilation(outputs, compiler);
+        portableBridge(root, outputs, compiler);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
     }
@@ -95,6 +98,61 @@ public final class UiFrameworkTest {
         compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
         check(generated.contains("app.cancelPolicy") && !generated.contains("app.cancel(state, action"), "policy-only cancellation is generated without an effect body");
+    }
+
+    private static void portableBridge(Path root, Path outputs, UiCompiler compiler) throws Exception {
+        UiCompiler.Result result = compiler.compile(
+            root.resolve("examples/museum/gallery.dealui"),
+            outputs.resolve("gallery-portable"),
+            UiCompiler.Target.PORTABLE
+        );
+        compiler.build(result, runtimeClasses());
+        String generated = Files.readString(result.generatedDirectory().resolve(result.bridgeClass() + ".java"));
+        check(!generated.contains("java.awt") && !generated.contains("UiRendererBindings") && !generated.contains("rendererBindings"), "portable bridge has no Swing or AWT dependency");
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiPortableBridge bridge = (UiPortableBridge) Class.forName(result.bridgeClass(), true, loader).getConstructor().newInstance();
+            check(bridge.componentCapabilities().get("ui.Button").equals("renderer.swing.button"), "portable bridge exposes checked component capabilities without constructing native bindings");
+            UiPortableBridge.StateValue state = bridge.initialState();
+            UiPortableBridge.StoreValue store = bridge.initialStore();
+            UiPortableBridge.Transition initial = bridge.initial(state, store);
+            check(texts(initial.tree()).contains("Gallery"), "portable bridge evaluates the same DEAL-owned view tree");
+            UiPortableBridge.Node button = nodeWithText(initial.tree(), "Toggle details");
+            UiPortableBridge.Prop onClick = button.props().get("onClick");
+            UiPortableBridge.Transition changed = bridge.transition(initial.state(), initial.tree(), initial.store(), bridge.action(onClick.actionSlot(), null));
+            check(bridge.stateSnapshot(changed.state()).get("expanded").equals(true), "portable component event enters the generated typed DEAL update");
+        }
+    }
+
+    private static void computedPropLowering(Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("computed-props");
+        Files.createDirectories(fixture);
+        Path logic = fixture.resolve("computed.deal");
+        Path pack = fixture.resolve("computed.dealui-pack");
+        Path view = fixture.resolve("computed.dealui");
+        Files.writeString(logic, "export class State { value: int = 2; active: boolean = true; }\nexport class Update {}\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function update(state: State, action: Update): State { return state; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { column: int = 0; visible: boolean = false; scale: number = 1.0; onClick?: Action; }\nexport component Sprite(props: Props): View { event onClick; capability \"renderer.scene.sprite\"; }\n");
+        Files.writeString(view, "import * as app from \"./computed\";\nimport * as ui from \"./computed.dealui-pack\";\n// @ui-root\nexport view Computed(state: app.State): View { ui.Sprite(column: state.value - 1, visible: state.active && state.value > 0, scale: 1.0, onClick: action app.Update {}) }\n");
+        UiCompiler.Result result = compiler.compile(view, outputs.resolve("computed-props-output"), UiCompiler.Target.PORTABLE);
+        compiler.build(result, runtimeClasses());
+        String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
+        check(generated.contains("intProp(\"column\", (state.value - 1))"), "computed integer props lower with their checked type");
+        check(generated.contains("booleanProp(\"visible\", (state.active && (state.value > 0)))"), "computed boolean props lower with their checked type");
+    }
+
+    private static void storageHostCompilation(Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("storage-host");
+        Files.createDirectories(fixture);
+        Path logic = fixture.resolve("storage.deal");
+        Path pack = fixture.resolve("storage.dealui-pack");
+        Path view = fixture.resolve("storage.dealui");
+        Files.writeString(logic, "import * as storage from \"host/storage\";\nexport class State { value: string = \"ready\"; }\nexport class Save {}\nexport class Saved { value: string = \"\"; }\nexport class EffectCommand { operation: string = \"start\"; key: string = \"save\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function request(state: State, action: Save): State { return state; }\n// @ui-effect\nexport async function persist(state: State, action: Save): Saved { let value: string = await storage.save(\"key\", state.value); return { value: value }; }\n// @ui-update\nexport function complete(state: State, action: Saved): State { return { value: action.value }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { text: string = \"\"; onClick?: Action; }\nexport component Button(props: Props): View { event onClick; capability \"renderer.swing.button\"; }\n");
+        Files.writeString(view, "import * as app from \"./storage\";\nimport * as ui from \"./storage.dealui-pack\";\n// @ui-root\nexport view Storage(state: app.State): View { ui.Button(text: state.value, onClick: action app.Save {}) }\n");
+        UiCompiler.Result result = compiler.compile(view, outputs.resolve("storage-host-output"), UiCompiler.Target.PORTABLE);
+        compiler.build(result, runtimeClasses());
+        String generated = Files.readString(result.generatedDirectory().resolve("ApplicationStorage.java"));
+        check(generated.contains("Class.forName(\"HostStorage\")") && generated.contains("__host$storage$save"), "typed host/storage effects compile through the portable Deal UI pipeline");
+        check(Files.isRegularFile(result.outputDirectory().resolve("bindings/storage.d.deal")) && Files.readString(result.outputDirectory().resolve("deal.json")).contains("\"host/storage\""), "storage declaration and external binding are staged deterministically");
     }
 
     private static void compileSemanticExamples(Path root, Path outputs, UiCompiler compiler) throws Exception {
@@ -429,6 +487,15 @@ public final class UiFrameworkTest {
     private static String pack(Path root) throws Exception { return Files.readString(root.resolve("examples/museum/platform-ui.dealui-pack")); }
     private static List<String> texts(UiBridge.Node node) { List<String> values = new ArrayList<>(); collect(node, values); return values; }
     private static void collect(UiBridge.Node node, List<String> values) { UiBridge.Prop prop = node.props().get("value"); if (prop != null) values.add(String.valueOf(prop.value())); node.children().forEach(child -> collect(child, values)); }
+    private static UiPortableBridge.Node nodeWithText(UiPortableBridge.Node node, String text) {
+        UiPortableBridge.Prop value = node.props().get("text");
+        if (value != null && value.value().equals(text)) return node;
+        for (UiPortableBridge.Node child : node.children()) {
+            UiPortableBridge.Node found = nodeWithText(child, text);
+            if (found != null) return found;
+        }
+        return null;
+    }
     private static AbstractButton button(Component component, String text) { if (component instanceof AbstractButton value && value.getText().equals(text)) return value; if (component instanceof Container container) for (Component child : container.getComponents()) { AbstractButton found = button(child, text); if (found != null) return found; } return null; }
     private static JTextField input(Component component) { if (component instanceof JTextField value) return value; if (component instanceof Container container) for (Component child : container.getComponents()) { JTextField found = input(child); if (found != null) return found; } return null; }
     private static JComponent named(Component component, String name, String text) { if (component instanceof JLabel label && label.getName().equals(name) && label.getText().equals(text)) return label; if (component instanceof Container container) for (Component child : container.getComponents()) { JComponent found = named(child, name, text); if (found != null) return found; } return null; }

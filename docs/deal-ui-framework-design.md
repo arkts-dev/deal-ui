@@ -274,6 +274,24 @@ export component Column(props: ColumnProps): View {
 export token spaceMd: Space;
 ```
 
+## Portable renderer bridge
+
+The compiler's portable renderer target produces `UiPortableBridge`. It preserves closed typed action dispatch, store policy, effects, reconciliation patches, state snapshots, and the checked component tree without depending on Swing or AWT. Every generated bridge exposes the capability selected for each component through `componentCapabilities()`; an Android or other native host binds those capability names to reusable platform components.
+
+The compiler also registers the framework-owned `host/storage` external module.
+Its declaration has the closed asynchronous surface `load(key)`,
+`save(key, value)`, and `remove(key)`. Applications call it from the existing
+`@ui-effect` mechanism; there is no second callback or effect scheduler. Android
+implements the module generically using application-private preferences. The
+host sees only string keys and values, while typed state encoding/decoding and
+all decisions about when to save or restore remain in Deal.
+
+```bash
+deal-ui build application.dealui --renderer portable
+```
+
+The portable bridge does not expose renderer objects to `.dealui`, and native event ingress constructs actions only through generated action slots. Platform renderers may retain presentation state, but application state changes continue to pass through DEAL `@ui-update` handlers.
+
 ## Runtime
 
 - Host supplies initial state; runtime validates it before first render.

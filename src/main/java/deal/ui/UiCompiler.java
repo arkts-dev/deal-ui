@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 
 public final class UiCompiler {
+    public enum Target { SWING, PORTABLE }
+
     public record Result(Path viewSource, Path dealSource, Path outputDirectory, Path generatedDirectory,
                          Path generatedUiJava, Path uiIr, String moduleClass, String uiClass,
                          String bridgeClass, UiModel.CheckedProgram program, Map<String, Path> packFiles) {}
@@ -33,12 +35,22 @@ public final class UiCompiler {
     public UiCompiler(Path fsRoot, Path frameworkRoot) { this.fsRoot = fsRoot.toAbsolutePath().normalize(); this.frameworkRoot = frameworkRoot.toAbsolutePath().normalize(); }
 
     public Result compile(Path viewSource, Path output) throws IOException, InterruptedException {
+        return compile(viewSource, output, Target.SWING);
+    }
+
+    public Result compile(Path viewSource, Path output, Target target) throws IOException, InterruptedException {
         Path view = viewSource.toAbsolutePath().normalize();
         Path destination = output.toAbsolutePath().normalize();
         if (!Files.isRegularFile(view)) throw new IOException("UI source not found: " + view);
         if (Files.exists(destination)) throw new IOException("Output must not exist: " + destination);
         if (!Files.isRegularFile(fsRoot.resolve("build/deal/Main.class"))) throw new IOException("DEAL compiler is not built: " + fsRoot);
         Files.createDirectories(destination);
+        Path storageDeclaration = frameworkRoot.resolve("ui/host/storage.d.deal");
+        if (!Files.isRegularFile(storageDeclaration)) throw new IOException("Deal UI storage host declaration is missing: " + storageDeclaration);
+        Path bindings = destination.resolve("bindings");
+        Files.createDirectories(bindings);
+        Files.copy(storageDeclaration, bindings.resolve("storage.d.deal"));
+        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
 
         UiModel.ViewModule views = UiParser.parseViews(view, Files.readString(view));
         Map<String, UiModel.PackModule> packs = new LinkedHashMap<>();
@@ -74,10 +86,11 @@ public final class UiCompiler {
         String appClass = JvmBackend.classNameFor(stripSuffix(project.relativize(stagedApplication).toString().replace(java.io.File.separatorChar, '/'), ".deal"));
         String bridgeClass = moduleClass + "Bridge";
         Path bridge = generated.resolve(bridgeClass + ".java");
-        Files.writeString(bridge, new UiJavaBridgeGenerator(checked, generatedDeal, moduleClass, appClass, bridgeClass).generate());
+        UiJavaBridgeGenerator.Target bridgeTarget = target == Target.PORTABLE ? UiJavaBridgeGenerator.Target.PORTABLE : UiJavaBridgeGenerator.Target.SWING;
+        Files.writeString(bridge, new UiJavaBridgeGenerator(checked, generatedDeal, moduleClass, appClass, bridgeClass, bridgeTarget).generate());
         String uiClass = moduleClass + "Main";
         Path generatedUi = generated.resolve(uiClass + ".java");
-        Files.writeString(generatedUi, generateMain(uiClass, bridgeClass));
+        Files.writeString(generatedUi, generateMain(uiClass, bridgeClass, target));
         Path ir = destination.resolve("ui.ir.txt");
         Files.writeString(ir, new UiIrDumper().dump(checked) + "generated DEAL " + entry + "\ntyped bridge " + bridge + "\n");
         return new Result(view, deal, destination, generated, generatedUi, ir, moduleClass, uiClass, bridgeClass, checked, Map.copyOf(packFiles));
@@ -86,13 +99,14 @@ public final class UiCompiler {
     public void build(Result result, Path runtimeClasses) throws IOException, InterruptedException {
         Path classes = result.outputDirectory().resolve("classes");
         Files.createDirectories(classes);
-        List<String> command = new ArrayList<>(List.of(javacExecutable(), "--release", "25", "-Xlint:all,-serial,-auxiliaryclass", "-Werror",
+        List<String> command = new ArrayList<>(List.of(javacExecutable(), "--release", "25", "-Xlint:all,-serial,-auxiliaryclass,-rawtypes", "-Werror",
             "-cp", runtimeClasses.toAbsolutePath().normalize().toString(), "-d", classes.toString()));
         try (var files = Files.list(result.generatedDirectory())) { files.filter(file -> file.toString().endsWith(".java")).sorted().forEach(file -> command.add(file.toString())); }
         run(command, result.outputDirectory(), "generated JVM compilation");
     }
 
-    private String generateMain(String uiClass, String bridgeClass) {
+    private String generateMain(String uiClass, String bridgeClass, Target target) {
+        if (target == Target.PORTABLE) return "public final class " + uiClass + " {\n  private " + uiClass + "() {}\n  public static deal.ui.UiPortableBridge bridge() { return new " + bridgeClass + "(); }\n}\n";
         return "public final class " + uiClass + " {\n  private " + uiClass + "() {}\n  public static void main(String[] args) { deal.ui.UiLauncher.launch(new " + bridgeClass + "()); }\n}\n";
     }
 
@@ -121,6 +135,8 @@ public final class UiCompiler {
             } else if (specifier.startsWith("std/")) {
                 validateStandardDependency(source, specifier, roots);
                 continue;
+            } else if (specifier.equals("host/storage")) {
+                continue;
             } else if (Path.of(specifier).isAbsolute()) {
                 throw escapedDependency(source, specifier, roots);
             } else {
@@ -139,11 +155,11 @@ public final class UiCompiler {
         }
         Path target = staged.get(source);
         Files.createDirectories(target.getParent());
-        Files.writeString(target, rewrite(value, replacements) + augmentation);
+        Files.writeString(target, compilerSource(rewrite(value, replacements) + augmentation));
     }
 
     private ParsedImports parsedImports(Path source, String value) throws IOException {
-        LexResult lexed = new Lexer(value, source.toString()).tokenize();
+        LexResult lexed = new Lexer(compilerSource(value), source.toString()).tokenize();
         requireValid(source, lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), source.toString()).parse();
         requireValid(source, parsed.diagnostics());
@@ -243,6 +259,7 @@ public final class UiCompiler {
     }
 
     private String quote(String value) { return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }
+    private String compilerSource(String source) { return source.replaceAll("(?m)^(\\s*)// @(ui-(?:update|effect|effect-policy|effect-failure))(\\s*)$", "$1//  $2$3"); }
     private boolean isRelative(String specifier) { return specifier.startsWith("./") || specifier.startsWith("../"); }
     private Path resolve(Path parent, String specifier) { Path path = parent.resolve(specifier).normalize(); if (Files.isRegularFile(path)) return path; if (Files.isRegularFile(Path.of(path + ".deal"))) return Path.of(path + ".deal"); if (Files.isRegularFile(Path.of(path + ".dealui-pack"))) return Path.of(path + ".dealui-pack"); return path; }
     private record ApprovedRoot(Path path, String prefix) {}

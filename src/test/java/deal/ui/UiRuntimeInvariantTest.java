@@ -25,6 +25,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import deal.ui.runtime.IsometricProjection;
 
 public final class UiRuntimeInvariantTest {
     private static int passed;
@@ -32,6 +33,8 @@ public final class UiRuntimeInvariantTest {
     private UiRuntimeInvariantTest() {}
 
     public static void main(String[] args) throws Exception {
+        isometricProjectionRoundTripsCells();
+        portableRuntimeUsesGeneratedStoreAndPatches();
         queuedAndNestedActionsAreFifo();
         failedCandidateRetainsState();
         overlappingEffectsCompleteInArrivalOrder();
@@ -67,6 +70,33 @@ public final class UiRuntimeInvariantTest {
         cleanupReportingNeverEscapes();
         windowCloseDisposesRuntimeOnce();
         System.out.println("Runtime invariants passed: " + passed);
+    }
+
+    private static void isometricProjectionRoundTripsCells() {
+        IsometricProjection projection = new IsometricProjection(132, 66, 800, 420);
+        for (int y = 0; y < 14; y++) {
+            for (int x = 0; x < 24; x++) {
+                IsometricProjection.Point point = projection.project(x, y);
+                IsometricProjection.Cell cell = projection.inverse(point.x(), point.y());
+                check(cell.equals(new IsometricProjection.Cell(x, y)), "isometric projection round-trips a grid cell");
+            }
+        }
+    }
+
+    private static void portableRuntimeUsesGeneratedStoreAndPatches() throws Exception {
+        ManualExecutor transitions = new ManualExecutor();
+        ManualExecutor effects = new ManualExecutor();
+        ProtocolBridge bridge = new ProtocolBridge();
+        CapturingPortableRenderer renderer = new CapturingPortableRenderer();
+        try (PortableUiProgramRuntime runtime = new PortableUiProgramRuntime(bridge, renderer, transitions, effects)) {
+            check(renderer.tree != null && renderer.tree.props().get("value").value().equals(""), "portable runtime publishes the generated initial tree");
+            runtime.dispatch(action("A"));
+            transitions.runAll();
+            runtime.awaitIdle();
+            check(runtime.stateSnapshot().get("value").equals("A"), "portable runtime commits through the generated DEAL store");
+            check(renderer.applyCalls == 1 && renderer.tree.props().get("value").value().equals("A"), "portable runtime applies generated reconciliation patches");
+        }
+        check(renderer.closeCalls == 1, "portable runtime disposes its native renderer once");
     }
 
     private static void queuedAndNestedActionsAreFifo() throws Exception {
@@ -697,6 +727,16 @@ public final class UiRuntimeInvariantTest {
     private record TestState(String value) {}
     private record TestAction(String name) {}
     private record TestStore(List<TestAction> queue, boolean draining, boolean disposed) {}
+
+    private static final class CapturingPortableRenderer implements PortableUiProgramRuntime.Renderer {
+        private UiPortableBridge.Node tree;
+        private int applyCalls;
+        private int closeCalls;
+
+        @Override public void show(UiPortableBridge.Node value) { tree = value; }
+        @Override public void apply(List<UiPortableBridge.Patch> patches, UiPortableBridge.Node value) { applyCalls++; tree = value; }
+        @Override public void close() { closeCalls++; }
+    }
 
     private static final class ProtocolBridge implements UiBridge {
         private Runnable nested;

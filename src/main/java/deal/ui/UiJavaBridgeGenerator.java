@@ -6,40 +6,59 @@ import java.util.List;
 import java.util.Map;
 
 final class UiJavaBridgeGenerator {
+    enum Target { SWING, PORTABLE }
+
     private final UiModel.CheckedProgram program;
     private final UiDealGenerator.Output generated;
     private final String ui;
     private final String app;
     private final String bridge;
+    private final Target target;
 
     UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String app, String bridge) {
+        this(program, generated, ui, app, bridge, Target.SWING);
+    }
+
+    UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String app, String bridge, Target target) {
         this.program = program;
         this.generated = generated;
         this.ui = ui;
         this.app = app;
         this.bridge = bridge;
+        this.target = target;
     }
 
     String generate() {
-        StringBuilder out = new StringBuilder("public final class ").append(bridge).append(" implements deal.ui.UiBridge {\n");
+        String interfaceName = target == Target.PORTABLE ? "deal.ui.UiPortableBridge" : "deal.ui.UiBridge";
+        StringBuilder out = new StringBuilder("public final class ").append(bridge).append(" implements ").append(interfaceName).append(" {\n");
         out.append("  @Override public String title() { return \"").append(program.title()).append("\"; }\n")
-            .append("  @Override public deal.ui.UiRendererBindings rendererBindings() { return new deal.ui.UiRendererBindings(java.util.Map.ofEntries(");
+            .append("  @Override public java.util.Map<String, String> componentCapabilities() { return java.util.Map.ofEntries(");
         boolean first = true;
         for (Map.Entry<String, UiModel.Component> component : program.components().entrySet()) {
             if (!first) out.append(", ");
             first = false;
-            String factory = factory(component.getValue());
-            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings.").append(factory.equals("modal") ? "modalBinding" : "binding").append("(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory).append(", deal.ui.UiRendererBindings::configure))");
+            out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", \"").append(capability(component.getValue())).append("\")");
         }
-        out.append("), java.util.Map.ofEntries(");
-        first = true;
-        for (Map.Entry<String, UiModel.Token> token : program.tokens().entrySet()) {
-            if (!first) out.append(", ");
-            first = false;
-            out.append("java.util.Map.entry(\"").append(token.getKey()).append("\", ").append(tokenValue(token.getValue())).append(")");
+        out.append("); }\n");
+        if (target == Target.SWING) {
+            out.append("  @Override public deal.ui.UiRendererBindings rendererBindings() { return new deal.ui.UiRendererBindings(java.util.Map.ofEntries(");
+            first = true;
+            for (Map.Entry<String, UiModel.Component> component : program.components().entrySet()) {
+                if (!first) out.append(", ");
+                first = false;
+                String factory = factory(component.getValue());
+                out.append("java.util.Map.entry(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings.").append(factory.equals("modal") ? "modalBinding" : "binding").append("(\"").append(component.getKey()).append("\", deal.ui.UiRendererBindings::").append(factory).append(", deal.ui.UiRendererBindings::configure))");
+            }
+            out.append("), java.util.Map.ofEntries(");
+            first = true;
+            for (Map.Entry<String, UiModel.Token> token : program.tokens().entrySet()) {
+                if (!first) out.append(", ");
+                first = false;
+                out.append("java.util.Map.entry(\"").append(token.getKey()).append("\", ").append(tokenValue(token.getValue())).append(")");
+            }
+            out.append("), new java.awt.Color(0xF3F6FB), new java.awt.Color(0x635BFF)); }\n");
         }
-        out.append("), new java.awt.Color(0xF3F6FB), new java.awt.Color(0x635BFF)); }\n")
-            .append("  @Override public StateValue initialState() { return new StateValue(").append(app).append(".initialState()); }\n")
+        out.append("  @Override public StateValue initialState() { return new StateValue(").append(app).append(".initialState()); }\n")
             .append("  @Override public StoreValue initialStore() { return new StoreValue(").append(ui).append(".initialStore()); }\n")
             .append("  @Override public Transition initial(StateValue state, StoreValue store) { return transition(").append(ui).append(".initial((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), (").append(ui).append(".$C_UiStore) store.abi()), state, null); }\n")
             .append("  @Override public Enqueue enqueue(StoreValue store, ActionValue action) { var value = ").append(ui).append(".enqueue((").append(ui).append(".$C_UiStore) store.abi(), (").append(ui).append(".$C_UiAction) action.abi()); return new Enqueue(new StoreValue(value.store), value.accepted, value.startDrain); }\n")
@@ -135,6 +154,11 @@ final class UiJavaBridgeGenerator {
             return factory;
         }
         throw new IllegalStateException("Swing renderer capability required for " + component.name());
+    }
+
+    private String capability(UiModel.Component component) {
+        for (UiModel.Contract contract : component.contracts()) if (contract instanceof UiModel.Capability capability) return capability.name();
+        throw new IllegalStateException("Renderer capability required for " + component.name());
     }
     private String payloadConversion(int slot, UiModel.TypeRef type) {
         if (type == null) throw new IllegalArgumentException("Payload conversion requires an event payload contract");

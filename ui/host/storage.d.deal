@@ -1,0 +1,4 @@
+// Typed asynchronous key/value persistence supplied by a platform renderer.
+export async function load(key: string): string | null;
+export async function save(key: string, value: string): string;
+export async function remove(key: string): boolean;

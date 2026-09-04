@@ -34,12 +34,16 @@ import java.util.Set;
 
 public final class UiChecker {
     public UiModel.DealModule parseDeal(Path file, String source) {
-        LexResult lexed = new Lexer(source, file.toString()).tokenize();
+        LexResult lexed = new Lexer(compilerSource(source), file.toString()).tokenize();
         first(lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), file.toString()).parse();
         first(parsed.diagnostics());
         first(ModuleShapeValidator.validate(parsed.program(), file.toString(), false));
         return dealModule(parsed.program(), file, source);
+    }
+
+    private String compilerSource(String source) {
+        return source.replaceAll("(?m)^(\\s*)// @(ui-(?:update|effect|effect-policy|effect-failure))(\\s*)$", "$1//  $2$3");
     }
 
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
@@ -138,7 +142,7 @@ public final class UiChecker {
                     Map<String, UiModel.Expr> bindings = new LinkedHashMap<>();
                     for (UiModel.Parameter parameter : view.parameters()) {
                         UiModel.Expr argument = call.arguments().get(parameter.name());
-                        checkAssignable(type(argument, scope, deal, tokens, aliases, actions, null), parameter.type(), call.span());
+                        checkAssignable(type(argument, scope, deal, packClasses, tokens, aliases, actions, null), parameter.type(), call.span());
                         nested.put(parameter.name(), parameter.type());
                         bindings.put(parameter.name(), argument);
                     }
@@ -163,31 +167,31 @@ public final class UiChecker {
                         UiModel.Field eventField = props.fields().stream().filter(field -> field.name().equals(event.prop())).findFirst().orElseThrow();
                         if (!eventField.type().name().equals("Action")) error("UI2013", "Event prop must have Action type", call.span());
                     }
-                    if (contract instanceof UiModel.Accessibility accessibility && call.arguments().containsKey(accessibility.prop())) requireType(type(call.arguments().get(accessibility.prop()), scope, deal, tokens, aliases, actions, null), "string", call.span());
+                    if (contract instanceof UiModel.Accessibility accessibility && call.arguments().containsKey(accessibility.prop())) requireType(type(call.arguments().get(accessibility.prop()), scope, deal, packClasses, tokens, aliases, actions, null), "string", call.span());
                     if (contract instanceof UiModel.TokenProp tokenProp && call.arguments().containsKey(tokenProp.prop()) && !(call.arguments().get(tokenProp.prop()) instanceof UiModel.PathExpr path && tokens.containsKey(String.join(".", path.parts())))) error("UI2013", "Token prop requires a declared token", call.span());
                 }
                 if (!children && !call.children().isEmpty()) error("UI2013", "Component rejects children", call.span());
                 for (Map.Entry<String, UiModel.Expr> argument : call.arguments().entrySet()) {
                     UiModel.Field field = props.fields().stream().filter(value -> value.name().equals(argument.getKey())).findFirst().orElseThrow();
                     UiModel.Event event = events.get(argument.getKey());
-                    checkAssignable(type(argument.getValue(), scope, deal, tokens, aliases, actions, event), field.type(), argument.getValue().span());
+                    checkAssignable(type(argument.getValue(), scope, deal, packClasses, tokens, aliases, actions, event), field.type(), argument.getValue().span());
                 }
                 result.add(new UiModel.RenderCall(call.name(), call.arguments(),
                     lower(call.children(), nodeIdentity, scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, call.span()));
             } else if (node instanceof UiModel.When when) {
-                requireType(type(when.condition(), scope, deal, tokens, aliases, actions, null), "boolean", when.condition().span());
+                requireType(type(when.condition(), scope, deal, packClasses, tokens, aliases, actions, null), "boolean", when.condition().span());
                 result.add(new UiModel.RenderWhen(when.condition(),
                     lower(when.thenNodes(), nodeIdentity + "/then", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     lower(when.elseNodes(), nodeIdentity + "/else", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, when.span()));
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
-                UiModel.TypeRef array = type(each.source(), scope, deal, tokens, aliases, actions, null);
+                UiModel.TypeRef array = type(each.source(), scope, deal, packClasses, tokens, aliases, actions, null);
                 if (!array.array() || !sameName(array.name(), each.item().type().name())) error("UI2014", "ForEach source must be exact item array", each.span());
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
-                UiModel.TypeRef key = type(each.key(), nested, deal, tokens, aliases, actions, null);
+                UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
                 if (!key.name().equals("int") && !key.name().equals("string")) error("UI2015", "ForEach key must be int or string", each.key().span());
                 if (!each.key().parts().get(0).equals(each.item().name())) error("UI2016", "ForEach key must be item-rooted", each.key().span());
                 result.add(new UiModel.RenderForEach(each.source(), each.item(), each.key(),
@@ -199,12 +203,13 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef type(UiModel.Expr expression, Map<String, UiModel.TypeRef> scope,
-                                 UiModel.DealModule deal, Map<String, UiModel.Token> tokens,
+                                 UiModel.DealModule deal, Map<String, UiModel.PackClass> packClasses,
+                                 Map<String, UiModel.Token> tokens,
                                  Map<String, String> aliases, Set<String> actions, UiModel.Event event) {
         if (expression instanceof UiModel.Literal literal) return new UiModel.TypeRef(literal.type(), literal.value() == null, false);
-        if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, tokens);
+        if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, packClasses, tokens);
         if (expression instanceof UiModel.Has has) {
-            UiModel.TypeRef operand = pathType(has.path(), scope, deal, tokens);
+            UiModel.TypeRef operand = pathType(has.path(), scope, deal, packClasses, tokens);
             if (!operand.optional()) error("UI2017", "has requires an optional final field", has.span());
             return primitive("boolean");
         }
@@ -216,20 +221,20 @@ public final class UiChecker {
             Map<String, UiModel.TypeRef> actionScope = new LinkedHashMap<>(scope);
             if (event != null && event.payload() != null) actionScope.put("payload", event.payload());
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
-                checkAssignable(type(field.getValue(), actionScope, deal, tokens, aliases, actions, null), declaration.fields().get(field.getKey()).type(), field.getValue().span());
+                checkAssignable(type(field.getValue(), actionScope, deal, packClasses, tokens, aliases, actions, null), declaration.fields().get(field.getKey()).type(), field.getValue().span());
             }
             actions.add(name);
             return primitive("Action");
         }
         if (expression instanceof UiModel.Unary unary) {
-            UiModel.TypeRef operand = type(unary.operand(), scope, deal, tokens, aliases, actions, event);
+            UiModel.TypeRef operand = type(unary.operand(), scope, deal, packClasses, tokens, aliases, actions, event);
             requireType(operand, unary.operator().equals("!") ? "boolean" : operand.name(), unary.span());
             if (unary.operator().equals("-") && !operand.name().equals("int") && !operand.name().equals("number")) error("UI2019", "Unary - requires numeric operand", unary.span());
             return operand;
         }
         UiModel.Binary binary = (UiModel.Binary) expression;
-        UiModel.TypeRef left = type(binary.left(), scope, deal, tokens, aliases, actions, event);
-        UiModel.TypeRef right = type(binary.right(), scope, deal, tokens, aliases, actions, event);
+        UiModel.TypeRef left = type(binary.left(), scope, deal, packClasses, tokens, aliases, actions, event);
+        UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
             case "&&", "||" -> { requireType(left, "boolean", binary.span()); requireType(right, "boolean", binary.span()); yield primitive("boolean"); }
             case "===", "!==", "<", "<=", ">", ">=" -> { if (!sameName(left.name(), right.name())) error("UI2020", "Operands require matching types", binary.span()); yield primitive("boolean"); }
@@ -239,21 +244,38 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef pathType(UiModel.PathExpr path, Map<String, UiModel.TypeRef> scope,
-                                     UiModel.DealModule deal, Map<String, UiModel.Token> tokens) {
+                                     UiModel.DealModule deal, Map<String, UiModel.PackClass> packClasses,
+                                     Map<String, UiModel.Token> tokens) {
         String joined = String.join(".", path.parts());
         UiModel.Token token = tokens.get(joined);
         if (token != null) return token.type();
         UiModel.TypeRef current = scope.get(path.parts().get(0));
         if (current == null) error("UI2021", "Unknown path root '" + path.parts().get(0) + "'", path.span());
         for (int i = 1; i < path.parts().size(); i++) {
+            String fieldName = path.parts().get(i);
             if (current.optional()) error("UI2022", "Nullable intermediate path access", path.span());
+            if (current.array()) error("UI2023", "Path traverses non-class type", path.span());
             UiModel.DealClass clazz = deal.classes().get(simple(current.name()));
-            if (clazz == null) error("UI2023", "Path traverses non-class type", path.span());
-            UiModel.Field field = clazz.fields().get(path.parts().get(i));
-            if (field == null) error("UI2024", "Unknown field '" + path.parts().get(i) + "'", path.span());
+            UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
+            if (clazz == null && packClass == null) error("UI2023", "Path traverses non-class type", path.span());
+            UiModel.Field field = clazz != null
+                ? clazz.fields().get(fieldName)
+                : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
+            if (field == null) error("UI2024", "Unknown field '" + fieldName + "'", path.span());
             current = field.type();
         }
         return current;
+    }
+
+    private UiModel.PackClass uniquePackClass(String typeName, Map<String, UiModel.PackClass> classes,
+                                               UiModel.Span span) {
+        List<UiModel.PackClass> matches = classes.entrySet().stream()
+            .filter(entry -> entry.getKey().equals(typeName) || simple(entry.getKey()).equals(simple(typeName)))
+            .map(Map.Entry::getValue)
+            .distinct()
+            .toList();
+        if (matches.size() > 1) error("UI2023", "Ambiguous pack class '" + typeName + "'", span);
+        return matches.isEmpty() ? null : matches.get(0);
     }
 
     private void validatePack(Map<String, UiModel.Component> components, Map<String, UiModel.PackClass> classes,
