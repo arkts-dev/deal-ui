@@ -290,7 +290,9 @@ public final class CanonicalCompiler {
                     new SourceRange(
                             failure.file().toString(), failure.line(), failure.column(),
                             failure.line(), failure.column()),
-                    owner, "valid Deal UI framework handler contract", failure.getMessage(),
+                    owner,
+                    failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
+                    failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
                     List.of(), transactionScopes, "query_deal_module"));
         }
         if (inspection.appInterface() == null || inspection.appInterface().actions().isEmpty()) {

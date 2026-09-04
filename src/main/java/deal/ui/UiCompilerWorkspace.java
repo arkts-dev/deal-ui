@@ -477,7 +477,7 @@ public final class UiCompilerWorkspace {
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
                     new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.line(), failure.column()),
-                    ownerId, "", "", List.of(), repairScopes,
+                    ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
                     owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")");
             UiInspection inspection = new UiInspection(
                     CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
