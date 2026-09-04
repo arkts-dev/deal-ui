@@ -47,6 +47,7 @@ public final class UiCompilerWorkspaceTest {
         childInsertionUsesTheActualChildBlock();
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
+        canonicalDealChangeRequiresAnnotatedUpdateHandlers();
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
         documentQueryAddsAndRemovesViewsAtomically();
@@ -146,6 +147,48 @@ public final class UiCompilerWorkspaceTest {
                 List.of(new UiCompilerWorkspace.ReplaceSubtree(
                         scoped.ownerId(), "ui.Text(value: state.label)")));
         check(repaired.accepted(), "semantic-invalid UI must remain locally repairable: " + repaired.diagnostics());
+    }
+
+    private static void canonicalDealChangeRequiresAnnotatedUpdateHandlers() {
+        String bootstrap = """
+                export class AppState { title: string = ""; }
+                export function initialState(): AppState { return {title: ""}; }
+                """;
+        var inspected = deal.compiler.DealCompilerWorkspace.inspect(
+                bootstrap, "/generated/app.deal", DealUiDealSource.ADAPTER);
+        var module = CanonicalCompiler.queryDealModule(bootstrap);
+        var state = inspected.symbols().stream().filter(value -> value.name().equals("AppState")).findFirst().orElseThrow();
+        var initial = inspected.symbols().stream().filter(value -> value.name().equals("initialState")).findFirst().orElseThrow();
+        var body = inspected.nodes().stream().filter(value -> value.ownerId().equals(initial.id())).findFirst().orElseThrow();
+        var stateSlice = CanonicalCompiler.queryDealSymbol(bootstrap, state.id());
+        var bodySlice = CanonicalCompiler.queryDealNode(bootstrap, body.id());
+        Map<String, String> fingerprints = Map.of(
+                module.ownerId().value(), module.allowedOperations().get(0).targetFingerprint(),
+                state.id().value(), stateSlice.allowedOperations().get(0).targetFingerprint(),
+                body.id().value(), bodySlice.allowedOperations().get(0).targetFingerprint());
+        List<deal.compiler.DealCompilerWorkspace.Operation> missingDirective = List.of(
+                new deal.compiler.DealCompilerWorkspace.ReplaceDeclaration(
+                        state.id(), "export class AppState { count: int = 0; }"),
+                new deal.compiler.DealCompilerWorkspace.ReplaceFunctionBody(
+                        body.id(), "return {count: 0};"),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "export class IncrementAction {}"),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "export function update(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }"));
+        var rejected = CanonicalCompiler.applyDealChangeChecked(
+                bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), missingDirective);
+        check(!rejected.accepted(), "unannotated canonical update must reject");
+        check(rejected.source().equals(bootstrap), "framework-contract rejection must roll back the whole ChangeSet");
+        check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
+                "missing update annotation must have a stable diagnostic");
+
+        List<deal.compiler.DealCompilerWorkspace.Operation> annotated = List.of(
+                missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "// @ui-update\nexport function update(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }"));
+        var accepted = CanonicalCompiler.applyDealChangeChecked(
+                bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), annotated);
+        check(accepted.accepted(), "annotated canonical update must commit: " + accepted.diagnostics());
     }
 
     private static void semanticQueryScopesUiOperations() {

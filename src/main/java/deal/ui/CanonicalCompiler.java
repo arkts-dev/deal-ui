@@ -6,6 +6,7 @@ import deal.compiler.CompilerProtocol.ProtocolHandshake;
 import deal.compiler.CompilerProtocol.RepairScope;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SemanticSlice;
+import deal.compiler.CompilerProtocol.SourceRange;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
 import deal.compiler.DealCompilerWorkspace;
 
@@ -258,9 +259,73 @@ public final class CanonicalCompiler {
             String source,
             ChangeSetPrecondition precondition,
             List<? extends DealCompilerWorkspace.Operation> operations) {
-        return DealCompilerWorkspace.applyChecked(
+        ChangeResult changed = DealCompilerWorkspace.applyChecked(
                 source, "/generated/app.deal", precondition, operations,
                 rejectingResolver(), DealUiDealSource.ADAPTER);
+        if (!changed.accepted()) return changed;
+        List<StructuredDiagnostic> contractDiagnostics = dealUiContractDiagnostics(
+                changed.source(), changed.inspection(), operations);
+        if (contractDiagnostics.isEmpty()) return changed;
+        var previous = DealCompilerWorkspace.inspect(
+                source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);
+        return new ChangeResult(
+                false, source, previous.sourceDigest(), previous, changed.impact(), contractDiagnostics);
+    }
+
+    private static List<StructuredDiagnostic> dealUiContractDiagnostics(
+            String source,
+            deal.compiler.CompilerProtocol.Inspection inspection,
+            List<? extends DealCompilerWorkspace.Operation> operations) {
+        if (inspection.appInterface() == null || inspection.appInterface().actions().isEmpty()) {
+            return List.of();
+        }
+        UiModel.DealModule module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
+        List<RepairScope> transactionScopes = operations.stream()
+                .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
+                .distinct()
+                .toList();
+        List<StructuredDiagnostic> diagnostics = new ArrayList<>();
+        for (var action : inspection.appInterface().actions()) {
+            List<UiModel.Handler> updates = module.handlers().stream()
+                    .filter(handler -> handler.kind().equals("ui-update"))
+                    .filter(handler -> handler.actionType().equals(action.name()))
+                    .toList();
+            if (updates.size() == 1) continue;
+            UiModel.DealFunction candidate = module.functions().values().stream()
+                    .filter(function -> function.parameters().size() == 2)
+                    .filter(function -> function.parameters().get(0).name().equals(inspection.appInterface().rootState()))
+                    .filter(function -> function.parameters().get(1).name().equals(action.name()))
+                    .filter(function -> function.returnType().name().equals(inspection.appInterface().rootState()))
+                    .findFirst().orElse(null);
+            SemanticId owner = candidate == null
+                    ? operations.get(0).targetId()
+                    : inspection.symbols().stream()
+                            .filter(symbol -> symbol.name().equals(candidate.name()))
+                            .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                            .findFirst().orElse(operations.get(0).targetId());
+            SourceRange range = candidate == null
+                    ? new SourceRange("/generated/app.deal", 1, 1, 1, 1)
+                    : new SourceRange(
+                            candidate.span().file().toString(),
+                            candidate.span().line(), candidate.span().column(),
+                            candidate.span().endLine(), candidate.span().endColumn());
+            diagnostics.add(new StructuredDiagnostic(
+                    "UI2050", "error",
+                    "Action '" + action.name() + "' requires exactly one // @ui-update handler",
+                    range, owner, "one annotated update", Integer.toString(updates.size()),
+                    List.of(action.id()), transactionScopes, "query_deal_module"));
+        }
+        return List.copyOf(diagnostics);
+    }
+
+    private static String operationName(DealCompilerWorkspace.Operation operation) {
+        return switch (operation) {
+            case DealCompilerWorkspace.AddDeclaration ignored -> DealCompilerWorkspace.ADD_DECLARATION;
+            case DealCompilerWorkspace.RemoveDeclaration ignored -> DealCompilerWorkspace.REMOVE_DECLARATION;
+            case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
+            case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
+            case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
+        };
     }
 
     public static UiCompilerWorkspace.UiChangeResult applyDealUiChange(
