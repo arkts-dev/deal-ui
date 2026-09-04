@@ -182,6 +182,17 @@ public final class UiCompilerWorkspaceTest {
         check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
                 "missing update annotation must have a stable diagnostic");
 
+        List<deal.compiler.DealCompilerWorkspace.Operation> malformedHandler = List.of(
+                missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "// @ui-update\nexport function update(state: AppState): AppState { return state; }"));
+        var malformedRejected = CanonicalCompiler.applyDealChangeChecked(
+                bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), malformedHandler);
+        check(!malformedRejected.accepted(), "malformed framework handler must reject during the DEAL transaction");
+        check(malformedRejected.source().equals(bootstrap), "malformed framework handler must roll back atomically");
+        check(malformedRejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2034")),
+                "malformed framework handler must expose its stable diagnostic before UI generation");
+
         List<deal.compiler.DealCompilerWorkspace.Operation> annotated = List.of(
                 missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
                 new deal.compiler.DealCompilerWorkspace.AddDeclaration(

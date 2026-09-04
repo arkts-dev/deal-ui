@@ -276,14 +276,26 @@ public final class CanonicalCompiler {
             String source,
             deal.compiler.CompilerProtocol.Inspection inspection,
             List<? extends DealCompilerWorkspace.Operation> operations) {
-        if (inspection.appInterface() == null || inspection.appInterface().actions().isEmpty()) {
-            return List.of();
-        }
-        UiModel.DealModule module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
         List<RepairScope> transactionScopes = operations.stream()
                 .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                 .distinct()
                 .toList();
+        UiModel.DealModule module;
+        try {
+            module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
+        } catch (UiDiagnostic failure) {
+            SemanticId owner = operations.get(0).targetId();
+            return List.of(new StructuredDiagnostic(
+                    failure.code(), "error", failure.getMessage(),
+                    new SourceRange(
+                            failure.file().toString(), failure.line(), failure.column(),
+                            failure.line(), failure.column()),
+                    owner, "valid Deal UI framework handler contract", failure.getMessage(),
+                    List.of(), transactionScopes, "query_deal_module"));
+        }
+        if (inspection.appInterface() == null || inspection.appInterface().actions().isEmpty()) {
+            return List.of();
+        }
         List<StructuredDiagnostic> diagnostics = new ArrayList<>();
         for (var action : inspection.appInterface().actions()) {
             List<UiModel.Handler> updates = module.handlers().stream()
