@@ -73,6 +73,7 @@ public final class UiFrameworkTest {
         expect("UI2015", source(root).replace("key: item.id", "key: item"));
         expect("UI1014", source(root).replace("When(state.expanded)", "ui.When(state.expanded)"));
         expect("UI1014", source(root).replace("ForEach(state.items", "ui.ForEach(state.items"));
+        expect("UI1015", source(root).replace("ui.Text(value: title)", "ui.Text(value: state.expanded ? title : \"Hidden\")"));
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
         previewReachabilityMode(root);
         borrowedHandlerContracts(root);

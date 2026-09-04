@@ -208,7 +208,17 @@ public final class UiParser {
         return new UiModel.Call(name, arguments, children, childBlock, span(start));
     }
 
-    private UiModel.Expr expression() { return binary(1); }
+    private UiModel.Expr expression() {
+        UiModel.Expr value = binary(1);
+        if (at("?")) {
+            fail(
+                "UI1015",
+                "Conditional expressions are not part of Deal UI; render alternatives with When(condition) { ... } Else { ... }",
+                peek()
+            );
+        }
+        return value;
+    }
 
     private UiModel.Expr binary(int level) {
         if (level == 7) return unary();
