@@ -41,12 +41,14 @@ public final class UiCompilerWorkspace {
             List<SemanticId> children,
             List<String> statePaths,
             List<String> actionBindings,
-            Map<String, SourceRange> properties) {
+            Map<String, SourceRange> properties,
+            List<String> writableProperties) {
         public UiNodeSnapshot {
             children = List.copyOf(children);
             statePaths = List.copyOf(statePaths);
             actionBindings = List.copyOf(actionBindings);
             properties = Map.copyOf(properties);
+            writableProperties = List.copyOf(writableProperties);
         }
     }
 
@@ -216,10 +218,17 @@ public final class UiCompilerWorkspace {
                 case SetProperty value -> {
                     SourceRange property = target.properties().get(value.property());
                     if (property == null) {
-                        return rejected(base, diagnostic(
-                                "CP2003", "Property is not present on the selected component", target.id(), target.range(),
-                                "existing property", value.property(),
-                                List.of(new RepairScope(REPLACE_SUBTREE, target.id())), "queryDealUiNode"));
+                        if (!target.writableProperties().contains(value.property()) || target.argumentEnd() < 0) {
+                            return rejected(base, diagnostic(
+                                    "CP2003", "Property is not declared by the selected component", target.id(), target.range(),
+                                    "one of " + target.writableProperties(), value.property(),
+                                    List.of(new RepairScope(REPLACE_SUBTREE, target.id())), "queryDealUiNode"));
+                        }
+                        String separator = target.properties().isEmpty() ? "" : ", ";
+                        replacements.add(new Replacement(
+                                target.argumentEnd(), target.argumentEnd(),
+                                separator + value.property() + ": " + value.expression().trim(), false));
+                        break;
                     }
                     replacements.add(new Replacement(
                             base.index().offset(property.startLine(), property.startColumn()),
@@ -285,12 +294,12 @@ public final class UiCompilerWorkspace {
                 SemanticId viewId = new SemanticId("dealui:view:" + view.name());
                 int[] body = viewBodyRange(index, view.span());
                 List<SemanticId> roots = collectNodes(
-                        view.nodes(), viewId, null, view.name(), digest, index, targets, nodeSnapshots);
+                        view.nodes(), viewId, null, view.name(), digest, index, pack, targets, nodeSnapshots);
                 Target viewTarget = new Target(
                         viewId, viewId, "view", range(view.span()),
                         index.offset(view.span().line(), view.span().column()),
                         index.offsetAfter(view.span().endLine(), view.span().endColumn()),
-                        body[0], body[1], true, roots, Map.of());
+                        body[0], body[1], true, roots, Map.of(), List.of(), -1);
                 targets.put(viewId, viewTarget);
                 viewSnapshots.add(new UiViewSnapshot(
                         viewId, view.name(), view.root(), range(view.span()),
@@ -373,6 +382,7 @@ public final class UiCompilerWorkspace {
             String path,
             String sourceDigest,
             SourceIndex index,
+            UiModel.PackModule pack,
             Map<SemanticId, Target> targets,
             List<UiNodeSnapshot> snapshots) {
         List<SemanticId> result = new ArrayList<>();
@@ -383,7 +393,7 @@ public final class UiCompilerWorkspace {
                     .digest(sourceDigest + "\u0000" + nodePath).substring(0, 24));
             List<UiModel.Node> children = children(node);
             List<SemanticId> childIds = collectNodes(
-                    children, viewId, id, nodePath, sourceDigest, index, targets, snapshots);
+                    children, viewId, id, nodePath, sourceDigest, index, pack, targets, snapshots);
             String kind = node instanceof UiModel.Call ? "call"
                     : node instanceof UiModel.When ? "when" : "for-each";
             String component = node instanceof UiModel.Call call ? call.name() : kind;
@@ -391,21 +401,23 @@ public final class UiCompilerWorkspace {
             Set<String> actions = new LinkedHashSet<>();
             Map<String, SourceRange> properties = new LinkedHashMap<>();
             collectFacts(node, paths, actions, properties);
+            List<String> writableProperties = writableProperties(node, pack);
             int start = index.offset(node.span().line(), node.span().column());
             int end = index.offsetAfter(node.span().endLine(), node.span().endColumn());
             boolean childBlock = node instanceof UiModel.Call call && call.childBlock() != null
                     || node instanceof UiModel.ForEach;
             int childStart = childBlock ? childContentStart(node, index, start, end) : -1;
             int childEnd = childBlock ? childContentEnd(node, index, start, end) : -1;
+            int argumentEnd = node instanceof UiModel.Call ? callArgumentEnd(index.source(), start, end) : -1;
             Target target = new Target(
                     id, viewId, kind, range(node.span()), start, end,
                     childStart, childEnd,
-                    childBlock, childIds, properties);
+                    childBlock, childIds, properties, writableProperties, argumentEnd);
             targets.put(id, target);
             snapshots.add(new UiNodeSnapshot(
                     id, viewId, parentId, kind, component, range(node.span()),
                     DealCompilerWorkspace.digest(index.source().substring(start, end)),
-                    childIds, List.copyOf(paths), List.copyOf(actions), properties));
+                    childIds, List.copyOf(paths), List.copyOf(actions), properties, writableProperties));
             result.add(id);
         }
         return List.copyOf(result);
@@ -450,6 +462,41 @@ public final class UiCompilerWorkspace {
             collectFacts(value.right(), paths, actions);
         } else if (expression instanceof UiModel.Unary value) collectFacts(value.operand(), paths, actions);
         else if (expression instanceof UiModel.Has value) paths.add(String.join(".", value.path().parts()));
+    }
+
+    private static List<String> writableProperties(UiModel.Node node, UiModel.PackModule pack) {
+        if (!(node instanceof UiModel.Call call)) return List.of();
+        UiModel.Component component = pack.components().get(simpleName(call.name()));
+        if (component == null) return List.of();
+        UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
+        if (props == null) return List.of();
+        return props.fields().stream().map(UiModel.Field::name).toList();
+    }
+
+    private static String simpleName(String qualified) {
+        int separator = qualified.lastIndexOf('.');
+        return separator < 0 ? qualified : qualified.substring(separator + 1);
+    }
+
+    private static int callArgumentEnd(String source, int start, int end) {
+        int open = source.indexOf('(', start);
+        if (open < 0 || open >= end) return -1;
+        int depth = 1;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int position = open + 1; position < end; position++) {
+            char value = source.charAt(position);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (value == '\\') escaped = true;
+                else if (value == '"') inString = false;
+                continue;
+            }
+            if (value == '"') inString = true;
+            else if (value == '(') depth++;
+            else if (value == ')' && --depth == 0) return position;
+        }
+        return -1;
     }
 
     private static int insertionOffset(Analysis analysis, Target parent, int index) {
@@ -609,7 +656,9 @@ public final class UiCompilerWorkspace {
             int contentEnd,
             boolean hasChildrenBlock,
             List<SemanticId> children,
-            Map<String, SourceRange> properties) {}
+            Map<String, SourceRange> properties,
+            List<String> writableProperties,
+            int argumentEnd) {}
 
     private record Replacement(int start, int end, String source, boolean blockContent) {}
 

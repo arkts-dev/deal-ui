@@ -7,7 +7,7 @@ public final class UiCompilerWorkspaceTest {
     private static final String PACK = """
             pack version "test-v1";
             export class ColumnProps { onClick?: Action; }
-            export class TextProps { value: string; }
+            export class TextProps { value: string; tone?: string; }
             export class ButtonProps { text: string; onClick?: Action; }
             export component Column(props: ColumnProps): View { children optional; event onClick; }
             export component Text(props: TextProps): View;
@@ -40,6 +40,7 @@ public final class UiCompilerWorkspaceTest {
         identitiesAreDeterministicAndCommentIndependent();
         subtreeRepairIsAtomicAndScoped();
         propertyEditPreservesSiblings();
+        absentDeclaredPropertyCanBeInserted();
         childInsertionUsesTheActualChildBlock();
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
@@ -82,6 +83,18 @@ public final class UiCompilerWorkspaceTest {
         check(result.accepted(), "property edit must compile: " + result.diagnostics());
         check(result.source().contains("text: \"Increment\""), "property expression must change");
         check(result.source().contains("state.title"), "sibling state binding must remain");
+    }
+
+    private static void absentDeclaredPropertyCanBeInserted() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var text = inspection.nodes().stream().filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
+        check(text.writableProperties().contains("tone"), "inspection must expose the complete component property contract");
+        var result = UiCompilerWorkspace.apply(
+                DEAL, UI, PACK, "./ui.pack", inspection.sourceDigest(),
+                List.of(new UiCompilerWorkspace.SetProperty(text.id(), "tone", "\"accent\"")));
+        check(result.accepted(), "declared property insertion must compile: " + result.diagnostics());
+        check(result.source().contains("value: state.title, tone: \"accent\""),
+                "new property must be inserted into the existing component call");
     }
 
     private static void staleNodeCannotModifyNewRevision() {
