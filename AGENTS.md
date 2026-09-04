@@ -16,10 +16,12 @@ and manages streaming generation or iterative modernization.
 `.dealui` source is authoritative. The checked UI graph is an ephemeral compiler workspace rebuilt
 from source, AppInterface and component-pack bytes for every stateless request.
 
-- View and node ids are compiler-owned, opaque and revision-scoped.
+- Document, view and node ids are compiler-owned, opaque and revision-scoped.
 - Source comments, section labels and visible text are never semantic identities.
 - Edits target compiler-issued view/node ids and carry the exact base source digest.
 - Multi-operation edits validate atomically; failure returns the unchanged canonical source.
+- Greenfield and structural edits query the document before `addView`; view removal targets a
+  queried view. These are semantic operations, never text insertion performed by a client.
 - Deal UI consumes the versioned AppInterface snapshot emitted by the shared compiler core.
 
 Deal UI remains a compact declarative language. Dynamic collections use `ForEach`; do not add array

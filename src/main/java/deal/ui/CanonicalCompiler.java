@@ -156,6 +156,15 @@ public final class CanonicalCompiler {
                 dealSource, source, packSource, packSpecifier, viewId);
     }
 
+    public static UiCompilerWorkspace.UiSemanticSlice queryDealUiDocument(
+            String dealSource,
+            String source,
+            String packSource,
+            String packSpecifier) {
+        return UiCompilerWorkspace.queryDocument(
+                dealSource, source, packSource, packSpecifier);
+    }
+
     public static UiCompilerWorkspace.UiSemanticSlice queryDealUiNode(
             String dealSource,
             String source,

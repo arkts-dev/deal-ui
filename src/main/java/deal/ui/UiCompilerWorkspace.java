@@ -28,8 +28,11 @@ public final class UiCompilerWorkspace {
     public static final String REMOVE_NODE = "removeNode";
     public static final String MOVE_NODE = "moveNode";
     public static final String SET_PROPERTY = "setProperty";
+    public static final String ADD_VIEW = "addView";
+    public static final String REMOVE_VIEW = "removeView";
     private static final List<String> ALLOWED_OPERATIONS = List.of(
-            REPLACE_VIEW_BODY, REPLACE_SUBTREE, INSERT_CHILD, REMOVE_NODE, MOVE_NODE, SET_PROPERTY);
+            ADD_VIEW, REMOVE_VIEW, REPLACE_VIEW_BODY, REPLACE_SUBTREE,
+            INSERT_CHILD, REMOVE_NODE, MOVE_NODE, SET_PROPERTY);
 
     private UiCompilerWorkspace() {}
 
@@ -70,6 +73,7 @@ public final class UiCompilerWorkspace {
     public record UiInspection(
             String protocolVersion,
             String sourceDigest,
+            SemanticId documentId,
             String appInterfaceFingerprint,
             List<UiViewSnapshot> views,
             List<UiNodeSnapshot> nodes,
@@ -130,10 +134,12 @@ public final class UiCompilerWorkspace {
         }
     }
 
-    public sealed interface Operation permits ReplaceViewBody, ReplaceSubtree, InsertChild, RemoveNode, MoveNode, SetProperty {
+    public sealed interface Operation permits AddView, RemoveView, ReplaceViewBody, ReplaceSubtree, InsertChild, RemoveNode, MoveNode, SetProperty {
         SemanticId targetId();
     }
 
+    public record AddView(SemanticId targetId, String source) implements Operation {}
+    public record RemoveView(SemanticId targetId) implements Operation {}
     public record ReplaceViewBody(SemanticId targetId, String body) implements Operation {}
     public record ReplaceSubtree(SemanticId targetId, String source) implements Operation {}
     public record InsertChild(SemanticId targetId, int index, String source) implements Operation {}
@@ -165,7 +171,22 @@ public final class UiCompilerWorkspace {
                 analysis.source().substring(target.start(), target.end()),
                 view, null,
                 childSnapshots(analysis, target.children()),
-                List.of(descriptor(analysis, target, REPLACE_VIEW_BODY, List.of("body"))));
+                List.of(
+                        descriptor(analysis, target, REPLACE_VIEW_BODY, List.of("body")),
+                        descriptor(analysis, target, REMOVE_VIEW, List.of())));
+    }
+
+    public static UiSemanticSlice queryDocument(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier) {
+        Analysis analysis = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        Target target = requireTarget(analysis, analysis.documentId(), "document");
+        return new UiSemanticSlice(
+                revision(analysis), analysis.documentId(), "document", "",
+                null, null, List.of(),
+                List.of(descriptor(analysis, target, ADD_VIEW, List.of("source"))));
     }
 
     public static UiSemanticSlice queryNode(
@@ -276,6 +297,22 @@ public final class UiCompilerWorkspace {
             changedViews.add(target.ownerViewId());
             if (!target.kind().equals("view")) changedNodes.add(target.id());
             switch (operation) {
+                case AddView value -> {
+                    if (!target.kind().equals("document")) return wrongKind(base, operation, target, "document");
+                    if (value.source() == null || value.source().isBlank()) {
+                        return rejected(base, diagnostic(
+                                "CP2004", "A Deal UI view declaration is required", target.id(), null,
+                                "complete export view declaration", "empty source",
+                                List.of(new RepairScope(ADD_VIEW, target.id())), "queryDealUiDocument"));
+                    }
+                    String separator = dealUiSource.isEmpty() || dealUiSource.endsWith("\n") ? "" : "\n";
+                    replacements.add(new Replacement(
+                            target.end(), target.end(), separator + value.source().strip() + "\n", false));
+                }
+                case RemoveView ignored -> {
+                    if (!target.kind().equals("view")) return wrongKind(base, operation, target, "view");
+                    replacements.add(new Replacement(target.start(), target.end(), "", false));
+                }
                 case ReplaceViewBody value -> {
                     if (!target.kind().equals("view")) return wrongKind(base, operation, target, "view");
                     replacements.add(new Replacement(target.contentStart(), target.contentEnd(), value.body(), true));
@@ -380,6 +417,10 @@ public final class UiCompilerWorkspace {
         List<UiViewSnapshot> viewSnapshots = new ArrayList<>();
         List<UiNodeSnapshot> nodeSnapshots = new ArrayList<>();
         String interfaceFingerprint = "";
+        targets.put(documentId, new Target(
+                documentId, documentId, "document", null,
+                uiSource.length(), uiSource.length(), uiSource.length(), uiSource.length(),
+                false, List.of(), Map.of(), List.of(), -1));
         try {
             Path dealFile = Path.of("/generated/app.deal");
             Path uiFile = Path.of("/generated/app.dealui");
@@ -410,7 +451,7 @@ public final class UiCompilerWorkspace {
             UiModel.CheckedProgram checked = checker.check(
                     uiFile, views, dealFile, deal, Map.of(packSpecifier, pack));
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, interfaceFingerprint,
+                    CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, checked.metadata(), ALLOWED_OPERATIONS, List.of());
             return new Analysis(uiSource, inspection, documentId, targets, index);
         } catch (UiDiagnostic failure) {
@@ -424,6 +465,7 @@ public final class UiCompilerWorkspace {
             List<RepairScope> repairScopes = new ArrayList<>();
             if (owner != null) repairScopes.add(new RepairScope(
                     owner.kind().equals("view") ? REPLACE_VIEW_BODY : REPLACE_SUBTREE, owner.id()));
+            else if (viewSnapshots.isEmpty()) repairScopes.add(new RepairScope(ADD_VIEW, documentId));
             if (failure.code().equals("UI2006") && owner != null) {
                 SemanticId ownerView = owner.ownerViewId();
                 targets.values().stream()
@@ -436,20 +478,22 @@ public final class UiCompilerWorkspace {
                     failure.code(), "error", failure.getMessage(),
                     new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.line(), failure.column()),
                     ownerId, "", "", List.of(), repairScopes,
-                    owner == null ? "inspectCanonicalApp" : "queryDealUiNode(" + owner.id().value() + ")");
+                    owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")");
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, interfaceFingerprint,
+                    CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,
                     ALLOWED_OPERATIONS, List.of(diagnostic));
             return new Analysis(uiSource, inspection, documentId, targets, index);
         } catch (RuntimeException failure) {
+            List<RepairScope> repairScopes = viewSnapshots.isEmpty()
+                    ? List.of(new RepairScope(ADD_VIEW, documentId)) : List.of();
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     "CP2999", "error", failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage(),
-                    null, documentId, "", "", List.of(), List.of(), "inspectCanonicalApp");
+                    null, documentId, "", "", List.of(), repairScopes, "queryDealUiDocument");
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, "", List.of(), List.of(), null,
+                    CompilerProtocol.VERSION, digest, documentId, "", List.of(), List.of(), null,
                     ALLOWED_OPERATIONS, List.of(diagnostic));
-            return new Analysis(uiSource, inspection, documentId, Map.of(), index);
+            return new Analysis(uiSource, inspection, documentId, targets, index);
         }
     }
 
@@ -485,6 +529,7 @@ public final class UiCompilerWorkspace {
     }
 
     private static String targetFingerprint(Analysis analysis, SemanticId id) {
+        if (id.equals(analysis.documentId())) return analysis.inspection().sourceDigest();
         UiViewSnapshot view = analysis.inspection().views().stream()
                 .filter(value -> value.id().equals(id)).findFirst().orElse(null);
         if (view != null) return view.fingerprint();
@@ -747,6 +792,8 @@ public final class UiCompilerWorkspace {
 
     private static String operationName(Operation operation) {
         return switch (operation) {
+            case AddView ignored -> ADD_VIEW;
+            case RemoveView ignored -> REMOVE_VIEW;
             case ReplaceViewBody ignored -> REPLACE_VIEW_BODY;
             case ReplaceSubtree ignored -> REPLACE_SUBTREE;
             case InsertChild ignored -> INSERT_CHILD;

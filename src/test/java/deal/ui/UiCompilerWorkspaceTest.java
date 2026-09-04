@@ -49,6 +49,7 @@ public final class UiCompilerWorkspaceTest {
         canonicalFacadeBlocksCrossArtifactMismatch();
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
+        documentQueryAddsAndRemovesViewsAtomically();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
     }
 
@@ -188,6 +189,41 @@ public final class UiCompilerWorkspaceTest {
                 List.of(operation));
         check(accepted.accepted(), "queried UI target must be writable: " + accepted.diagnostics());
         check(accepted.source().contains("text: \"Increment\""), "checked UI edit must commit");
+    }
+
+    private static void documentQueryAddsAndRemovesViewsAtomically() {
+        String imports = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                """;
+        var slice = UiCompilerWorkspace.queryDocument(DEAL, imports, PACK, "./ui.pack");
+        var descriptor = slice.allowedOperations().get(0);
+        check(slice.source().isEmpty(), "document query must not expose the complete UI source");
+        check(descriptor.operation().equals(UiCompilerWorkspace.ADD_VIEW),
+                "document query must authorize only view insertion");
+        String view = """
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.Column() {
+                    ui.Text(value: state.title)
+                    ui.Button(text: "Add", onClick: action app.IncrementAction {})
+                  }
+                }
+                """;
+        var added = UiCompilerWorkspace.applyChecked(
+                DEAL, imports, PACK, "./ui.pack",
+                new CompilerProtocol.ChangeSetPrecondition(
+                        slice.revision().sourceDigest(),
+                        Map.of(slice.ownerId().value(), descriptor.targetFingerprint())),
+                List.of(new UiCompilerWorkspace.AddView(slice.ownerId(), view)));
+        check(added.accepted(), "a queried document must accept a complete checked view: " + added.diagnostics());
+        var app = added.inspection().views().stream()
+                .filter(value -> value.name().equals("App")).findFirst().orElseThrow();
+        var removed = UiCompilerWorkspace.apply(
+                DEAL, added.source(), PACK, "./ui.pack", added.sourceDigest(),
+                List.of(new UiCompilerWorkspace.RemoveView(app.id())));
+        check(!removed.accepted(), "removing the only root view must fail atomically");
+        check(removed.source().equals(added.source()), "failed root removal must preserve the canonical source");
     }
 
     private static void check(boolean condition, String message) {
