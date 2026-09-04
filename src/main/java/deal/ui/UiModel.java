@@ -48,7 +48,9 @@ public final class UiModel {
     public record Field(String name, TypeRef type, Expr defaultValue, Span span) {}
     public record PackClass(String name, List<Field> fields, Span span) { public PackClass { fields = List.copyOf(fields); } }
     public sealed interface Contract permits Children, Event, Accessibility, TokenProp, Capability {}
-    public record Children(boolean required) implements Contract {}
+    public record Children(boolean required, String componentType) implements Contract {
+        public boolean typed() { return componentType != null; }
+    }
     public record Event(String prop, TypeRef payload) implements Contract {}
     public record Accessibility(String prop) implements Contract {}
     public record TokenProp(String prop) implements Contract {}
@@ -57,7 +59,7 @@ public final class UiModel {
         public Component { contracts = List.copyOf(contracts); }
     }
     public record Token(String name, TypeRef type, Expr value, Span span) {}
-    public record PackModule(List<Import> imports, Map<String, PackClass> classes, Map<String, Component> components,
+    public record PackModule(String version, String digest, List<Import> imports, Map<String, PackClass> classes, Map<String, Component> components,
                              Map<String, Token> tokens, String source) {
         public PackModule { classes = immutable(classes); components = immutable(components); tokens = immutable(tokens); }
     }
@@ -87,12 +89,25 @@ public final class UiModel {
     public record RenderScope(Map<String, Expr> bindings, List<RenderNode> children) implements RenderNode {
         public RenderScope { bindings = immutable(bindings); children = List.copyOf(children); }
     }
+    public record CheckedMetadata(String rootStateType, List<String> reachableInputActions,
+                                  List<String> effectCompletionActions, List<String> usedComponents,
+                                  Map<String, String> componentCapabilities,
+                                  Map<String, String> packVersions, Map<String, String> packDigests) {
+        public CheckedMetadata {
+            reachableInputActions = List.copyOf(reachableInputActions);
+            effectCompletionActions = List.copyOf(effectCompletionActions);
+            usedComponents = List.copyOf(usedComponents);
+            componentCapabilities = immutable(componentCapabilities);
+            packVersions = immutable(packVersions);
+            packDigests = immutable(packDigests);
+        }
+    }
     public record CheckedProgram(Path viewSource, Path dealSource, String title, String rootStateType,
                                  Map<String, View> views, Map<String, Component> components,
                                  Map<String, PackClass> packClasses, Map<String, Token> tokens,
                                   DealModule deal, List<RenderNode> rootNodes, Map<String, Handler> updates,
                                   Map<String, Handler> effects, Map<String, Handler> effectPolicies,
-                                  Map<String, Handler> effectFailures) {
+                                  Map<String, Handler> effectFailures, CheckedMetadata metadata) {
         public CheckedProgram { views = immutable(views); components = immutable(components); packClasses = immutable(packClasses); tokens = immutable(tokens); rootNodes = List.copyOf(rootNodes); updates = immutable(updates); effects = immutable(effects); effectPolicies = immutable(effectPolicies); effectFailures = immutable(effectFailures); }
 
     }

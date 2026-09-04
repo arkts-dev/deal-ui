@@ -72,6 +72,8 @@ public final class UiFrameworkTest {
         expect("UI2031", source(root).replace("ui.IntText(value: state.count)", "ui.IntText(value: state.title)"));
         expect("UI2015", source(root).replace("key: item.id", "key: item"));
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
+        borrowedHandlerContracts(root);
+        typedChildrenContracts(root);
         compilePolicyOnlyCancellation(root, outputs, compiler);
         expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string = \"start\"; key: string = \"test\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return { operation: \"start\" }; }\n");
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
@@ -112,6 +114,9 @@ public final class UiFrameworkTest {
         try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiPortableBridge bridge = (UiPortableBridge) Class.forName(result.bridgeClass(), true, loader).getConstructor().newInstance();
             check(bridge.componentCapabilities().get("ui.Button").equals("renderer.swing.button"), "portable bridge exposes checked component capabilities without constructing native bindings");
+            UiPortableBridge.CheckedMetadata metadata = bridge.checkedMetadata();
+            check(metadata.rootStateType().equals("GalleryState") && metadata.reachableInputActions().contains("ToggleDetails") && metadata.usedComponents().contains("ui.Button"), "portable bridge exposes compiler-owned root, action, and component metadata");
+            check(metadata.packDigests().values().stream().allMatch(value -> value.matches("[0-9a-f]{64}")), "portable bridge exposes deterministic component-pack digests");
             UiPortableBridge.StateValue state = bridge.initialState();
             UiPortableBridge.StoreValue store = bridge.initialStore();
             UiPortableBridge.Transition initial = bridge.initial(state, store);
@@ -371,6 +376,71 @@ public final class UiFrameworkTest {
         }
     }
 
+    private static void borrowedHandlerContracts(Path root) throws Exception {
+        String original = deal(root);
+        String originalUpdate = "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState {\n  return {\n    title: state.title,\n    count: state.count,\n    expanded: !state.expanded,\n    items: state.items\n  };\n}";
+        expect("UI2050", source(root), original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { state.expanded = true; return state; }"));
+        expect("UI2050", source(root), original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { state.items[0].title = \"changed\"; return state; }"));
+        expect("UI2050", source(root), original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let item: Item = state.items[0]; item.title = \"changed\"; return state; }"));
+        expect("UI2051", source(root), original.replace("// @ui-update\n" + originalUpdate,
+            "function mutate(item: Item): null { item.title = \"changed\"; return null; }\n" +
+            "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { mutate(state.items[0]); return state; }"));
+        expect("UI2050", source(root), original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { action = action; state.items = state.items; return state; }"));
+        expect("UI2050", source(root), original.replace(
+            "export function setTitle(state: GalleryState, action: SetTitle): GalleryState {\n  return {\n    title: action.value,\n    count: state.count,\n    expanded: state.expanded,\n    items: state.items\n  };\n}",
+            "export function setTitle(state: GalleryState, action: SetTitle): GalleryState { action.value = \"changed\"; return state; }"));
+
+        String freshLocal = original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { " +
+            "let item: Item = { id: 7, title: \"fresh\" }; let items: Item[] = [item]; items[0] = { id: 8, title: \"replacement\" }; " +
+            "return { title: state.title, count: state.count, expanded: true, items: items }; }");
+        expectValid(root, source(root), freshLocal, pack(root), "fresh local mutation is allowed in UI handlers");
+
+        String readOnlyHelper = original.replace("// @ui-update\n" + originalUpdate,
+            "function titleOf(item: Item): string { return item.title; }\n" +
+            "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let title: string = titleOf(state.items[0]); return { title: title, count: state.count, expanded: true, items: state.items }; }");
+        expectValid(root, source(root), readOnlyHelper, pack(root), "read-only helpers may consume borrowed values");
+    }
+
+    private static void typedChildrenContracts(Path root) throws Exception {
+        String logic = "export class Item { id: int = 0; title: string = \"\"; }\n" +
+            "export class State { items: Item[] = []; active: boolean = true; }\n" +
+            "export class Select { id: int = 0; }\n" +
+            "export function initialState(): State { return {}; }\n" +
+            "// @ui-update\nexport function select(state: State, action: Select): State { return state; }\n" +
+            "export function main(): null { return null; }\n";
+        String uiPack = "export class Empty {}\n" +
+            "export class ItemProps { text: string = \"\"; onClick?: Action; }\n" +
+            "export component NavigationBar(props: Empty): View { children required NavigationItem; capability \"renderer.navigation\"; }\n" +
+            "export component NavigationItem(props: ItemProps): View { event onClick; capability \"renderer.navigation.item\"; }\n" +
+            "export component Text(props: ItemProps): View { capability \"renderer.text\"; }\n";
+        String valid = "import * as app from \"./gallery\";\nimport * as ui from \"./platform-ui.dealui-pack\";\n" +
+            "// @ui-root\nexport view App(state: app.State): View { ui.NavigationBar() { When(state.active) { ForEach(state.items, item: app.Item, key: item.id) { ui.NavigationItem(text: item.title, onClick: action app.Select { id: item.id }) } } Else { ui.NavigationItem(text: \"Empty\", onClick: action app.Select { id: 0 }) } } }\n";
+        expectValid(root, valid, logic, uiPack, "typed children accept direct, conditional, and repeated item components");
+        expect("UI2048", valid.replace("ui.NavigationItem(text: item.title", "ui.Text(text: item.title"), logic, uiPack);
+        expect("UI2047", valid, logic, uiPack.replace("children required NavigationItem", "children required MissingItem"));
+    }
+
+    private static void expectValid(Path root, String view, String logic, String uiPack, String message) throws Exception {
+        Path directory = Files.createTempDirectory(root.resolve("build"), "valid-");
+        Path viewFile = directory.resolve("gallery.dealui");
+        Path logicFile = directory.resolve("gallery.deal");
+        Path packFile = directory.resolve("platform-ui.dealui-pack");
+        Files.writeString(viewFile, view.replace("./gallery", logicFile.toString()).replace("./platform-ui.dealui-pack", packFile.toString()));
+        Files.writeString(logicFile, logic);
+        Files.writeString(packFile, uiPack);
+        UiChecker checker = new UiChecker();
+        UiModel.ViewModule views = UiParser.parseViews(viewFile, Files.readString(viewFile));
+        UiModel.DealModule module = checker.parseDeal(logicFile, logic);
+        UiModel.PackModule parsedPack = UiParser.parsePack(packFile, uiPack);
+        checker.check(viewFile, views, logicFile, module, java.util.Map.of(packFile.toString(), parsedPack));
+        check(true, message);
+    }
+
     private static void expectPayloadFailure(Runnable operation, String expected) {
         try { operation.run(); throw new AssertionError("Expected " + expected + " payload rejection"); }
         catch (IllegalArgumentException failure) { check(failure.getMessage().contains(expected), expected + " payload rejects coercion"); }
@@ -458,6 +528,9 @@ public final class UiFrameworkTest {
 
     private static void expect(String code, String view) throws Exception { expect(code, view, deal(Path.of("").toAbsolutePath())); }
     private static void expect(String code, String view, String logic) throws Exception {
+        expect(code, view, logic, pack(Path.of("").toAbsolutePath()));
+    }
+    private static void expect(String code, String view, String logic, String uiPack) throws Exception {
         Path root = Path.of("").toAbsolutePath();
         Path directory = Files.createTempDirectory(root.resolve("build"), "invalid-");
         Files.writeString(directory.resolve("gallery.dealui"), view.replace("./gallery", directory.resolve("gallery").toString()).replace("./platform-ui.dealui-pack", root.resolve("examples/museum/platform-ui.dealui-pack").toString()));
@@ -466,7 +539,7 @@ public final class UiFrameworkTest {
             UiModel.ViewModule views = UiParser.parseViews(directory.resolve("gallery.dealui"), Files.readString(directory.resolve("gallery.dealui")));
             UiChecker checker = new UiChecker();
             UiModel.DealModule module = checker.parseDeal(directory.resolve("gallery.deal"), logic);
-            UiModel.PackModule pack = UiParser.parsePack(root.resolve("examples/museum/platform-ui.dealui-pack"), pack(root));
+            UiModel.PackModule pack = UiParser.parsePack(root.resolve("examples/museum/platform-ui.dealui-pack"), uiPack);
             checker.check(directory.resolve("gallery.dealui"), views, directory.resolve("gallery.deal"), module, java.util.Map.of(root.resolve("examples/museum/platform-ui.dealui-pack").toString(), pack));
             throw new AssertionError("Expected " + code);
         } catch (UiDiagnostic diagnostic) { check(diagnostic.code().equals(code), code + " is reported"); }

@@ -110,14 +110,49 @@ public final class UiChecker {
             if (policy.mayStartEffect() && !effects.containsKey(policy.actionType())) error("UI2040", "Starting effect policy requires an effect", policy.span());
         }
         for (UiModel.Handler failure : effectFailures.values()) if (!effects.containsKey(failure.actionType())) error("UI2041", "Effect failure mapper requires an effect", failure.span());
+        Set<String> usedComponents = new LinkedHashSet<>();
+        collectComponents(nodes, usedComponents);
+        Map<String, String> capabilities = new LinkedHashMap<>();
+        for (String name : usedComponents) {
+            UiModel.Component component = components.get(name);
+            if (component == null) continue;
+            component.contracts().stream().filter(UiModel.Capability.class::isInstance)
+                .map(UiModel.Capability.class::cast).findFirst()
+                .ifPresent(capability -> capabilities.put(name, capability.name()));
+        }
+        Map<String, String> packVersions = new LinkedHashMap<>();
+        Map<String, String> packDigests = new LinkedHashMap<>();
+        packs.forEach((specifier, pack) -> {
+            packVersions.put(specifier, pack.version());
+            packDigests.put(specifier, pack.digest());
+        });
+        UiModel.CheckedMetadata metadata = new UiModel.CheckedMetadata(stateType,
+            reachableActions.stream().sorted().toList(), completionActions.stream().sorted().toList(),
+            usedComponents.stream().sorted().toList(), capabilities, packVersions, packDigests);
         return new UiModel.CheckedProgram(viewFile, dealFile, root.name(), stateType, views, components,
-            packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures);
+            packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures, metadata);
     }
 
     private Set<String> effectCompletion(Map<String, UiModel.Handler> effects) {
         Set<String> result = new LinkedHashSet<>();
         effects.values().forEach(handler -> result.add(handler.returnType()));
         return result;
+    }
+
+    private void collectComponents(List<UiModel.RenderNode> nodes, Set<String> result) {
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                result.add(call.name());
+                collectComponents(call.children(), result);
+            } else if (node instanceof UiModel.RenderWhen when) {
+                collectComponents(when.thenNodes(), result);
+                collectComponents(when.elseNodes(), result);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                collectComponents(each.children(), result);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                collectComponents(scope.children(), result);
+            }
+        }
     }
 
     private Map<String, UiModel.Handler> actions(Map<String, UiModel.Handler> handlers) { return handlers; }
@@ -176,8 +211,18 @@ public final class UiChecker {
                     UiModel.Event event = events.get(argument.getKey());
                     checkAssignable(type(argument.getValue(), scope, deal, packClasses, tokens, aliases, actions, event), field.type(), argument.getValue().span());
                 }
-                result.add(new UiModel.RenderCall(call.name(), call.arguments(),
-                    lower(call.children(), nodeIdentity, scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
+                List<UiModel.RenderNode> loweredChildren = lower(call.children(), nodeIdentity, scope, views,
+                    components, packClasses, tokens, deal, aliases, actions, viewStack);
+                UiModel.Children childPolicy = component.contracts().stream()
+                    .filter(UiModel.Children.class::isInstance)
+                    .map(UiModel.Children.class::cast)
+                    .findFirst()
+                    .orElse(null);
+                if (childPolicy != null && childPolicy.typed()) {
+                    String expected = qualifyComponent(childPolicy.componentType(), call.name());
+                    validateTypedChildren(loweredChildren, expected, components, call.span());
+                }
+                result.add(new UiModel.RenderCall(call.name(), call.arguments(), loweredChildren,
                     nodeIdentity, call.span()));
             } else if (node instanceof UiModel.When when) {
                 requireType(type(when.condition(), scope, deal, packClasses, tokens, aliases, actions, null), "boolean", when.condition().span());
@@ -293,6 +338,10 @@ public final class UiChecker {
                     UiModel.Field field = props.fields().stream().filter(value -> value.name().equals(event.prop())).findFirst().orElseThrow();
                     if (!field.type().name().equals("Action")) error("UI2025", "Event prop must have Action type", entry.getValue().span());
                 }
+                if (contract instanceof UiModel.Children children && children.typed()) {
+                    String expected = qualifyComponent(children.componentType(), entry.getKey());
+                    if (!components.containsKey(expected)) error("UI2047", "Typed children reference unknown component '" + expected + "'", entry.getValue().span());
+                }
             }
         }
         for (UiModel.PackClass clazz : classes.values()) for (UiModel.Field field : clazz.fields()) {
@@ -305,6 +354,27 @@ public final class UiChecker {
         UiModel.PackClass result = classes.get(name.contains(".") ? name : prefix(component) + name);
         if (result == null) throw new UiDiagnostic("UI2027", "Unknown prop class '" + name + "'", Path.of("<pack>"), 1, 1);
         return result;
+    }
+
+    private String qualifyComponent(String name, String parent) {
+        return name.contains(".") ? name : prefix(parent) + name;
+    }
+
+    private void validateTypedChildren(List<UiModel.RenderNode> nodes, String expected,
+                                       Map<String, UiModel.Component> components, UiModel.Span parentSpan) {
+        if (!components.containsKey(expected)) error("UI2047", "Unknown typed child component '" + expected + "'", parentSpan);
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                if (!call.name().equals(expected)) error("UI2048", "Component requires children of type '" + expected + "', got '" + call.name() + "'", call.span());
+            } else if (node instanceof UiModel.RenderWhen when) {
+                validateTypedChildren(when.thenNodes(), expected, components, parentSpan);
+                validateTypedChildren(when.elseNodes(), expected, components, parentSpan);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                validateTypedChildren(each.children(), expected, components, parentSpan);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                validateTypedChildren(scope.children(), expected, components, parentSpan);
+            }
+        }
     }
 
     private void exactProps(Map<String, UiModel.Expr> values, UiModel.PackClass props, UiModel.Span span) {
@@ -354,17 +424,21 @@ public final class UiChecker {
 
     private UiModel.DealModule dealModule(ProgramNode program, Path file, String source) {
         Map<String, UiModel.DealClass> classes = new LinkedHashMap<>();
+        Map<String, ClassDeclaration> classDeclarations = new LinkedHashMap<>();
+        Map<String, FunctionDeclaration> functionDeclarations = new LinkedHashMap<>();
         List<FunctionDeclaration> functions = new ArrayList<>();
         Set<String> exported = new LinkedHashSet<>();
         for (StatementNode statement : program.statements()) {
             boolean isExported = statement instanceof ExportDeclaration;
             StatementNode declaration = isExported ? ((ExportDeclaration) statement).declaration() : statement;
             if (declaration instanceof ClassDeclaration clazz) {
+                classDeclarations.put(clazz.name(), clazz);
                 Map<String, UiModel.Field> fields = new LinkedHashMap<>();
                 for (ClassField field : clazz.fields()) fields.put(field.name(), new UiModel.Field(field.name(), type(field.type(), field.optional()), null, span(file, field.span().startLine(), field.span().startColumn())));
                 classes.put(clazz.name(), new UiModel.DealClass(clazz.name(), fields, isExported));
             } else if (declaration instanceof FunctionDeclaration function) {
                 functions.add(function);
+                functionDeclarations.put(function.name(), function);
                 if (isExported) exported.add(function.name());
             }
         }
@@ -390,6 +464,8 @@ public final class UiChecker {
             if (!effect && !policy && !state.equals(returned)) throw new UiDiagnostic("UI2036", "Update must return root state", file, function.span().startLine(), function.span().startColumn());
             handlers.add(new UiModel.Handler(function.name(), state, action, returned, directive, directive.equals("ui-effect-policy") && policyMayStart(function.body()), span(file, function.span().startLine(), function.span().startColumn())));
         }
+        new UiBorrowedValueChecker(file, classDeclarations, functionDeclarations)
+            .check(handlers.stream().map(UiModel.Handler::name).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
         return new UiModel.DealModule(classes, functionInfo, handlers, file);
     }
 

@@ -20,6 +20,8 @@ The modern museum gallery in `examples/museum/` demonstrates generated view comp
 
 `--renderer portable` emits a typed `UiPortableBridge` with the same DEAL-owned store, reconciliation, action slots, updates, effects, and state snapshots, but without Swing/AWT bindings. Native renderers use `componentCapabilities()` to bind checked `.dealui-pack` capabilities to their platform components. The portable target does not permit `run`; a platform host owns lifecycle and rendering.
 
+Deal UI handlers receive borrowed-immutable state and action values. The checker rejects direct and aliased mutation or escape to mutating helpers while leaving core DEAL semantics unchanged. Versioned component packs may constrain children to a component type, and generated portable bridges expose checked action/component/pack metadata for native hosts.
+
 Portable applications may import the framework-owned `host/storage` declaration
 from `ui/host/storage.d.deal`. It exposes typed asynchronous `load`, `save`, and
 `remove` functions. Calls belong in ordinary `@ui-effect` bodies and therefore

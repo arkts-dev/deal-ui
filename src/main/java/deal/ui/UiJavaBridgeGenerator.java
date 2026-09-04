@@ -32,6 +32,13 @@ final class UiJavaBridgeGenerator {
         String interfaceName = target == Target.PORTABLE ? "deal.ui.UiPortableBridge" : "deal.ui.UiBridge";
         StringBuilder out = new StringBuilder("public final class ").append(bridge).append(" implements ").append(interfaceName).append(" {\n");
         out.append("  @Override public String title() { return \"").append(program.title()).append("\"; }\n")
+            .append("  @Override public CheckedMetadata checkedMetadata() { return new CheckedMetadata(\"").append(escape(program.metadata().rootStateType())).append("\", ")
+            .append(stringList(program.metadata().reachableInputActions())).append(", ")
+            .append(stringList(program.metadata().effectCompletionActions())).append(", ")
+            .append(stringList(program.metadata().usedComponents())).append(", ")
+            .append(stringMap(program.metadata().componentCapabilities())).append(", ")
+            .append(stringMap(program.metadata().packVersions())).append(", ")
+            .append(stringMap(program.metadata().packDigests())).append("); }\n")
             .append("  @Override public java.util.Map<String, String> componentCapabilities() { return java.util.Map.ofEntries(");
         boolean first = true;
         for (Map.Entry<String, UiModel.Component> component : program.components().entrySet()) {
@@ -195,5 +202,8 @@ final class UiJavaBridgeGenerator {
         throw new IllegalStateException("Token host value must contain numeric value");
     }
     private String javaDefault(UiModel.TypeRef type) { if (type.optional()) return "null"; if (type.array()) return "null"; return switch (type.name()) { case "string" -> "\"\""; case "int" -> "0L"; case "number" -> "0.0"; case "boolean" -> "false"; default -> "null"; }; }
+    private String stringList(List<String> values) { return "java.util.List.of(" + values.stream().map(value -> "\"" + escape(value) + "\"").collect(java.util.stream.Collectors.joining(", ")) + ")"; }
+    private String stringMap(Map<String, String> values) { return "java.util.Map.ofEntries(" + values.entrySet().stream().map(entry -> "java.util.Map.entry(\"" + escape(entry.getKey()) + "\", \"" + escape(entry.getValue()) + "\")").collect(java.util.stream.Collectors.joining(", ")) + ")"; }
+    private String escape(String value) { return value.replace("\\", "\\\\").replace("\"", "\\\""); }
     private void appendFields(StringBuilder out, UiModel.DealClass clazz, java.util.function.Function<UiModel.Field, String> value) { boolean first = true; for (UiModel.Field field : clazz.fields().values()) { if (!first) out.append(", "); first = false; out.append(value.apply(field)); } }
 }

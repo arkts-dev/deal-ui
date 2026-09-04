@@ -35,9 +35,23 @@ public interface UiPortableBridge {
         public static EffectCommand none() { return new EffectCommand("none", "", 0, "none"); }
         public static EffectCommand immediate() { return new EffectCommand("start", "", 0, "none"); }
     }
+    record CheckedMetadata(String rootStateType, List<String> reachableInputActions,
+                           List<String> effectCompletionActions, List<String> usedComponents,
+                           Map<String, String> componentCapabilities,
+                           Map<String, String> packVersions, Map<String, String> packDigests) {
+        public CheckedMetadata {
+            reachableInputActions = List.copyOf(reachableInputActions);
+            effectCompletionActions = List.copyOf(effectCompletionActions);
+            usedComponents = List.copyOf(usedComponents);
+            componentCapabilities = Map.copyOf(componentCapabilities);
+            packVersions = Map.copyOf(packVersions);
+            packDigests = Map.copyOf(packDigests);
+        }
+    }
     record Transition(StateValue state, Node tree, List<Patch> patches, StoreValue store, int effectId, StateValue effectState, ActionValue effectAction, EffectCommand effectCommand) {}
 
     String title();
+    default CheckedMetadata checkedMetadata() { return new CheckedMetadata("", List.of(), List.of(), List.of(), Map.of(), Map.of(), Map.of()); }
     default Map<String, String> componentCapabilities() { return Map.of(); }
     StateValue initialState();
     StoreValue initialStore();

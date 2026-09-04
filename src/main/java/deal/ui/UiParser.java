@@ -55,6 +55,12 @@ public final class UiParser {
 
     private UiModel.PackModule pack(String source) {
         List<UiModel.Import> imports = imports();
+        String version = "unversioned";
+        if (match("pack")) {
+            require("version");
+            version = string();
+            require(";");
+        }
         Map<String, UiModel.PackClass> classes = new LinkedHashMap<>();
         Map<String, UiModel.Component> components = new LinkedHashMap<>();
         Map<String, UiModel.Token> tokens = new LinkedHashMap<>();
@@ -91,7 +97,8 @@ public final class UiParser {
                         if (match("children")) {
                             boolean required = match("required");
                             if (!required) match("optional");
-                            contracts.add(new UiModel.Children(required));
+                            String componentType = at(K.ID) ? qualified() : null;
+                            contracts.add(new UiModel.Children(required, componentType));
                         } else if (match("event")) {
                             String prop = id();
                             UiModel.TypeRef payload = null;
@@ -122,7 +129,7 @@ public final class UiParser {
                 duplicate(tokens, name, new UiModel.Token(name, type, value, span(start)));
             } else fail("UI1003", "Expected pack class, component, or token", peek());
         }
-        return new UiModel.PackModule(imports, classes, components, tokens, source);
+        return new UiModel.PackModule(version, sha256(source), imports, classes, components, tokens, source);
     }
 
     private List<UiModel.Import> imports() {
@@ -369,5 +376,15 @@ public final class UiParser {
         }
         result.add(new T(K.EOF, "", line, column));
         return List.copyOf(result);
+    }
+
+    private static String sha256(String source) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 }

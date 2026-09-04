@@ -71,7 +71,9 @@ ForEachNode ::=
       'key' ':' UiPath
     ')' ViewBody
 
-UiPackProgram ::= ImportDeclaration* UiPackDeclaration*
+UiPackProgram ::= ImportDeclaration* PackVersion? UiPackDeclaration*
+
+PackVersion ::= 'pack' 'version' StringLiteral ';'
 
 UiPackDeclaration ::=
     UiPackClassDeclaration
@@ -99,7 +101,7 @@ ComponentDeclaration ::=
 ComponentContract ::= '{' ComponentContractItem* '}'
 
 ComponentContractItem ::=
-    'children' ChildRequirement? ';'
+    'children' ChildRequirement? QualifiedName? ';'
   | 'event' Identifier EventPayload? ';'
   | 'accessibility' Identifier ';'
   | 'token' Identifier ';'
@@ -118,8 +120,9 @@ Quoted terminals are contextual.
 - Views are pure. Paths start at parameters, items, tokens, actions, or payloads; nullable traversal fails.
 - Event `ActionLiteral` binds declared `payload`.
 - Nominal actions are checked statically and dynamically. `When` takes `boolean`; `ForEach` takes `T[]` and a unique `int|string` key.
-- `View` is only a view/component result; `Action` is only a forwarded view parameter or event prop. Children follow contracts.
+- `View` is only a view/component result; `Action` is only a forwarded view parameter or event prop. Children follow contracts. A typed child contract accepts that component through direct calls, `When`, `ForEach`, and composed views, and rejects every other child root.
 - `UiPackDefault` `QualifiedName` resolves to token.
+- `.dealui` has no array literals, indexing, assignment, or arbitrary function calls. Dynamic collection rendering uses `ForEach`; application DEAL prepares transformed or selected data.
 
 ```deal
 import * as app from "./counter";
@@ -228,7 +231,7 @@ export function completeIncrement(
 }
 ```
 
-Updates return complete candidates without mutation. Effects start post-commit, await, and return one action; uncaught errors reach the host.
+Updates return complete candidates without mutation. The state and action parameters of every Deal UI handler are borrowed immutable even though core DEAL remains mutable: direct, indexed, nested, and aliased writes are rejected, as is passing borrowed reference data to a helper that may mutate or escape it. Mutation of fresh local data and read-only helper calls remain valid. Effects start post-commit, await, and return one action; uncaught errors reach the host.
 
 ## Components
 
@@ -271,12 +274,16 @@ export component Column(props: ColumnProps): View {
   children optional;
 }
 
+export component NavigationBar(props: EmptyProps): View {
+  children required NavigationItem;
+}
+
 export token spaceMd: Space;
 ```
 
 ## Portable renderer bridge
 
-The compiler's portable renderer target produces `UiPortableBridge`. It preserves closed typed action dispatch, store policy, effects, reconciliation patches, state snapshots, and the checked component tree without depending on Swing or AWT. Every generated bridge exposes the capability selected for each component through `componentCapabilities()`; an Android or other native host binds those capability names to reusable platform components.
+The compiler's portable renderer target produces `UiPortableBridge`. It preserves closed typed action dispatch, store policy, effects, reconciliation patches, state snapshots, and the checked component tree without depending on Swing or AWT. Every generated bridge exposes compiler-owned `checkedMetadata()` containing the root state, reachable input and completion actions, used components and capabilities, and imported pack versions and SHA-256 digests. An Android or other native host uses this metadata instead of scanning generated source.
 
 The compiler also registers the framework-owned `host/storage` external module.
 Its declaration has the closed asynchronous surface `load(key)`,
