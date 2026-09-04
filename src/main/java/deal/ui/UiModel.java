@@ -8,7 +8,11 @@ import java.util.Map;
 public final class UiModel {
     private UiModel() {}
 
-    public record Span(Path file, int line, int column) {}
+    public record Span(Path file, int line, int column, int endLine, int endColumn) {
+        public Span(Path file, int line, int column) {
+            this(file, line, column, line, column);
+        }
+    }
     public record Import(String alias, String specifier, Span span) {}
     public record TypeRef(String name, boolean optional, int dimensions) {
         public TypeRef(String name, boolean optional, boolean array) { this(name, optional, array ? 1 : 0); }
@@ -29,7 +33,7 @@ public final class UiModel {
     public sealed interface Node permits Call, When, ForEach {
         Span span();
     }
-    public record Call(String name, Map<String, Expr> arguments, List<Node> children, Span span) implements Node {
+    public record Call(String name, Map<String, Expr> arguments, List<Node> children, Span childBlock, Span span) implements Node {
         public Call { arguments = immutable(arguments); children = List.copyOf(children); }
     }
     public record When(Expr condition, List<Node> thenNodes, List<Node> elseNodes, Span span) implements Node {

@@ -34,16 +34,12 @@ import java.util.Set;
 
 public final class UiChecker {
     public UiModel.DealModule parseDeal(Path file, String source) {
-        LexResult lexed = new Lexer(compilerSource(source), file.toString()).tokenize();
+        LexResult lexed = new Lexer(DealUiDealSource.parserSource(source), file.toString()).tokenize();
         first(lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), file.toString()).parse();
         first(parsed.diagnostics());
         first(ModuleShapeValidator.validate(parsed.program(), file.toString(), false));
         return dealModule(parsed.program(), file, source);
-    }
-
-    private String compilerSource(String source) {
-        return source.replaceAll("(?m)^(\\s*)// @(ui-(?:update|effect|effect-policy|effect-failure))(\\s*)$", "$1//  $2$3");
     }
 
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,

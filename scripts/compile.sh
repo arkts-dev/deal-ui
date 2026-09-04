@@ -8,5 +8,5 @@ CLASSES="$BUILD/classes"
 
 rm -rf "$CLASSES"
 mkdir -p "$CLASSES"
-mapfile -t SOURCES < <(printf '%s\n' "$ROOT"/src/main/java/deal/ui/*.java "$ROOT"/src/main/java/deal/ui/runtime/*.java)
+SOURCES=("$ROOT"/src/main/java/deal/ui/*.java "$ROOT"/src/main/java/deal/ui/runtime/*.java)
 javac --release 25 -Xlint:all -Werror -cp "$FS_ROOT/build" -d "$CLASSES" "${SOURCES[@]}"

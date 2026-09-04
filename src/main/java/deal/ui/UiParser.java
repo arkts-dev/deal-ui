@@ -8,7 +8,7 @@ import java.util.Map;
 
 public final class UiParser {
     private enum K { ID, STRING, INT, NUMBER, SYMBOL, EOF }
-    private record T(K kind, String text, int line, int column) {}
+    private record T(K kind, String text, int line, int column, int endLine, int endColumn) {}
 
     private final Path file;
     private final List<T> tokens;
@@ -197,9 +197,15 @@ public final class UiParser {
             } while (match(",") && !at(")"));
         }
         require(")");
-        List<UiModel.Node> children = at("{") ? nodes() : List.of();
+        UiModel.Span childBlock = null;
+        List<UiModel.Node> children = List.of();
+        if (at("{")) {
+            T childStart = peek();
+            children = nodes();
+            childBlock = span(childStart);
+        }
         match(";");
-        return new UiModel.Call(name, arguments, children, span(start));
+        return new UiModel.Call(name, arguments, children, childBlock, span(start));
     }
 
     private UiModel.Expr expression() { return binary(1); }
@@ -312,7 +318,10 @@ public final class UiParser {
         if (!at(K.STRING)) fail("UI1008", "Expected string literal", peek());
         return take().text();
     }
-    private UiModel.Span span(T token) { return new UiModel.Span(file, token.line(), token.column()); }
+    private UiModel.Span span(T token) {
+        T end = position == 0 ? token : previous();
+        return new UiModel.Span(file, token.line(), token.column(), end.endLine(), end.endColumn());
+    }
     private T peek() { return tokens.get(position); }
     private T previous() { return tokens.get(position - 1); }
     private T take() { return tokens.get(position++); }
@@ -339,7 +348,7 @@ public final class UiParser {
                 int start = i, startColumn = column;
                 while (i < source.length() && source.charAt(i) != '\n') { i++; column++; }
                 String comment = source.substring(start, i).trim();
-                if (comment.equals("// @ui-root")) result.add(new T(K.ID, "@ui-root", line, startColumn));
+                if (comment.equals("// @ui-root")) result.add(new T(K.ID, "@ui-root", line, startColumn, line, column - 1));
                 continue;
             }
             if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '*') {
@@ -354,7 +363,7 @@ public final class UiParser {
                 int start = i++;
                 column++;
                 while (i < source.length() && (Character.isLetterOrDigit(source.charAt(i)) || source.charAt(i) == '_')) { i++; column++; }
-                result.add(new T(K.ID, source.substring(start, i), startLine, startColumn));
+                result.add(new T(K.ID, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
             }
             if (Character.isDigit(c)) {
@@ -363,7 +372,7 @@ public final class UiParser {
                 while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
                 K kind = K.INT;
                 if (i < source.length() && source.charAt(i) == '.') { kind = K.NUMBER; i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
-                result.add(new T(kind, source.substring(start, i), startLine, startColumn));
+                result.add(new T(kind, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
             }
             if (c == '"') {
@@ -377,18 +386,18 @@ public final class UiParser {
                     else value.append(d);
                 }
                 if (!closed) throw new UiDiagnostic("UI1012", "Unterminated string", Path.of("<source>"), startLine, startColumn);
-                result.add(new T(K.STRING, value.toString(), startLine, startColumn));
+                result.add(new T(K.STRING, value.toString(), startLine, startColumn, line, column - 1));
                 continue;
             }
             String two = i + 1 < source.length() ? source.substring(i, i + 2) : "";
             if (List.of("||", "&&", "===", "!==", "<=", ">=").contains(two) || (i + 2 < source.length() && List.of("===", "!==").contains(source.substring(i, i + 3)))) {
                 String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
-                result.add(new T(K.SYMBOL, op, startLine, startColumn)); i += op.length(); column += op.length(); continue;
+                result.add(new T(K.SYMBOL, op, startLine, startColumn, line, startColumn + op.length() - 1)); i += op.length(); column += op.length(); continue;
             }
-            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn)); i++; column++; continue; }
+            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
             throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
-        result.add(new T(K.EOF, "", line, column));
+        result.add(new T(K.EOF, "", line, column, line, column));
         return List.copyOf(result);
     }
 
