@@ -29,6 +29,11 @@ public final class CanonicalCompiler {
                         "atomic-change-sets"));
     }
 
+    public static deal.compiler.CompilerProtocol.AppInterfaceSnapshot extractAppInterface(String source) {
+        return DealCompilerWorkspace.inspect(
+                source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER).appInterface();
+    }
+
     public record Inspection(
             deal.compiler.CompilerProtocol.Inspection deal,
             UiCompilerWorkspace.UiInspection dealUi,
