@@ -48,6 +48,12 @@ public final class UiChecker {
 
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
                                          UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
+        return check(viewFile, viewModule, dealFile, deal, packs, false);
+    }
+
+    public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
+                                         UiModel.DealModule deal, Map<String, UiModel.PackModule> packs,
+                                         boolean allowUnreachableUpdates) {
         Map<String, String> aliases = aliases(viewModule.imports());
         UiModel.View root = null;
         Map<String, UiModel.View> views = new LinkedHashMap<>();
@@ -91,7 +97,7 @@ public final class UiChecker {
         }
         Set<String> completionActions = effectCompletion(actions(effects));
         completionActions.addAll(effectCompletion(actions(effectFailures)));
-        for (String action : updates.keySet()) if (!reachableActions.contains(action) && !completionActions.contains(action)) {
+        for (String action : updates.keySet()) if (!allowUnreachableUpdates && !reachableActions.contains(action) && !completionActions.contains(action)) {
             error("UI2006", "Update action '" + action + "' is unreachable", updates.get(action).span());
         }
         for (Map.Entry<String, UiModel.Handler> effect : effects.entrySet()) {

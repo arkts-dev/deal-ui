@@ -72,6 +72,7 @@ public final class UiFrameworkTest {
         expect("UI2031", source(root).replace("ui.IntText(value: state.count)", "ui.IntText(value: state.title)"));
         expect("UI2015", source(root).replace("key: item.id", "key: item"));
         expect("UI2005", source(root), deal(root).replace("// @ui-update\nexport function toggleDetails", "export function toggleDetails"));
+        previewReachabilityMode(root);
         borrowedHandlerContracts(root);
         typedChildrenContracts(root);
         compilePolicyOnlyCancellation(root, outputs, compiler);
@@ -404,6 +405,24 @@ public final class UiFrameworkTest {
             "function titleOf(item: Item): string { return item.title; }\n" +
             "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let title: string = titleOf(state.items[0]); return { title: title, count: state.count, expanded: true, items: state.items }; }");
         expectValid(root, source(root), readOnlyHelper, pack(root), "read-only helpers may consume borrowed values");
+    }
+
+    private static void previewReachabilityMode(Path root) throws Exception {
+        String reducedView = source(root).replace(
+            "      ui.Button(\n        text: \"Toggle details\",\n        accessibilityLabel: \"Toggle gallery details\",\n        onClick: action app.ToggleDetails {}\n      )\n",
+            "");
+        Path directory = Files.createTempDirectory(root.resolve("build"), "preview-");
+        Path viewFile = directory.resolve("gallery.dealui");
+        Path logicFile = directory.resolve("gallery.deal");
+        Path packFile = root.resolve("examples/museum/platform-ui.dealui-pack");
+        Files.writeString(viewFile, reducedView.replace("./gallery", logicFile.toString()).replace("./platform-ui.dealui-pack", packFile.toString()));
+        Files.writeString(logicFile, deal(root));
+        UiChecker checker = new UiChecker();
+        UiModel.ViewModule views = UiParser.parseViews(viewFile, Files.readString(viewFile));
+        UiModel.DealModule module = checker.parseDeal(logicFile, Files.readString(logicFile));
+        UiModel.PackModule parsedPack = UiParser.parsePack(packFile, Files.readString(packFile));
+        UiModel.CheckedProgram checked = checker.check(viewFile, views, logicFile, module, java.util.Map.of(packFile.toString(), parsedPack), true);
+        check(!checked.metadata().reachableInputActions().contains("ToggleDetails"), "preview mode reports compiler-owned reachable actions without rewriting DEAL");
     }
 
     private static void typedChildrenContracts(Path root) throws Exception {
