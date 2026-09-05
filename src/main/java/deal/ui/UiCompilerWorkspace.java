@@ -932,6 +932,14 @@ public final class UiCompilerWorkspace {
                     dealSource, dealFile.toString(), DealUiDealSource.ADAPTER);
             interfaceFingerprint = dealInspection.appInterface() == null
                     ? "" : dealInspection.appInterface().fingerprint();
+            UiModel.CheckedProgram structurallyChecked = checker.check(
+                    uiFile, views, dealFile, deal, Map.of(packSpecifier, pack), true);
+            requireHostCapabilities(
+                    dealInspection.appInterface().capabilities(),
+                    structurallyChecked.metadata().componentCapabilities(),
+                    pack,
+                    views.views().stream().filter(UiModel.View::root)
+                            .findFirst().orElse(views.views().get(0)).span());
             UiModel.CheckedProgram checked = checker.check(
                     uiFile, views, dealFile, deal, Map.of(packSpecifier, pack));
             UiInspection inspection = new UiInspection(
@@ -950,7 +958,7 @@ public final class UiCompilerWorkspace {
             if (owner != null) repairScopes.add(new RepairScope(
                     owner.kind().equals("view") ? REPLACE_VIEW_BODY : REPLACE_SUBTREE, owner.id()));
             else if (viewSnapshots.isEmpty()) repairScopes.add(new RepairScope(ADD_VIEW, documentId));
-            if (failure.code().equals("UI2006") && owner != null) {
+            if ((failure.code().equals("UI2006") || failure.code().equals("UI2051")) && owner != null) {
                 SemanticId ownerView = owner.ownerViewId();
                 targets.values().stream()
                         .filter(Target::hasChildrenBlock)
@@ -979,6 +987,38 @@ public final class UiCompilerWorkspace {
                     ALLOWED_OPERATIONS, List.of(diagnostic));
             return new Analysis(uiSource, inspection, documentId, targets, index);
         }
+    }
+
+    private static void requireHostCapabilities(
+            List<String> required,
+            Map<String, String> usedComponents,
+            UiModel.PackModule pack,
+            UiModel.Span span) {
+        Set<String> implemented = usedComponents.values().stream()
+                .filter(value -> value.startsWith("host."))
+                .map(value -> value.substring("host.".length()))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<String> missing = required.stream().filter(value -> !implemented.contains(value)).toList();
+        if (missing.isEmpty()) return;
+        List<String> matchingComponents = pack.components().values().stream()
+                .filter(component -> component.contracts().stream()
+                        .filter(UiModel.Capability.class::isInstance)
+                        .map(UiModel.Capability.class::cast)
+                        .map(UiModel.Capability::name)
+                        .anyMatch(value -> value.startsWith("host.")
+                                && missing.contains(value.substring("host.".length()))))
+                .map(UiModel.Component::name)
+                .sorted()
+                .toList();
+        throw new UiDiagnostic(
+                "UI2051",
+                "Declared host capabilities are not implemented by the view graph: "
+                        + String.join(", ", missing),
+                span.file(), span.line(), span.column(),
+                matchingComponents.isEmpty()
+                        ? "Use a component whose pack capability is host.<declared capability>"
+                        : "Add and bind one of these host components: " + String.join(", ", matchingComponents),
+                String.join(", ", missing));
     }
 
     private static RevisionRef revision(Analysis analysis) {

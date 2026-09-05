@@ -50,6 +50,7 @@ public final class UiCompilerWorkspaceTest {
         canonicalFacadeBlocksCrossArtifactMismatch();
         ancestorSubtreeCanRepairDescendantInterfaceErrors();
         canonicalDealChangeRequiresAnnotatedUpdateHandlers();
+        declaredHostCapabilityRequiresPackComponent();
         unreachableActionDiagnosticIsComplete();
         frameworkDiagnosticsUseCompilerOwnedRepairSlots();
         borrowedMutationDiagnosticOwnsHandlerSlot();
@@ -524,6 +525,46 @@ public final class UiCompilerWorkspaceTest {
                 "one reachability diagnostic must report every missing action binding: " + diagnostic);
         check(diagnostic.expected().contains("Bind every listed action"),
                 "reachability repair must publish an actionable compiler contract");
+    }
+
+    private static void declaredHostCapabilityRequiresPackComponent() {
+        String pack = """
+                pack version "host-v1";
+                export class ColumnProps {}
+                export class ClockProps { onTick: Action; }
+                export component Column(props: ColumnProps): View { children optional; }
+                export component FrameClock(props: ClockProps): View {
+                  event onTick(payload: int); capability "host.clock.frame";
+                }
+                """;
+        String deal = "// generated-capability: clock.frame\n" + DEAL;
+        String missing = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.Column() {}
+                }
+                """;
+        var diagnostic = UiCompilerWorkspace.inspect(deal, missing, pack, "./ui.pack")
+                .diagnostics().stream().filter(value -> value.code().equals("UI2051"))
+                .findFirst().orElseThrow();
+        check(diagnostic.expected().contains("FrameClock")
+                        && diagnostic.actual().equals("clock.frame"),
+                "missing host capability must name the implementing pack component: " + diagnostic);
+
+        String bound = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.Column() {
+                    ui.FrameClock(onTick: action app.IncrementAction {})
+                  }
+                }
+                """;
+        check(UiCompilerWorkspace.inspect(deal, bound, pack, "./ui.pack").diagnostics().isEmpty(),
+                "a declared host capability must pass when its pack component is bound");
     }
 
     private static void check(boolean condition, String message) {
