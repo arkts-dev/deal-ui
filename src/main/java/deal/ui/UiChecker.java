@@ -289,8 +289,14 @@ public final class UiChecker {
         UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
             case "&&", "||" -> { requireType(left, "boolean", binary.span()); requireType(right, "boolean", binary.span()); yield primitive("boolean"); }
-            case "===", "!==", "<", "<=", ">", ">=" -> { if (!sameName(left.name(), right.name())) error("UI2020", "Operands require matching types", binary.span()); yield primitive("boolean"); }
-            case "+", "-", "*", "/", "%" -> { if (!sameName(left.name(), right.name())) error("UI2020", "Operands require matching types", binary.span()); yield left; }
+            case "===", "!==", "<", "<=", ">", ">=" -> {
+                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+                yield primitive("boolean");
+            }
+            case "+", "-", "*", "/", "%" -> {
+                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+                yield left;
+            }
             default -> throw new IllegalStateException(binary.operator());
         };
     }
@@ -539,4 +545,12 @@ public final class UiChecker {
     }
 
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
+
+    private void typeMismatch(UiModel.Binary binary, UiModel.TypeRef left, UiModel.TypeRef right) {
+        throw new UiDiagnostic(
+                "UI2020",
+                "Operator '" + binary.operator() + "' requires matching operand types; Deal UI performs no implicit coercion",
+                binary.span().file(), binary.span().line(), binary.span().column(),
+                left.name(), right.name());
+    }
 }

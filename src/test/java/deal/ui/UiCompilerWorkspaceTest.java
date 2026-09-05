@@ -43,6 +43,7 @@ public final class UiCompilerWorkspaceTest {
         identitiesAreDeterministicAndCommentIndependent();
         subtreeRepairIsAtomicAndScoped();
         propertyEditPreservesSiblings();
+        typeMismatchPublishesExpectedAndActualTypes();
         absentDeclaredPropertyCanBeInserted();
         childInsertionUsesTheActualChildBlock();
         staleNodeCannotModifyNewRevision();
@@ -90,6 +91,26 @@ public final class UiCompilerWorkspaceTest {
         check(result.accepted(), "property edit must compile: " + result.diagnostics());
         check(result.source().contains("text: \"Increment\""), "property expression must change");
         check(result.source().contains("state.title"), "sibling state binding must remain");
+    }
+
+    private static void typeMismatchPublishesExpectedAndActualTypes() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var text = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Text"))
+                .findFirst().orElseThrow();
+        var result = UiCompilerWorkspace.apply(
+                DEAL, UI, PACK, "./ui.pack", inspection.sourceDigest(),
+                List.of(new UiCompilerWorkspace.ReplaceSubtree(
+                        text.id(), "ui.Text(value: \"Count \" + state.count)")));
+        var diagnostic = result.diagnostics().stream()
+                .filter(value -> value.code().equals("UI2020"))
+                .findFirst().orElseThrow();
+        check(diagnostic.expected().equals("string"),
+                "binary mismatch must publish the left operand type");
+        check(diagnostic.actual().equals("int"),
+                "binary mismatch must publish the right operand type");
+        check(diagnostic.message().contains("no implicit coercion"),
+                "binary mismatch must explain the Deal UI coercion invariant");
     }
 
     private static void absentDeclaredPropertyCanBeInserted() {
