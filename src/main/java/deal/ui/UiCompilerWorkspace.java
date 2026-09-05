@@ -2,12 +2,25 @@ package deal.ui;
 
 import deal.compiler.CompilerProtocol;
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
+import deal.compiler.CompilerProtocol.ChangeInspection;
+import deal.compiler.CompilerProtocol.DependencyCone;
+import deal.compiler.CompilerProtocol.DependencyEdge;
+import deal.compiler.CompilerProtocol.DependencyGroup;
+import deal.compiler.CompilerProtocol.DependencyMember;
+import deal.compiler.CompilerProtocol.NodeSnapshot;
 import deal.compiler.CompilerProtocol.OperationDescriptor;
 import deal.compiler.CompilerProtocol.RepairScope;
+import deal.compiler.CompilerProtocol.RepairSlot;
+import deal.compiler.CompilerProtocol.RepairSlotStatus;
+import deal.compiler.CompilerProtocol.RepairWorkspaceResult;
+import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
 import deal.compiler.CompilerProtocol.RevisionRef;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SourceRange;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
+import deal.compiler.CompilerProtocol.SlotPatch;
+import deal.compiler.CompilerProtocol.SemanticSlice;
+import deal.compiler.CompilerProtocolJson;
 import deal.compiler.DealCompilerWorkspace;
 
 import java.nio.file.Path;
@@ -147,6 +160,95 @@ public final class UiCompilerWorkspace {
     public record MoveNode(SemanticId targetId, SemanticId newParentId, int index) implements Operation {}
     public record SetProperty(SemanticId targetId, String property, String expression) implements Operation {}
 
+    public static ChangeInspection inspectChange(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            String baseDigest,
+            List<SemanticId> anchors,
+            List<String> requestedOperations) {
+        Analysis analysis = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        if (!analysis.inspection().sourceDigest().equals(baseDigest)) {
+            StructuredDiagnostic diagnostic = diagnostic(
+                    "CP1001", "Stale Deal UI source digest", analysis.documentId(), null,
+                    analysis.inspection().sourceDigest(), baseDigest, List.of(), "inspectCanonicalApp");
+            DependencyCone empty = new DependencyCone(DealCompilerWorkspace.digest("empty"), List.of(), List.of(), List.of());
+            return new ChangeInspection(revision(analysis), DealCompilerWorkspace.digest(baseDigest + "\u0000stale"),
+                    empty, List.of(), List.of(), List.of(diagnostic));
+        }
+        LinkedHashSet<SemanticId> selected = new LinkedHashSet<>(anchors);
+        if (selected.isEmpty()) selected.add(analysis.documentId());
+        LinkedHashMap<SemanticId, DependencyMember> members = new LinkedHashMap<>();
+        LinkedHashSet<DependencyEdge> edges = new LinkedHashSet<>();
+        LinkedHashMap<String, OperationDescriptor> operations = new LinkedHashMap<>();
+        List<SemanticSlice> slices = new ArrayList<>();
+        for (SemanticId anchor : selected) {
+            Target target = analysis.targets().get(anchor);
+            if (target == null) {
+                StructuredDiagnostic diagnostic = diagnostic(
+                        "CP2020", "Unknown Deal UI change anchor", anchor, null,
+                        "target issued for " + baseDigest, "missing", List.of(), "inspectCanonicalApp");
+                DependencyCone empty = new DependencyCone(DealCompilerWorkspace.digest("empty"),
+                        List.copyOf(selected), List.of(), List.of());
+                return new ChangeInspection(revision(analysis), DealCompilerWorkspace.digest(baseDigest + "\u0000unknown"),
+                        empty, List.of(), List.of(), List.of(diagnostic));
+            }
+            UiSemanticSlice uiSlice = target.kind().equals("document")
+                    ? queryDocument(dealSource, dealUiSource, packSource, packSpecifier)
+                    : target.kind().equals("view")
+                            ? queryView(dealSource, dealUiSource, packSource, packSpecifier, anchor)
+                            : queryNode(dealSource, dealUiSource, packSource, packSpecifier, anchor);
+            List<NodeSnapshot> nodes = new ArrayList<>();
+            if (uiSlice.node() != null) nodes.add(protocolNode(uiSlice.node()));
+            uiSlice.children().forEach(value -> nodes.add(protocolNode(value)));
+            List<SemanticId> dependencies = new ArrayList<>();
+            if (uiSlice.node() != null && uiSlice.node().parentId() != null) dependencies.add(uiSlice.node().parentId());
+            dependencies.addAll(uiSlice.children().stream().map(UiNodeSnapshot::id).toList());
+            SemanticSlice slice = new SemanticSlice(
+                    uiSlice.revision(), uiSlice.ownerId(), uiSlice.kind(), uiSlice.source(),
+                    List.of(), nodes, dependencies, uiSlice.allowedOperations());
+            slices.add(slice);
+            members.put(anchor, new DependencyMember(
+                    anchor, target.kind(), "EDIT_BODY", targetFingerprint(analysis, anchor)));
+            uiSlice.allowedOperations().stream()
+                    .filter(value -> requestedOperations.isEmpty() || requestedOperations.contains(value.operation()))
+                    .forEach(value -> operations.put(value.operation() + "\u0000" + value.targetId().value(), value));
+            if (uiSlice.node() != null) {
+                UiNodeSnapshot node = uiSlice.node();
+                if (node.parentId() != null) {
+                    addUiMember(analysis, members, node.parentId(), "SIGNATURE_ONLY");
+                    edges.add(new DependencyEdge(node.parentId(), node.id(), "PARENT_CHILD"));
+                }
+                for (SemanticId child : node.children()) {
+                    addUiMember(analysis, members, child, "IMPACT_ONLY");
+                    edges.add(new DependencyEdge(node.id(), child, "PARENT_CHILD"));
+                }
+                for (UiNodeSnapshot candidate : analysis.inspection().nodes()) {
+                    if (candidate.id().equals(node.id())) continue;
+                    if (!disjoint(node.statePaths(), candidate.statePaths())) {
+                        addUiMember(analysis, members, candidate.id(), "IMPACT_ONLY");
+                        edges.add(new DependencyEdge(node.id(), candidate.id(), "SHARES_STATE_PATH"));
+                    }
+                    if (!disjoint(node.actionBindings(), candidate.actionBindings())) {
+                        addUiMember(analysis, members, candidate.id(), "IMPACT_ONLY");
+                        edges.add(new DependencyEdge(node.id(), candidate.id(), "SHARES_ACTION_BINDING"));
+                    }
+                }
+            }
+        }
+        List<DependencyMember> memberList = List.copyOf(members.values());
+        List<DependencyEdge> edgeList = List.copyOf(edges);
+        String coneFingerprint = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(
+                List.of(List.copyOf(selected), memberList, edgeList)));
+        DependencyCone cone = new DependencyCone(
+                coneFingerprint, List.copyOf(selected), memberList, edgeList);
+        String inspectionDigest = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(
+                List.of(baseDigest, coneFingerprint, List.copyOf(operations.values()))));
+        return new ChangeInspection(revision(analysis), inspectionDigest, cone, slices,
+                List.copyOf(operations.values()), List.of());
+    }
+
     public static UiInspection inspect(
             String dealSource,
             String dealUiSource,
@@ -244,6 +346,78 @@ public final class UiCompilerWorkspace {
         return apply(
                 dealSource, dealUiSource, packSource, packSpecifier,
                 precondition.baseDigest(), operations);
+    }
+
+    public static RepairWorkspaceResult stageChange(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            ChangeSetPrecondition precondition,
+            ChangeInspection changeInspection,
+            List<? extends Operation> operations) {
+        UiChangeResult change = applyChecked(
+                dealSource, dealUiSource, packSource, packSpecifier, precondition, operations);
+        RepairWorkspaceSnapshot workspace = workspace(
+                dealSource, dealUiSource, packSource, packSpecifier, precondition,
+                changeInspection, operations, change, 0);
+        return new RepairWorkspaceResult(
+                change.accepted(), change.accepted() ? change.source() : dealUiSource,
+                change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
+                workspace, change, change.diagnostics());
+    }
+
+    public static RepairWorkspaceResult patchRepairWorkspace(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches) {
+        if (!DealCompilerWorkspace.digest(dealUiSource).equals(workspace.baseRevision().sourceDigest())) {
+            return rejectedWorkspace(dealUiSource, workspace, "CP2021", "Repair workspace base source is stale");
+        }
+        if (!uiWorkspaceDigest(workspace).equals(workspace.workspaceDigest())) {
+            return rejectedWorkspace(dealUiSource, workspace, "CP2022", "Repair workspace digest is invalid");
+        }
+        Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
+        for (SlotPatch patch : patches) {
+            if (bySlot.put(patch.slotId(), patch) != null) {
+                return rejectedWorkspace(dealUiSource, workspace, "CP2023", "Repair slot was patched more than once");
+            }
+        }
+        List<Operation> operations = new ArrayList<>();
+        for (RepairSlot slot : workspace.slots()) {
+            SlotPatch patch = bySlot.remove(slot.slotId());
+            if (patch != null && slot.status() != RepairSlotStatus.REJECTED) {
+                return rejectedWorkspace(dealUiSource, workspace, "CP2024", "Only rejected repair slots are writable");
+            }
+            Map<String, String> payload = new LinkedHashMap<>(slot.payload());
+            if (patch != null) {
+                if (!payload.keySet().equals(patch.payload().keySet())) {
+                    return rejectedWorkspace(dealUiSource, workspace, "CP2025", "Repair patch fields do not match the slot contract");
+                }
+                payload.putAll(patch.payload());
+            }
+            operations.add(operation(slot.operation(), slot.targetId(), payload));
+        }
+        if (!bySlot.isEmpty()) {
+            return rejectedWorkspace(dealUiSource, workspace, "CP2026", "Unknown repair slot " + bySlot.keySet().iterator().next());
+        }
+        ChangeInspection inspection = inspectChange(
+                dealSource, dealUiSource, packSource, packSpecifier,
+                workspace.baseRevision().sourceDigest(),
+                workspace.slots().stream().map(RepairSlot::targetId).distinct().toList(),
+                workspace.slots().stream().map(RepairSlot::operation).distinct().toList());
+        UiChangeResult change = applyChecked(
+                dealSource, dealUiSource, packSource, packSpecifier, workspace.precondition(), operations);
+        RepairWorkspaceSnapshot next = workspace(
+                dealSource, dealUiSource, packSource, packSpecifier, workspace.precondition(),
+                inspection, operations, change, workspace.repairRound() + 1);
+        return new RepairWorkspaceResult(
+                change.accepted(), change.accepted() ? change.source() : dealUiSource,
+                change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
+                next, change, change.diagnostics());
     }
 
     public static UiChangeResult apply(
@@ -407,6 +581,189 @@ public final class UiCompilerWorkspace {
                         .equals(componentCapabilities(checked.inspection())));
         return new UiChangeResult(
                 true, candidate, checked.inspection().sourceDigest(), checked.inspection(), impact, List.of());
+    }
+
+    private static NodeSnapshot protocolNode(UiNodeSnapshot value) {
+        return new NodeSnapshot(value.id(), value.ownerViewId(), value.kind(), value.range(), value.fingerprint());
+    }
+
+    private static void addUiMember(
+            Analysis analysis,
+            Map<SemanticId, DependencyMember> members,
+            SemanticId id,
+            String exposure) {
+        UiNodeSnapshot node = analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(id)).findFirst().orElse(null);
+        if (node == null) return;
+        DependencyMember current = members.get(id);
+        if (current != null && exposureRank(current.exposure()) >= exposureRank(exposure)) return;
+        members.put(id, new DependencyMember(id, node.kind(), exposure, node.fingerprint()));
+    }
+
+    private static int exposureRank(String value) {
+        return switch (value) {
+            case "EDIT_BODY" -> 3;
+            case "SIGNATURE_ONLY" -> 2;
+            default -> 1;
+        };
+    }
+
+    private static boolean disjoint(List<String> left, List<String> right) {
+        return left.stream().noneMatch(right::contains);
+    }
+
+    private static RepairWorkspaceSnapshot workspace(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            ChangeSetPrecondition precondition,
+            ChangeInspection inspection,
+            List<? extends Operation> operations,
+            UiChangeResult change,
+            int round) {
+        Analysis base = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        List<UiChangeResult> isolated = operations.stream().map(operation -> applyChecked(
+                dealSource, dealUiSource, packSource, packSpecifier,
+                precondition, List.of(operation))).toList();
+        List<Set<Integer>> adjacency = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) adjacency.add(new LinkedHashSet<>());
+        for (int left = 0; left < operations.size(); left++) {
+            for (int right = left + 1; right < operations.size(); right++) {
+                if (uiOperationsDependent(base, operations.get(left), operations.get(right))) {
+                    adjacency.get(left).add(right);
+                    adjacency.get(right).add(left);
+                }
+            }
+        }
+        int[] groupIndexes = connectedComponents(adjacency);
+        Set<Integer> rejected = new LinkedHashSet<>();
+        for (int index = 0; index < isolated.size(); index++) {
+            if (!isolated.get(index).accepted()) rejected.add(index);
+        }
+        if (rejected.isEmpty() && !change.accepted() && !operations.isEmpty()) rejected.add(0);
+        List<RepairSlot> slots = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) {
+            int slotIndex = index;
+            Operation operation = operations.get(index);
+            boolean direct = rejected.contains(index);
+            boolean blocked = !direct && rejected.stream()
+                    .anyMatch(other -> groupIndexes[other] == groupIndexes[slotIndex]);
+            RepairSlotStatus status = change.accepted()
+                    ? RepairSlotStatus.COMMIT_READY
+                    : direct ? RepairSlotStatus.REJECTED
+                    : blocked ? RepairSlotStatus.BLOCKED : RepairSlotStatus.SEALED;
+            Map<String, String> payload = payload(operation);
+            slots.add(new RepairSlot(
+                    "R" + (index + 1), operationName(operation), operation.targetId(),
+                    precondition.expectedTargetFingerprints().getOrDefault(operation.targetId().value(), ""),
+                    payload, DealCompilerWorkspace.digest(CompilerProtocolJson.encode(payload)), status,
+                    "G" + (groupIndexes[index] + 1),
+                    isolated.get(index).accepted() ? List.of() : isolated.get(index).diagnostics()));
+        }
+        List<DependencyGroup> groups = new ArrayList<>();
+        int groupCount = java.util.Arrays.stream(groupIndexes).max().orElse(-1) + 1;
+        for (int group = 0; group < groupCount; group++) {
+            String groupId = "G" + (group + 1);
+            List<RepairSlot> members = slots.stream()
+                    .filter(value -> value.dependencyGroupId().equals(groupId)).toList();
+            String status = members.stream().anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)
+                    ? "REPAIR_REQUIRED"
+                    : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
+                            ? "COMMIT_READY" : "SEALED";
+            groups.add(new DependencyGroup(groupId, members.stream().map(RepairSlot::slotId).toList(), List.of(), status));
+        }
+        String workspaceId = DealCompilerWorkspace.digest(precondition.baseDigest() + "\u0000"
+                + inspection.inspectionDigest() + "\u0000"
+                + CompilerProtocolJson.encode(operations.stream().map(UiCompilerWorkspace::payload).toList()));
+        RepairWorkspaceSnapshot draft = new RepairWorkspaceSnapshot(
+                workspaceId, "", new RevisionRef(CompilerProtocol.VERSION, DealCompilerWorkspace.digest(dealUiSource)),
+                inspection.inspectionDigest(), precondition, slots, groups, round);
+        return new RepairWorkspaceSnapshot(
+                workspaceId, uiWorkspaceDigest(draft), draft.baseRevision(), draft.inspectionDigest(),
+                draft.precondition(), draft.slots(), draft.groups(), draft.repairRound());
+    }
+
+    private static int[] connectedComponents(List<Set<Integer>> adjacency) {
+        int[] groups = new int[adjacency.size()];
+        java.util.Arrays.fill(groups, -1);
+        int group = 0;
+        for (int start = 0; start < adjacency.size(); start++) {
+            if (groups[start] >= 0) continue;
+            java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>();
+            pending.add(start);
+            groups[start] = group;
+            while (!pending.isEmpty()) {
+                int current = pending.removeFirst();
+                for (int next : adjacency.get(current)) {
+                    if (groups[next] >= 0) continue;
+                    groups[next] = group;
+                    pending.add(next);
+                }
+            }
+            group++;
+        }
+        return groups;
+    }
+
+    private static boolean uiOperationsDependent(Analysis analysis, Operation left, Operation right) {
+        if (left.targetId().equals(right.targetId())) return true;
+        UiNodeSnapshot leftNode = analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(left.targetId())).findFirst().orElse(null);
+        UiNodeSnapshot rightNode = analysis.inspection().nodes().stream()
+                .filter(value -> value.id().equals(right.targetId())).findFirst().orElse(null);
+        if (leftNode == null || rightNode == null) return false;
+        if (Objects.equals(leftNode.parentId(), rightNode.id()) || Objects.equals(rightNode.parentId(), leftNode.id())) {
+            return true;
+        }
+        return !disjoint(leftNode.statePaths(), rightNode.statePaths())
+                || !disjoint(leftNode.actionBindings(), rightNode.actionBindings());
+    }
+
+    private static Map<String, String> payload(Operation operation) {
+        return switch (operation) {
+            case AddView value -> Map.of("source", value.source());
+            case RemoveView ignored -> Map.of();
+            case ReplaceViewBody value -> Map.of("body", value.body());
+            case ReplaceSubtree value -> Map.of("source", value.source());
+            case InsertChild value -> Map.of("index", Integer.toString(value.index()), "source", value.source());
+            case RemoveNode ignored -> Map.of();
+            case MoveNode value -> Map.of(
+                    "newParentId", value.newParentId().value(), "index", Integer.toString(value.index()));
+            case SetProperty value -> Map.of("property", value.property(), "expression", value.expression());
+        };
+    }
+
+    private static Operation operation(String name, SemanticId target, Map<String, String> payload) {
+        return switch (name) {
+            case ADD_VIEW -> new AddView(target, payload.get("source"));
+            case REMOVE_VIEW -> new RemoveView(target);
+            case REPLACE_VIEW_BODY -> new ReplaceViewBody(target, payload.get("body"));
+            case REPLACE_SUBTREE -> new ReplaceSubtree(target, payload.get("source"));
+            case INSERT_CHILD -> new InsertChild(target, Integer.parseInt(payload.get("index")), payload.get("source"));
+            case REMOVE_NODE -> new RemoveNode(target);
+            case MOVE_NODE -> new MoveNode(target, new SemanticId(payload.get("newParentId")),
+                    Integer.parseInt(payload.get("index")));
+            case SET_PROPERTY -> new SetProperty(target, payload.get("property"), payload.get("expression"));
+            default -> throw new IllegalArgumentException("Unknown Deal UI repair operation " + name);
+        };
+    }
+
+    private static String uiWorkspaceDigest(RepairWorkspaceSnapshot workspace) {
+        return DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
+                workspace.workspaceId(), workspace.baseRevision(), workspace.inspectionDigest(),
+                workspace.precondition(), workspace.slots(), workspace.groups(), workspace.repairRound())));
+    }
+
+    private static RepairWorkspaceResult rejectedWorkspace(
+            String source, RepairWorkspaceSnapshot workspace, String code, String message) {
+        SemanticId owner = workspace.slots().isEmpty()
+                ? new SemanticId("dealui:document:app.dealui") : workspace.slots().get(0).targetId();
+        StructuredDiagnostic diagnostic = new StructuredDiagnostic(
+                code, "error", message, null, owner, "valid repair workspace",
+                "invalid repair request", List.of(), List.of(), "inspectChange");
+        return new RepairWorkspaceResult(false, source, DealCompilerWorkspace.digest(source),
+                workspace, null, List.of(diagnostic));
     }
 
     private static Analysis analyze(String dealSource, String uiSource, String packSource, String packSpecifier) {

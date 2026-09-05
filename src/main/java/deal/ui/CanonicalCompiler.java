@@ -1,9 +1,13 @@
 package deal.ui;
 
 import deal.compiler.CompilerProtocol.ChangeResult;
+import deal.compiler.CompilerProtocol.ChangeInspection;
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ProtocolHandshake;
 import deal.compiler.CompilerProtocol.RepairScope;
+import deal.compiler.CompilerProtocol.RepairWorkspaceResult;
+import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
+import deal.compiler.CompilerProtocol.SlotPatch;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SemanticSlice;
 import deal.compiler.CompilerProtocol.SourceRange;
@@ -236,6 +240,35 @@ public final class CanonicalCompiler {
                 source, "/generated/app.deal", baseDigest, operations, DealUiDealSource.ADAPTER);
     }
 
+    public static ChangeInspection inspectDealChange(
+            String source,
+            String baseDigest,
+            List<SemanticId> anchors,
+            List<String> requestedOperations) {
+        return DealCompilerWorkspace.inspectChange(
+                source, "/generated/app.deal", baseDigest, anchors, requestedOperations,
+                rejectingResolver(), DealUiDealSource.ADAPTER);
+    }
+
+    public static RepairWorkspaceResult stageDealChange(
+            String source,
+            ChangeSetPrecondition precondition,
+            ChangeInspection inspection,
+            List<? extends DealCompilerWorkspace.Operation> operations) {
+        return DealCompilerWorkspace.stageChange(
+                source, "/generated/app.deal", precondition, inspection, operations,
+                rejectingResolver(), DealUiDealSource.ADAPTER);
+    }
+
+    public static RepairWorkspaceResult patchDealRepairWorkspace(
+            String source,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches) {
+        return DealCompilerWorkspace.patchRepairWorkspace(
+                source, "/generated/app.deal", workspace, patches,
+                rejectingResolver(), DealUiDealSource.ADAPTER);
+    }
+
     public static SemanticSlice queryDealSymbol(
             String source,
             SemanticId symbolId) {
@@ -386,6 +419,43 @@ public final class CanonicalCompiler {
             List<? extends UiCompilerWorkspace.Operation> operations) {
         return UiCompilerWorkspace.apply(
                 dealSource, source, packSource, packSpecifier, baseDigest, operations);
+    }
+
+    public static ChangeInspection inspectDealUiChange(
+            String dealSource,
+            String source,
+            String packSource,
+            String packSpecifier,
+            String baseDigest,
+            List<SemanticId> anchors,
+            List<String> requestedOperations) {
+        return UiCompilerWorkspace.inspectChange(
+                dealSource, source, packSource, packSpecifier,
+                baseDigest, anchors, requestedOperations);
+    }
+
+    public static RepairWorkspaceResult stageDealUiChange(
+            String dealSource,
+            String source,
+            String packSource,
+            String packSpecifier,
+            ChangeSetPrecondition precondition,
+            ChangeInspection inspection,
+            List<? extends UiCompilerWorkspace.Operation> operations) {
+        return UiCompilerWorkspace.stageChange(
+                dealSource, source, packSource, packSpecifier,
+                precondition, inspection, operations);
+    }
+
+    public static RepairWorkspaceResult patchDealUiRepairWorkspace(
+            String dealSource,
+            String source,
+            String packSource,
+            String packSpecifier,
+            RepairWorkspaceSnapshot workspace,
+            List<SlotPatch> patches) {
+        return UiCompilerWorkspace.patchRepairWorkspace(
+                dealSource, source, packSource, packSpecifier, workspace, patches);
     }
 
     public static UiCompilerWorkspace.UiSemanticSlice queryDealUiView(

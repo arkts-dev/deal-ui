@@ -52,7 +52,67 @@ public final class UiCompilerWorkspaceTest {
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
         documentQueryAddsAndRemovesViewsAtomically();
+        inspectChangeBuildsUiDependencyCone();
+        repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void inspectChangeBuildsUiDependencyCone() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var text = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
+        var change = UiCompilerWorkspace.inspectChange(
+                DEAL, UI, PACK, "./ui.pack", inspection.sourceDigest(), List.of(text.id()),
+                List.of(UiCompilerWorkspace.REPLACE_SUBTREE));
+        check(change.diagnostics().isEmpty(), "current UI node must be inspectable");
+        check(change.dependencyCone().members().stream().anyMatch(value ->
+                        value.id().equals(text.id()) && value.exposure().equals("EDIT_BODY")),
+                "selected UI node must be editable");
+        check(change.dependencyCone().edges().stream().anyMatch(value ->
+                        value.to().equals(text.id()) && value.kind().equals("PARENT_CHILD")),
+                "UI cone must be owned by compiler parent/child identities");
+    }
+
+    private static void repairWorkspacePatchesOnlyRejectedUiSlot() {
+        var inspection = UiCompilerWorkspace.inspect(DEAL, UI, PACK, "./ui.pack");
+        var text = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
+        var button = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Button")).findFirst().orElseThrow();
+        var textDescriptor = UiCompilerWorkspace.queryNode(DEAL, UI, PACK, "./ui.pack", text.id())
+                .allowedOperations().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_SUBTREE))
+                .findFirst().orElseThrow();
+        var buttonDescriptor = UiCompilerWorkspace.queryNode(DEAL, UI, PACK, "./ui.pack", button.id())
+                .allowedOperations().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.SET_PROPERTY))
+                .findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(
+                        text.id().value(), textDescriptor.targetFingerprint(),
+                        button.id().value(), buttonDescriptor.targetFingerprint()));
+        var changeInspection = UiCompilerWorkspace.inspectChange(
+                DEAL, UI, PACK, "./ui.pack", inspection.sourceDigest(), List.of(text.id(), button.id()),
+                List.of(UiCompilerWorkspace.REPLACE_SUBTREE, UiCompilerWorkspace.SET_PROPERTY));
+        var staged = UiCompilerWorkspace.stageChange(
+                DEAL, UI, PACK, "./ui.pack", precondition, changeInspection, List.of(
+                        new UiCompilerWorkspace.ReplaceSubtree(text.id(), "ui.Unknown(value: state.title)"),
+                        new UiCompilerWorkspace.SetProperty(button.id(), "text", "\"Preserved\"")));
+        check(!staged.accepted(), "invalid UI subtree must keep the candidate staged");
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .findFirst().orElseThrow();
+        check(staged.workspace().slots().stream().anyMatch(value ->
+                        value.status() == CompilerProtocol.RepairSlotStatus.SEALED
+                                && value.payload().containsValue("\"Preserved\"")),
+                "independent valid UI payload must be sealed");
+        var repaired = UiCompilerWorkspace.patchRepairWorkspace(
+                DEAL, UI, PACK, "./ui.pack", staged.workspace(), List.of(
+                        new CompilerProtocol.SlotPatch(rejected.slotId(),
+                                Map.of("source", "ui.Text(value: \"Repaired\")"))));
+        check(repaired.accepted(), "narrow UI slot patch must commit: " + repaired.diagnostics());
+        check(repaired.source().contains("Repaired") && repaired.source().contains("Preserved"),
+                "repaired and sealed UI payloads must both reach canonical source");
     }
 
     private static void identitiesAreDeterministicAndCommentIndependent() {
