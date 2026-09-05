@@ -182,6 +182,16 @@ public final class UiCompilerWorkspaceTest {
         check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
                 "missing update annotation must have a stable diagnostic");
 
+        List<deal.compiler.DealCompilerWorkspace.Operation> orphanAction = List.of(
+                missingDirective.get(0), missingDirective.get(1), missingDirective.get(2));
+        var orphanRejected = CanonicalCompiler.applyDealChangeChecked(
+                bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), orphanAction);
+        check(!orphanRejected.accepted(), "an exported nominal action without a handler must reject");
+        check(orphanRejected.source().equals(bootstrap), "an orphan action must roll back the whole ChangeSet");
+        check(orphanRejected.diagnostics().stream().anyMatch(value ->
+                        value.code().equals("UI2050") && value.message().contains("IncrementAction")),
+                "the orphan action diagnostic must identify the missing handler");
+
         List<deal.compiler.DealCompilerWorkspace.Operation> misplacedDirective = List.of(
                 missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
                 new deal.compiler.DealCompilerWorkspace.AddDeclaration(

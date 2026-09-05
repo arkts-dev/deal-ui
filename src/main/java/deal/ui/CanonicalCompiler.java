@@ -12,7 +12,9 @@ import deal.compiler.DealCompilerWorkspace;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Stateless cross-artifact facade over the DEAL and Deal UI transpilers. */
 public final class CanonicalCompiler {
@@ -295,20 +297,29 @@ public final class CanonicalCompiler {
                     failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
                     List.of(), transactionScopes, "query_deal_module"));
         }
-        if (inspection.appInterface() == null || inspection.appInterface().actions().isEmpty()) {
+        if (inspection.appInterface() == null) {
             return List.of();
         }
+        Set<String> requiredActions = new LinkedHashSet<>();
+        inspection.appInterface().actions().stream()
+                .map(deal.compiler.CompilerProtocol.TypeSnapshot::name)
+                .forEach(requiredActions::add);
+        module.classes().values().stream()
+                .filter(UiModel.DealClass::exported)
+                .map(UiModel.DealClass::name)
+                .filter(name -> name.endsWith("Action"))
+                .forEach(requiredActions::add);
         List<StructuredDiagnostic> diagnostics = new ArrayList<>();
-        for (var action : inspection.appInterface().actions()) {
+        for (String actionName : requiredActions) {
             List<UiModel.Handler> updates = module.handlers().stream()
                     .filter(handler -> handler.kind().equals("ui-update"))
-                    .filter(handler -> handler.actionType().equals(action.name()))
+                    .filter(handler -> handler.actionType().equals(actionName))
                     .toList();
             if (updates.size() == 1) continue;
             UiModel.DealFunction candidate = module.functions().values().stream()
                     .filter(function -> function.parameters().size() == 2)
                     .filter(function -> function.parameters().get(0).name().equals(inspection.appInterface().rootState()))
-                    .filter(function -> function.parameters().get(1).name().equals(action.name()))
+                    .filter(function -> function.parameters().get(1).name().equals(actionName))
                     .filter(function -> function.returnType().name().equals(inspection.appInterface().rootState()))
                     .findFirst().orElse(null);
             SemanticId owner = candidate == null
@@ -330,16 +341,20 @@ public final class CanonicalCompiler {
                     .findFirst().orElse(null);
             boolean markerInsideFunction = markerInsideRange(source, functionBodyRange, "// @ui-update");
             String message = markerInsideFunction
-                    ? "Action '" + action.name() + "' has // @ui-update inside function '"
+                    ? "Action '" + actionName + "' has // @ui-update inside function '"
                             + candidate.name() + "'; move it immediately before export function"
-                    : "Action '" + action.name() + "' requires exactly one // @ui-update handler";
+                    : "Action '" + actionName + "' requires exactly one // @ui-update handler";
+            List<SemanticId> related = inspection.symbols().stream()
+                    .filter(symbol -> symbol.name().equals(actionName))
+                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                    .findFirst().map(List::of).orElseGet(List::of);
             diagnostics.add(new StructuredDiagnostic(
                     "UI2050", "error", message,
                     range, owner,
                     "// @ui-update immediately before export function "
                             + (candidate == null ? "handler" : candidate.name()),
                     markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
-                    List.of(action.id()), transactionScopes, "query_deal_module"));
+                    related, transactionScopes, "query_deal_module"));
         }
         return List.copyOf(diagnostics);
     }
