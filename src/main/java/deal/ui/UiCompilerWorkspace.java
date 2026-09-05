@@ -5,6 +5,7 @@ import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ChangeInspection;
 import deal.compiler.CompilerProtocol.AppInterfaceSnapshot;
 import deal.compiler.CompilerProtocol.FieldSnapshot;
+import deal.compiler.CompilerProtocol.TypeSnapshot;
 import deal.compiler.CompilerProtocol.DependencyCone;
 import deal.compiler.CompilerProtocol.DependencyEdge;
 import deal.compiler.CompilerProtocol.DependencyGroup;
@@ -146,6 +147,41 @@ public final class UiCompilerWorkspace {
             Objects.requireNonNull(source, "source");
             children = List.copyOf(children);
             allowedOperations = List.copyOf(allowedOperations);
+        }
+    }
+
+    /** Compiler-owned context for one local visual refinement. */
+    public record UiComponentContract(
+            String name,
+            List<FieldSnapshot> properties,
+            String children,
+            String parent,
+            List<String> events,
+            List<String> capabilities) {
+        public UiComponentContract {
+            properties = List.copyOf(properties);
+            events = List.copyOf(events);
+            capabilities = List.copyOf(capabilities);
+        }
+    }
+
+    public record UiEditSurface(
+            RevisionRef revision,
+            SemanticId targetId,
+            String source,
+            UiNodeSnapshot node,
+            UiNodeSnapshot parent,
+            List<UiNodeSnapshot> children,
+            List<String> statePaths,
+            List<TypeSnapshot> compatibleActions,
+            String appThemeSource,
+            List<UiComponentContract> componentContracts,
+            OperationDescriptor allowedOperation) {
+        public UiEditSurface {
+            children = List.copyOf(children);
+            statePaths = List.copyOf(statePaths);
+            compatibleActions = List.copyOf(compatibleActions);
+            componentContracts = List.copyOf(componentContracts);
         }
     }
 
@@ -321,6 +357,100 @@ public final class UiCompilerWorkspace {
                 null, node,
                 childSnapshots(analysis, target.children()),
                 operations);
+    }
+
+    public static UiEditSurface queryEditSurface(
+            String dealSource,
+            String dealUiSource,
+            String packSource,
+            String packSpecifier,
+            SemanticId nodeId) {
+        Analysis analysis = analyze(dealSource, dealUiSource, packSource, packSpecifier);
+        Target target = requireTarget(analysis, nodeId, null);
+        if (target.kind().equals("view") || target.kind().equals("document")) {
+            throw new IllegalArgumentException("Deal UI edit surface requires a node target");
+        }
+        UiNodeSnapshot node = nodeSnapshot(analysis, nodeId);
+        UiNodeSnapshot parent = node.parentId() == null ? null : nodeSnapshotOrNull(analysis, node.parentId());
+        List<UiNodeSnapshot> directChildren = childSnapshots(analysis, node.children());
+
+        LinkedHashSet<SemanticId> subtreeIds = new LinkedHashSet<>();
+        collectSubtreeIds(analysis, node.id(), subtreeIds);
+        LinkedHashSet<String> statePaths = new LinkedHashSet<>();
+        LinkedHashSet<String> componentNames = new LinkedHashSet<>();
+        if (parent != null) componentNames.add(parent.component());
+        analysis.inspection().nodes().stream()
+                .filter(value -> subtreeIds.contains(value.id()))
+                .forEach(value -> {
+                    statePaths.addAll(value.statePaths());
+                    componentNames.add(value.component());
+                });
+
+        String themeSource = analysis.inspection().nodes().stream()
+                .filter(value -> simpleName(value.component()).equals("AppTheme"))
+                .findFirst()
+                .map(value -> {
+                    Target theme = analysis.targets().get(value.id());
+                    return theme == null || theme.argumentEnd() < theme.start()
+                            ? ""
+                            : analysis.source().substring(theme.start(), theme.argumentEnd() + 1);
+                })
+                .orElse("");
+        UiModel.PackModule packModule = UiParser.parsePack(
+                Path.of("/generated/platform-ui.dealui-pack"), packSource);
+        var dealInspection = DealCompilerWorkspace.inspect(
+                dealSource, "/generated/app.deal", DealUiDealSource.ADAPTER);
+        List<UiComponentContract> contracts = componentNames.stream()
+                .map(UiCompilerWorkspace::simpleName)
+                .distinct()
+                .map(packModule.components()::get)
+                .filter(Objects::nonNull)
+                .map(component -> componentContract(component, packModule))
+                .toList();
+        OperationDescriptor replacement = descriptor(
+                analysis, target, REPLACE_SUBTREE, List.of("source"));
+        return new UiEditSurface(
+                revision(analysis), node.id(), analysis.source().substring(target.start(), target.end()),
+                node, parent, directChildren, List.copyOf(statePaths),
+                dealInspection.appInterface().actions(), themeSource, contracts, replacement);
+    }
+
+    private static void collectSubtreeIds(
+            Analysis analysis,
+            SemanticId nodeId,
+            Set<SemanticId> result) {
+        if (!result.add(nodeId)) return;
+        UiNodeSnapshot node = nodeSnapshotOrNull(analysis, nodeId);
+        if (node != null) node.children().forEach(child -> collectSubtreeIds(analysis, child, result));
+    }
+
+    private static UiComponentContract componentContract(
+            UiModel.Component component,
+            UiModel.PackModule pack) {
+        UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
+        List<FieldSnapshot> properties = props == null ? List.of() : props.fields().stream()
+                .map(field -> new FieldSnapshot(
+                        field.name(), field.type().name(), field.type().optional(), field.type().array()))
+                .toList();
+        String children = "none";
+        String parent = "any";
+        List<String> events = new ArrayList<>();
+        List<String> capabilities = new ArrayList<>();
+        for (UiModel.Contract contract : component.contracts()) {
+            if (contract instanceof UiModel.Children value) {
+                children = (value.required() ? "required" : "optional")
+                        + (value.componentType() == null ? "" : ":" + value.componentType());
+            } else if (contract instanceof UiModel.Parent value) {
+                parent = value.componentType();
+            } else if (contract instanceof UiModel.Event value) {
+                events.add(value.prop() + "(payload:"
+                        + (value.payload() == null ? "none" : typeText(value.payload())) + ")");
+            } else if (contract instanceof UiModel.Capability value) {
+                capabilities.add(value.name());
+            }
+        }
+        return new UiComponentContract(
+                component.name(), properties, children, parent, events, capabilities);
     }
 
     public static UiChangeResult applyChecked(

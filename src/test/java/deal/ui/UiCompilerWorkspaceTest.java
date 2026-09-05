@@ -58,8 +58,57 @@ public final class UiCompilerWorkspaceTest {
         checkedUiChangesRequireQueriedFingerprint();
         documentQueryAddsAndRemovesViewsAtomically();
         inspectChangeBuildsUiDependencyCone();
+        editSurfaceContainsOnlyCompilerOwnedVisualContext();
         repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void editSurfaceContainsOnlyCompilerOwnedVisualContext() {
+        String pack = """
+                pack version "edit-v1";
+                export class ThemeProps { primary: string; }
+                export class ColumnProps {}
+                export class TextProps { value: string; }
+                export class ButtonProps { text: string; onClick?: Action; }
+                export component AppTheme(props: ThemeProps): View { children required; }
+                export component Column(props: ColumnProps): View { children optional; }
+                export component Text(props: TextProps): View;
+                export component Button(props: ButtonProps): View { event onClick; }
+                """;
+        String ui = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.AppTheme(primary: "#336699") {
+                    ui.Column() {
+                      ui.Text(value: state.title)
+                      ui.Button(text: "Add", onClick: action app.IncrementAction {})
+                    }
+                  }
+                }
+                """;
+        var inspection = UiCompilerWorkspace.inspect(DEAL, ui, pack, "./ui.pack");
+        var text = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
+        var surface = UiCompilerWorkspace.queryEditSurface(
+                DEAL, ui, pack, "./ui.pack", text.id());
+        check(surface.source().equals("ui.Text(value: state.title)"),
+                "edit surface must contain only the selected subtree source: " + surface.source());
+        check(surface.parent() != null && surface.parent().component().equals("ui.Column"),
+                "edit surface must include the immediate parent contract anchor");
+        check(surface.statePaths().equals(List.of("state.title")),
+                "edit surface must include recursive state dependencies only");
+        check(surface.compatibleActions().stream().anyMatch(value -> value.name().equals("IncrementAction")),
+                "edit surface must include compiler-extracted compatible actions");
+        check(surface.appThemeSource().contains("#336699") && !surface.appThemeSource().contains("ui.Text"),
+                "edit surface must include the theme without leaking the full view");
+        check(surface.componentContracts().stream().map(UiCompilerWorkspace.UiComponentContract::name)
+                        .collect(java.util.stream.Collectors.toSet()).equals(java.util.Set.of("Column", "Text")),
+                "edit surface must include only target and parent component contracts");
+        check(surface.allowedOperation().operation().equals(UiCompilerWorkspace.REPLACE_SUBTREE)
+                        && surface.allowedOperation().targetId().equals(text.id()),
+                "edit surface must grant only replacement of the selected subtree");
     }
 
     private static void inspectChangeBuildsUiDependencyCone() {

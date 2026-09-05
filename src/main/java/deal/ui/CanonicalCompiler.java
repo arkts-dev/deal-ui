@@ -534,6 +534,16 @@ public final class CanonicalCompiler {
                 dealSource, source, packSource, packSpecifier, nodeId);
     }
 
+    public static UiCompilerWorkspace.UiEditSurface queryDealUiEditSurface(
+            String dealSource,
+            String source,
+            String packSource,
+            String packSpecifier,
+            SemanticId nodeId) {
+        return UiCompilerWorkspace.queryEditSurface(
+                dealSource, source, packSource, packSpecifier, nodeId);
+    }
+
     public static UiCompilerWorkspace.UiChangeResult applyDealUiChangeChecked(
             String dealSource,
             String source,
