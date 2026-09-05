@@ -549,9 +549,10 @@ public final class UiCompilerWorkspaceTest {
         var diagnostic = UiCompilerWorkspace.inspect(deal, missing, pack, "./ui.pack")
                 .diagnostics().stream().filter(value -> value.code().equals("UI2051"))
                 .findFirst().orElseThrow();
-        check(diagnostic.expected().contains("FrameClock")
+        check(diagnostic.expected().contains(
+                        "ui.FrameClock(onTick: action app.IncrementAction {})")
                         && diagnostic.actual().equals("clock.frame"),
-                "missing host capability must name the implementing pack component: " + diagnostic);
+                "missing host capability must publish an exact compatible binding: " + diagnostic);
 
         String bound = """
                 import * as app from "./app.deal";

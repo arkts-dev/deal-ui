@@ -3,6 +3,8 @@ package deal.ui;
 import deal.compiler.CompilerProtocol;
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ChangeInspection;
+import deal.compiler.CompilerProtocol.AppInterfaceSnapshot;
+import deal.compiler.CompilerProtocol.FieldSnapshot;
 import deal.compiler.CompilerProtocol.DependencyCone;
 import deal.compiler.CompilerProtocol.DependencyEdge;
 import deal.compiler.CompilerProtocol.DependencyGroup;
@@ -935,7 +937,7 @@ public final class UiCompilerWorkspace {
             UiModel.CheckedProgram structurallyChecked = checker.check(
                     uiFile, views, dealFile, deal, Map.of(packSpecifier, pack), true);
             requireHostCapabilities(
-                    dealInspection.appInterface().capabilities(),
+                    dealInspection.appInterface(),
                     structurallyChecked.metadata().componentCapabilities(),
                     pack,
                     views.views().stream().filter(UiModel.View::root)
@@ -990,25 +992,25 @@ public final class UiCompilerWorkspace {
     }
 
     private static void requireHostCapabilities(
-            List<String> required,
+            AppInterfaceSnapshot appInterface,
             Map<String, String> usedComponents,
             UiModel.PackModule pack,
             UiModel.Span span) {
+        List<String> required = appInterface.capabilities();
         Set<String> implemented = usedComponents.values().stream()
                 .filter(value -> value.startsWith("host."))
                 .map(value -> value.substring("host.".length()))
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         List<String> missing = required.stream().filter(value -> !implemented.contains(value)).toList();
         if (missing.isEmpty()) return;
-        List<String> matchingComponents = pack.components().values().stream()
+        List<UiModel.Component> matchingComponents = pack.components().values().stream()
                 .filter(component -> component.contracts().stream()
                         .filter(UiModel.Capability.class::isInstance)
                         .map(UiModel.Capability.class::cast)
                         .map(UiModel.Capability::name)
                         .anyMatch(value -> value.startsWith("host.")
                                 && missing.contains(value.substring("host.".length()))))
-                .map(UiModel.Component::name)
-                .sorted()
+                .sorted(Comparator.comparing(UiModel.Component::name))
                 .toList();
         throw new UiDiagnostic(
                 "UI2051",
@@ -1017,8 +1019,57 @@ public final class UiCompilerWorkspace {
                 span.file(), span.line(), span.column(),
                 matchingComponents.isEmpty()
                         ? "Use a component whose pack capability is host.<declared capability>"
-                        : "Add and bind one of these host components: " + String.join(", ", matchingComponents),
+                        : "Add and bind one of these host components: "
+                                + matchingComponents.stream()
+                                .map(component -> hostComponentRepairContract(component, appInterface))
+                                .reduce((left, right) -> left + "; " + right).orElse(""),
                 String.join(", ", missing));
+    }
+
+    private static String hostComponentRepairContract(
+            UiModel.Component component,
+            AppInterfaceSnapshot appInterface) {
+        List<UiModel.Event> events = component.contracts().stream()
+                .filter(UiModel.Event.class::isInstance)
+                .map(UiModel.Event.class::cast)
+                .toList();
+        if (events.isEmpty()) return "ui." + component.name() + "()";
+        return "ui." + component.name() + "("
+                + events.stream().map(event -> eventRepairContract(event, appInterface))
+                .reduce((left, right) -> left + ", " + right).orElse("")
+                + ")";
+    }
+
+    private static String eventRepairContract(
+            UiModel.Event event,
+            AppInterfaceSnapshot appInterface) {
+        String payloadType = event.payload() == null ? null : typeText(event.payload());
+        List<String> bindings = appInterface.actions().stream()
+                .map(action -> compatibleActionBinding(action.name(), action.fields(), payloadType))
+                .filter(Objects::nonNull)
+                .toList();
+        String expected = event.prop() + " event"
+                + (payloadType == null ? "" : " payload:" + payloadType);
+        if (bindings.isEmpty()) return expected + " (no compatible app action; update DEAL first)";
+        return event.prop() + ": " + String.join(" | ", bindings);
+    }
+
+    private static String compatibleActionBinding(
+            String actionName,
+            List<FieldSnapshot> fields,
+            String payloadType) {
+        if (payloadType == null) {
+            return fields.isEmpty() ? "action app." + actionName + " {}" : null;
+        }
+        if (fields.isEmpty()) return "action app." + actionName + " {}";
+        if (fields.size() != 1) return null;
+        FieldSnapshot field = fields.get(0);
+        if (field.array() || field.optional() || !field.type().equals(payloadType)) return null;
+        return "action app." + actionName + " { " + field.name() + ": payload }";
+    }
+
+    private static String typeText(UiModel.TypeRef type) {
+        return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? "?" : "");
     }
 
     private static RevisionRef revision(Analysis analysis) {
