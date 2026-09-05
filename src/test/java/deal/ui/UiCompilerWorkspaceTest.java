@@ -49,6 +49,7 @@ public final class UiCompilerWorkspaceTest {
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
         canonicalDealChangeRequiresAnnotatedUpdateHandlers();
+        unreachableActionDiagnosticIsComplete();
         frameworkDiagnosticsUseCompilerOwnedRepairSlots();
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
@@ -429,6 +430,32 @@ public final class UiCompilerWorkspaceTest {
                 List.of(new UiCompilerWorkspace.RemoveView(app.id())));
         check(!removed.accepted(), "removing the only root view must fail atomically");
         check(removed.source().equals(added.source()), "failed root removal must preserve the canonical source");
+    }
+
+    private static void unreachableActionDiagnosticIsComplete() {
+        String deal = DEAL + """
+                export class ResetAction {}
+                // @ui-update
+                export function reset(state: AppState, action: ResetAction): AppState {
+                  return {title: state.title, count: 0};
+                }
+                """;
+        String ui = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.Column() { ui.Text(value: state.title) }
+                }
+                """;
+        var diagnostic = UiCompilerWorkspace.inspect(deal, ui, PACK, "./ui.pack")
+                .diagnostics().stream().filter(value -> value.code().equals("UI2006"))
+                .findFirst().orElseThrow();
+        check(diagnostic.message().contains("IncrementAction")
+                        && diagnostic.message().contains("ResetAction"),
+                "one reachability diagnostic must report every missing action binding: " + diagnostic);
+        check(diagnostic.expected().contains("Bind every listed action"),
+                "reachability repair must publish an actionable compiler contract");
     }
 
     private static void check(boolean condition, String message) {

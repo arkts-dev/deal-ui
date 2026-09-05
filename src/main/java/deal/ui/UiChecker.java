@@ -93,8 +93,19 @@ public final class UiChecker {
         }
         Set<String> completionActions = effectCompletion(actions(effects));
         completionActions.addAll(effectCompletion(actions(effectFailures)));
-        for (String action : updates.keySet()) if (!allowUnreachableUpdates && !reachableActions.contains(action) && !completionActions.contains(action)) {
-            error("UI2006", "Update action '" + action + "' is unreachable", updates.get(action).span());
+        List<String> unreachableActions = updates.keySet().stream()
+            .filter(action -> !allowUnreachableUpdates
+                && !reachableActions.contains(action)
+                && !completionActions.contains(action))
+            .toList();
+        if (!unreachableActions.isEmpty()) {
+            UiModel.Span span = updates.get(unreachableActions.get(0)).span();
+            throw new UiDiagnostic(
+                "UI2006",
+                "Update actions are unreachable: " + String.join(", ", unreachableActions),
+                span.file(), span.line(), span.column(),
+                "Bind every listed action to a compatible component event in the checked view graph",
+                String.join(", ", unreachableActions));
         }
         for (Map.Entry<String, UiModel.Handler> effect : effects.entrySet()) {
             if (!updates.containsKey(effect.getKey())) error("UI2007", "Effect action requires an update", effect.getValue().span());
