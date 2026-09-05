@@ -97,8 +97,18 @@ public final class UiParser {
                         if (match("children")) {
                             boolean required = match("required");
                             if (!required) match("optional");
-                            String componentType = at(K.ID) ? qualified() : null;
+                            String componentType = null;
+                            if (at(K.ID)) {
+                                StringBuilder types = new StringBuilder(qualified());
+                                while (match("|")) types.append('|').append(qualified());
+                                componentType = types.toString();
+                            }
                             contracts.add(new UiModel.Children(required, componentType));
+                        } else if (match("parent")) {
+                            require("required");
+                            StringBuilder types = new StringBuilder(qualified());
+                            while (match("|")) types.append('|').append(qualified());
+                            contracts.add(new UiModel.Parent(types.toString()));
                         } else if (match("event")) {
                             String prop = id();
                             UiModel.TypeRef payload = null;

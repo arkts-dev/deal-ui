@@ -51,10 +51,11 @@ public final class UiModel {
 
     public record Field(String name, TypeRef type, Expr defaultValue, Span span) {}
     public record PackClass(String name, List<Field> fields, Span span) { public PackClass { fields = List.copyOf(fields); } }
-    public sealed interface Contract permits Children, Event, Accessibility, TokenProp, Capability {}
+    public sealed interface Contract permits Children, Parent, Event, Accessibility, TokenProp, Capability {}
     public record Children(boolean required, String componentType) implements Contract {
         public boolean typed() { return componentType != null; }
     }
+    public record Parent(String componentType) implements Contract {}
     public record Event(String prop, TypeRef payload) implements Contract {}
     public record Accessibility(String prop) implements Contract {}
     public record TokenProp(String prop) implements Contract {}

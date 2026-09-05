@@ -445,6 +445,21 @@ public final class UiFrameworkTest {
         expectValid(root, valid, logic, uiPack, "typed children accept direct, conditional, and repeated item components");
         expect("UI2048", valid.replace("ui.NavigationItem(text: item.title", "ui.Text(text: item.title"), logic, uiPack);
         expect("UI2047", valid, logic, uiPack.replace("children required NavigationItem", "children required MissingItem"));
+
+        String graphicsPack = "export class Empty {}\n" +
+            "export class ShapeProps { text: string = \"\"; onClick?: Action; }\n" +
+            "export component Canvas(props: Empty): View { children required Rectangle | Circle; }\n" +
+            "export component Rectangle(props: ShapeProps): View { parent required Canvas; event onClick; }\n" +
+            "export component Circle(props: ShapeProps): View { parent required Canvas; }\n" +
+            "export component Text(props: ShapeProps): View;\n";
+        String graphics = "import * as app from \"./gallery\";\nimport * as ui from \"./platform-ui.dealui-pack\";\n" +
+            "// @ui-root\nexport view App(state: app.State): View { ui.Canvas() { When(state.active) { ForEach(state.items, item: app.Item, key: item.id) { ui.Rectangle(text: item.title, onClick: action app.Select { id: item.id }) } } Else { ui.Circle(text: \"Empty\") } } }\n";
+        expectValid(root, graphics, logic, graphicsPack,
+            "typed child unions and required parents pass through When and ForEach");
+        expect("UI2048", graphics.replace("ui.Rectangle(text: item.title, onClick: action app.Select { id: item.id })", "ui.Text(text: item.title, onClick: action app.Select { id: item.id })"), logic, graphicsPack);
+        String orphan = "import * as app from \"./gallery\";\nimport * as ui from \"./platform-ui.dealui-pack\";\n" +
+            "// @ui-root\nexport view App(state: app.State): View { ui.Rectangle(text: \"Orphan\", onClick: action app.Select { id: 0 }) }\n";
+        expect("UI2049", orphan, logic, graphicsPack);
     }
 
     private static void expectValid(Path root, String view, String logic, String uiPack, String message) throws Exception {

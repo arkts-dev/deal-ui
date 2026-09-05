@@ -88,6 +88,7 @@ public final class UiChecker {
         scope.put(root.parameters().get(0).name(), new UiModel.TypeRef(stateType, false, false));
         List<UiModel.RenderNode> nodes = lower(root.nodes(), root.name(), scope, views, components, packClasses,
             tokens, deal, aliases, reachableActions, new LinkedHashSet<>());
+        validateParentContracts(nodes, null, components);
         for (String action : reachableActions) {
             if (!updates.containsKey(action)) error("UI2005", "Reachable action '" + action + "' requires exactly one @ui-update", root.span());
         }
@@ -232,7 +233,7 @@ public final class UiChecker {
                     .findFirst()
                     .orElse(null);
                 if (childPolicy != null && childPolicy.typed()) {
-                    String expected = qualifyComponent(childPolicy.componentType(), call.name());
+                    Set<String> expected = childTypes(childPolicy, call.name());
                     validateTypedChildren(loweredChildren, expected, components, call.span());
                 }
                 result.add(new UiModel.RenderCall(call.name(), call.arguments(), loweredChildren,
@@ -363,8 +364,14 @@ public final class UiChecker {
                     if (!field.type().name().equals("Action")) error("UI2025", "Event prop must have Action type", entry.getValue().span());
                 }
                 if (contract instanceof UiModel.Children children && children.typed()) {
-                    String expected = qualifyComponent(children.componentType(), entry.getKey());
-                    if (!components.containsKey(expected)) error("UI2047", "Typed children reference unknown component '" + expected + "'", entry.getValue().span());
+                    for (String expected : childTypes(children, entry.getKey())) {
+                        if (!components.containsKey(expected)) error("UI2047", "Typed children reference unknown component '" + expected + "'", entry.getValue().span());
+                    }
+                }
+                if (contract instanceof UiModel.Parent parent) {
+                    for (String expected : componentTypes(parent.componentType(), entry.getKey())) {
+                        if (!components.containsKey(expected)) error("UI2047", "Parent contract references unknown component '" + expected + "'", entry.getValue().span());
+                    }
                 }
             }
         }
@@ -384,12 +391,59 @@ public final class UiChecker {
         return name.contains(".") ? name : prefix(parent) + name;
     }
 
-    private void validateTypedChildren(List<UiModel.RenderNode> nodes, String expected,
-                                       Map<String, UiModel.Component> components, UiModel.Span parentSpan) {
-        if (!components.containsKey(expected)) error("UI2047", "Unknown typed child component '" + expected + "'", parentSpan);
+    private Set<String> childTypes(UiModel.Children policy, String parent) {
+        return componentTypes(policy.componentType(), parent);
+    }
+
+    private Set<String> componentTypes(String specification, String relativeTo) {
+        Set<String> result = new LinkedHashSet<>();
+        for (String name : specification.split("\\|")) {
+            result.add(qualifyComponent(name, relativeTo));
+        }
+        return result;
+    }
+
+    private void validateParentContracts(
+            List<UiModel.RenderNode> nodes,
+            String parent,
+            Map<String, UiModel.Component> components) {
         for (UiModel.RenderNode node : nodes) {
             if (node instanceof UiModel.RenderCall call) {
-                if (!call.name().equals(expected)) error("UI2048", "Component requires children of type '" + expected + "', got '" + call.name() + "'", call.span());
+                UiModel.Component component = components.get(call.name());
+                if (component != null) {
+                    UiModel.Parent policy = component.contracts().stream()
+                            .filter(UiModel.Parent.class::isInstance)
+                            .map(UiModel.Parent.class::cast)
+                            .findFirst().orElse(null);
+                    if (policy != null) {
+                        Set<String> expected = componentTypes(policy.componentType(), call.name());
+                        if (parent == null || !expected.contains(parent)) {
+                            error("UI2049", "Component requires parent '" + String.join(" | ", expected)
+                                    + "', got '" + (parent == null ? "root" : parent) + "'", call.span());
+                        }
+                    }
+                }
+                validateParentContracts(call.children(), call.name(), components);
+            } else if (node instanceof UiModel.RenderWhen when) {
+                validateParentContracts(when.thenNodes(), parent, components);
+                validateParentContracts(when.elseNodes(), parent, components);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                validateParentContracts(each.children(), parent, components);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                validateParentContracts(scope.children(), parent, components);
+            }
+        }
+    }
+
+    private void validateTypedChildren(List<UiModel.RenderNode> nodes, Set<String> expected,
+                                       Map<String, UiModel.Component> components, UiModel.Span parentSpan) {
+        for (String component : expected) {
+            if (!components.containsKey(component)) error("UI2047", "Unknown typed child component '" + component + "'", parentSpan);
+        }
+        String expectedDescription = String.join(" | ", expected);
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                if (!expected.contains(call.name())) error("UI2048", "Component requires children of type '" + expectedDescription + "', got '" + call.name() + "'", call.span());
             } else if (node instanceof UiModel.RenderWhen when) {
                 validateTypedChildren(when.thenNodes(), expected, components, parentSpan);
                 validateTypedChildren(when.elseNodes(), expected, components, parentSpan);

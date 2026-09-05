@@ -70,6 +70,7 @@ public final class CanonicalCompiler {
             String name,
             List<PropertySnapshot> properties,
             String children,
+            String parent,
             List<EventSnapshot> events,
             List<String> capabilities) {
         public ComponentSnapshot {
@@ -181,12 +182,15 @@ public final class CanonicalCompiler {
                             field.name(), typeText(field.type()), field.type().optional()))
                     .toList();
             String children = "none";
+            String parent = "any";
             List<EventSnapshot> events = new ArrayList<>();
             List<String> capabilities = new ArrayList<>();
             for (UiModel.Contract contract : component.contracts()) {
                 if (contract instanceof UiModel.Children value) {
                     children = (value.required() ? "required" : "optional")
                             + (value.componentType() == null ? "" : ":" + value.componentType());
+                } else if (contract instanceof UiModel.Parent value) {
+                    parent = value.componentType();
                 } else if (contract instanceof UiModel.Event value) {
                     events.add(new EventSnapshot(
                             value.prop(), value.payload() == null ? "none" : typeText(value.payload())));
@@ -195,7 +199,7 @@ public final class CanonicalCompiler {
                 }
             }
             components.add(new ComponentSnapshot(
-                    component.name(), properties, children, events, capabilities));
+                    component.name(), properties, children, parent, events, capabilities));
         }
         List<TokenSnapshot> tokens = pack.tokens().values().stream()
                 .map(token -> new TokenSnapshot(token.name(), typeText(token.type())))
