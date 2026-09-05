@@ -323,13 +323,33 @@ public final class CanonicalCompiler {
                             candidate.span().file().toString(),
                             candidate.span().line(), candidate.span().column(),
                             candidate.span().endLine(), candidate.span().endColumn());
+            SourceRange functionBodyRange = inspection.nodes().stream()
+                    .filter(node -> node.ownerId().equals(owner))
+                    .filter(node -> node.kind().equals("function-body"))
+                    .map(deal.compiler.CompilerProtocol.NodeSnapshot::range)
+                    .findFirst().orElse(null);
+            boolean markerInsideFunction = markerInsideRange(source, functionBodyRange, "// @ui-update");
+            String message = markerInsideFunction
+                    ? "Action '" + action.name() + "' has // @ui-update inside function '"
+                            + candidate.name() + "'; move it immediately before export function"
+                    : "Action '" + action.name() + "' requires exactly one // @ui-update handler";
             diagnostics.add(new StructuredDiagnostic(
-                    "UI2050", "error",
-                    "Action '" + action.name() + "' requires exactly one // @ui-update handler",
-                    range, owner, "one annotated update", Integer.toString(updates.size()),
+                    "UI2050", "error", message,
+                    range, owner,
+                    "// @ui-update immediately before export function "
+                            + (candidate == null ? "handler" : candidate.name()),
+                    markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
                     List.of(action.id()), transactionScopes, "query_deal_module"));
         }
         return List.copyOf(diagnostics);
+    }
+
+    private static boolean markerInsideRange(String source, SourceRange range, String marker) {
+        if (range == null) return false;
+        return source.lines()
+                .skip(Math.max(0, range.startLine() - 1L))
+                .limit(Math.max(1, range.endLine() - range.startLine() + 1L))
+                .anyMatch(line -> line.trim().equals(marker));
     }
 
     private static String operationName(DealCompilerWorkspace.Operation operation) {

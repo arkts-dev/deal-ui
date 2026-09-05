@@ -182,6 +182,21 @@ public final class UiCompilerWorkspaceTest {
         check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
                 "missing update annotation must have a stable diagnostic");
 
+        List<deal.compiler.DealCompilerWorkspace.Operation> misplacedDirective = List.of(
+                missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "export function update(state: AppState, action: IncrementAction): AppState {\n  // @ui-update\n  return {count: state.count + 1};\n}"));
+        var misplacedRejected = CanonicalCompiler.applyDealChangeChecked(
+                bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), misplacedDirective);
+        var misplacedDiagnostic = misplacedRejected.diagnostics().stream()
+                .filter(value -> value.code().equals("UI2050")).findFirst().orElseThrow();
+        check(misplacedDiagnostic.message().contains("inside function"),
+                "a misplaced marker must explain the actual location: " + misplacedDiagnostic);
+        check(misplacedDiagnostic.expected().contains("immediately before export function update"),
+                "a misplaced marker must publish the exact repair contract");
+        check(misplacedDiagnostic.actual().equals("marker inside function body"),
+                "a misplaced marker must expose structured actual placement");
+
         List<deal.compiler.DealCompilerWorkspace.Operation> malformedHandler = List.of(
                 missingDirective.get(0), missingDirective.get(1), missingDirective.get(2),
                 new deal.compiler.DealCompilerWorkspace.AddDeclaration(
