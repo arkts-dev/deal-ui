@@ -651,12 +651,16 @@ public final class UiCompilerWorkspace {
                     : previouslyStaged(previousSlots, "R" + (index + 1), payload(operation))
                             ? RepairSlotStatus.SEALED : RepairSlotStatus.STAGED;
             Map<String, String> payload = payload(operation);
+            List<StructuredDiagnostic> candidateDiagnostics = change.diagnostics().stream()
+                    .filter(value -> diagnosticMatches(operation, value)).toList();
+            List<StructuredDiagnostic> owned = !candidateDiagnostics.isEmpty()
+                    ? candidateDiagnostics
+                    : isolated.get(index).accepted() ? List.of() : isolated.get(index).diagnostics();
             slots.add(new RepairSlot(
                     "R" + (index + 1), operationName(operation), operation.targetId(),
                     precondition.expectedTargetFingerprints().getOrDefault(operation.targetId().value(), ""),
                     payload, DealCompilerWorkspace.digest(CompilerProtocolJson.encode(payload)), status,
-                    "G" + (groupIndexes[index] + 1),
-                    isolated.get(index).accepted() ? List.of() : isolated.get(index).diagnostics()));
+                    "G" + (groupIndexes[index] + 1), owned));
         }
         List<DependencyGroup> groups = new ArrayList<>();
         int groupCount = java.util.Arrays.stream(groupIndexes).max().orElse(-1) + 1;
@@ -700,6 +704,14 @@ public final class UiCompilerWorkspace {
                         && previous.payloadFingerprint().equals(fingerprint)
                         && (previous.status() == RepairSlotStatus.STAGED
                                 || previous.status() == RepairSlotStatus.SEALED));
+    }
+
+    private static boolean diagnosticMatches(Operation operation, StructuredDiagnostic diagnostic) {
+        return operation.targetId().equals(diagnostic.ownerId())
+                || diagnostic.relatedIds().contains(operation.targetId())
+                || diagnostic.repairScopes().stream().anyMatch(scope ->
+                        scope.ownerId().equals(operation.targetId())
+                                && scope.operation().equals(operationName(operation)));
     }
 
     private static List<Set<Integer>> uiOperationDependencies(

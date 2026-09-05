@@ -339,6 +339,9 @@ public final class UiCompilerWorkspaceTest {
                 .toList();
         check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function update"),
                 "only the unannotated handler slot must remain writable: " + staged.workspace().slots());
+        check(rejected.get(0).diagnostics().stream().anyMatch(value -> value.code().equals("UI2050"))
+                        && rejected.get(0).diagnostics().stream().noneMatch(value -> value.code().equals("E3004")),
+                "the active slot must expose dependency-aware framework diagnostics, not isolated false failures");
         var repaired = CanonicalCompiler.patchDealRepairWorkspace(
                 bootstrap, staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
                         rejected.get(0).slotId(), Map.of("declaration",
