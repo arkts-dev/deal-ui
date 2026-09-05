@@ -626,17 +626,9 @@ public final class UiCompilerWorkspace {
         List<UiChangeResult> isolated = operations.stream().map(operation -> applyChecked(
                 dealSource, dealUiSource, packSource, packSpecifier,
                 precondition, List.of(operation))).toList();
-        List<Set<Integer>> adjacency = new ArrayList<>();
-        for (int index = 0; index < operations.size(); index++) adjacency.add(new LinkedHashSet<>());
-        for (int left = 0; left < operations.size(); left++) {
-            for (int right = left + 1; right < operations.size(); right++) {
-                if (uiOperationsDependent(base, operations.get(left), operations.get(right))) {
-                    adjacency.get(left).add(right);
-                    adjacency.get(right).add(left);
-                }
-            }
-        }
-        int[] groupIndexes = connectedComponents(adjacency);
+        List<Set<Integer>> dependencies = uiOperationDependencies(base, operations);
+        SccResult dependencyGroups = stronglyConnectedComponents(dependencies);
+        int[] groupIndexes = dependencyGroups.groupByNode();
         Set<Integer> rejected = new LinkedHashSet<>();
         for (int index = 0; index < isolated.size(); index++) {
             if (!isolated.get(index).accepted()) rejected.add(index);
@@ -647,8 +639,10 @@ public final class UiCompilerWorkspace {
             int slotIndex = index;
             Operation operation = operations.get(index);
             boolean direct = rejected.contains(index);
-            boolean blocked = !direct && rejected.stream()
-                    .anyMatch(other -> groupIndexes[other] == groupIndexes[slotIndex]);
+            boolean blocked = !direct && rejected.stream().anyMatch(other ->
+                    groupIndexes[other] == groupIndexes[slotIndex]
+                            || groupDependsOn(groupIndexes[slotIndex], groupIndexes[other],
+                                    dependencyGroups.groupDependencies()));
             RepairSlotStatus status = change.accepted()
                     ? RepairSlotStatus.COMMIT_READY
                     : direct ? RepairSlotStatus.REJECTED
@@ -671,7 +665,12 @@ public final class UiCompilerWorkspace {
                     ? "REPAIR_REQUIRED"
                     : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
                             ? "COMMIT_READY" : "SEALED";
-            groups.add(new DependencyGroup(groupId, members.stream().map(RepairSlot::slotId).toList(), List.of(), status));
+            groups.add(new DependencyGroup(
+                    groupId,
+                    members.stream().map(RepairSlot::slotId).toList(),
+                    dependencyGroups.groupDependencies().get(group).stream()
+                            .sorted().map(value -> "G" + (value + 1)).toList(),
+                    status));
         }
         String workspaceId = DealCompilerWorkspace.digest(precondition.baseDigest() + "\u0000"
                 + inspection.inspectionDigest() + "\u0000"
@@ -684,41 +683,112 @@ public final class UiCompilerWorkspace {
                 draft.precondition(), draft.slots(), draft.groups(), draft.repairRound());
     }
 
-    private static int[] connectedComponents(List<Set<Integer>> adjacency) {
-        int[] groups = new int[adjacency.size()];
-        java.util.Arrays.fill(groups, -1);
-        int group = 0;
-        for (int start = 0; start < adjacency.size(); start++) {
-            if (groups[start] >= 0) continue;
-            java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>();
-            pending.add(start);
-            groups[start] = group;
-            while (!pending.isEmpty()) {
-                int current = pending.removeFirst();
-                for (int next : adjacency.get(current)) {
-                    if (groups[next] >= 0) continue;
-                    groups[next] = group;
-                    pending.add(next);
+    private static List<Set<Integer>> uiOperationDependencies(
+            Analysis analysis,
+            List<? extends Operation> operations) {
+        Map<SemanticId, UiNodeSnapshot> nodes = analysis.inspection().nodes().stream()
+                .collect(java.util.stream.Collectors.toMap(UiNodeSnapshot::id, value -> value));
+        List<Set<Integer>> result = new ArrayList<>();
+        for (int index = 0; index < operations.size(); index++) result.add(new LinkedHashSet<>());
+        for (int consumer = 0; consumer < operations.size(); consumer++) {
+            Operation operation = operations.get(consumer);
+            UiNodeSnapshot node = nodes.get(operation.targetId());
+            for (int provider = 0; provider < operations.size(); provider++) {
+                if (consumer == provider) continue;
+                Operation candidate = operations.get(provider);
+                if (operation.targetId().equals(candidate.targetId())) {
+                    result.get(consumer).add(provider);
+                    continue;
+                }
+                if (node != null && Objects.equals(node.parentId(), candidate.targetId())) {
+                    result.get(consumer).add(provider);
+                }
+                if (operation instanceof MoveNode move
+                        && move.newParentId().equals(candidate.targetId())) {
+                    result.get(consumer).add(provider);
                 }
             }
-            group++;
         }
-        return groups;
+        return result;
     }
 
-    private static boolean uiOperationsDependent(Analysis analysis, Operation left, Operation right) {
-        if (left.targetId().equals(right.targetId())) return true;
-        UiNodeSnapshot leftNode = analysis.inspection().nodes().stream()
-                .filter(value -> value.id().equals(left.targetId())).findFirst().orElse(null);
-        UiNodeSnapshot rightNode = analysis.inspection().nodes().stream()
-                .filter(value -> value.id().equals(right.targetId())).findFirst().orElse(null);
-        if (leftNode == null || rightNode == null) return false;
-        if (Objects.equals(leftNode.parentId(), rightNode.id()) || Objects.equals(rightNode.parentId(), leftNode.id())) {
-            return true;
+    private static SccResult stronglyConnectedComponents(List<Set<Integer>> dependencies) {
+        int size = dependencies.size();
+        int[] index = new int[size];
+        int[] low = new int[size];
+        int[] groupByNode = new int[size];
+        boolean[] onStack = new boolean[size];
+        java.util.Arrays.fill(index, -1);
+        java.util.Arrays.fill(groupByNode, -1);
+        java.util.ArrayDeque<Integer> stack = new java.util.ArrayDeque<>();
+        int[] nextIndex = {0};
+        int[] nextGroup = {0};
+        for (int node = 0; node < size; node++) {
+            if (index[node] < 0) strongConnect(
+                    node, dependencies, index, low, groupByNode, onStack, stack, nextIndex, nextGroup);
         }
-        return !disjoint(leftNode.statePaths(), rightNode.statePaths())
-                || !disjoint(leftNode.actionBindings(), rightNode.actionBindings());
+        List<Set<Integer>> groupDependencies = new ArrayList<>();
+        for (int group = 0; group < nextGroup[0]; group++) groupDependencies.add(new LinkedHashSet<>());
+        for (int node = 0; node < size; node++) {
+            for (int dependency : dependencies.get(node)) {
+                int from = groupByNode[node];
+                int to = groupByNode[dependency];
+                if (from != to) groupDependencies.get(from).add(to);
+            }
+        }
+        return new SccResult(groupByNode, groupDependencies);
     }
+
+    private static void strongConnect(
+            int node,
+            List<Set<Integer>> dependencies,
+            int[] index,
+            int[] low,
+            int[] groupByNode,
+            boolean[] onStack,
+            java.util.ArrayDeque<Integer> stack,
+            int[] nextIndex,
+            int[] nextGroup) {
+        index[node] = nextIndex[0];
+        low[node] = nextIndex[0]++;
+        stack.push(node);
+        onStack[node] = true;
+        for (int dependency : dependencies.get(node)) {
+            if (index[dependency] < 0) {
+                strongConnect(dependency, dependencies, index, low, groupByNode,
+                        onStack, stack, nextIndex, nextGroup);
+                low[node] = Math.min(low[node], low[dependency]);
+            } else if (onStack[dependency]) {
+                low[node] = Math.min(low[node], index[dependency]);
+            }
+        }
+        if (low[node] != index[node]) return;
+        while (true) {
+            int member = stack.pop();
+            onStack[member] = false;
+            groupByNode[member] = nextGroup[0];
+            if (member == node) break;
+        }
+        nextGroup[0]++;
+    }
+
+    private static boolean groupDependsOn(
+            int group,
+            int target,
+            List<Set<Integer>> dependencies) {
+        if (group == target) return true;
+        Set<Integer> visited = new LinkedHashSet<>();
+        java.util.ArrayDeque<Integer> pending = new java.util.ArrayDeque<>(dependencies.get(group));
+        while (!pending.isEmpty()) {
+            int current = pending.removeFirst();
+            if (!visited.add(current)) continue;
+            if (current == target) return true;
+            pending.addAll(dependencies.get(current));
+        }
+        return false;
+    }
+
+    private record SccResult(int[] groupByNode, List<Set<Integer>> groupDependencies) {}
 
     private static Map<String, String> payload(Operation operation) {
         return switch (operation) {

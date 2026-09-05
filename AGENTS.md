@@ -20,6 +20,10 @@ from source, AppInterface and component-pack bytes for every stateless request.
 - Source comments, section labels and visible text are never semantic identities.
 - Edits target compiler-issued view/node ids and carry the exact base source digest.
 - Multi-operation edits validate atomically; failure returns the unchanged canonical source.
+- Repair workspaces preserve valid payloads as sealed slots. Directed parent/child dependencies form
+  a DAG; mutually dependent operations form one strongly connected group.
+- Deal UI framework validation attached to a DEAL candidate runs inside the upstream stage/patch
+  transaction, so framework diagnostics cannot fall back to client-side broad repair.
 - Greenfield and structural edits query the document before `addView`; view removal targets a
   queried view. These are semantic operations, never text insertion performed by a client.
 - Deal UI consumes the versioned AppInterface snapshot emitted by the shared compiler core.

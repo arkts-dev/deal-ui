@@ -257,7 +257,8 @@ public final class CanonicalCompiler {
             List<? extends DealCompilerWorkspace.Operation> operations) {
         return DealCompilerWorkspace.stageChange(
                 source, "/generated/app.deal", precondition, inspection, operations,
-                rejectingResolver(), DealUiDealSource.ADAPTER);
+                rejectingResolver(), DealUiDealSource.ADAPTER,
+                CanonicalCompiler::dealUiContractDiagnostics);
     }
 
     public static RepairWorkspaceResult patchDealRepairWorkspace(
@@ -266,7 +267,8 @@ public final class CanonicalCompiler {
             List<SlotPatch> patches) {
         return DealCompilerWorkspace.patchRepairWorkspace(
                 source, "/generated/app.deal", workspace, patches,
-                rejectingResolver(), DealUiDealSource.ADAPTER);
+                rejectingResolver(), DealUiDealSource.ADAPTER,
+                CanonicalCompiler::dealUiContractDiagnostics);
     }
 
     public static SemanticSlice queryDealSymbol(
@@ -355,8 +357,12 @@ public final class CanonicalCompiler {
                     .filter(function -> function.parameters().get(1).name().equals(actionName))
                     .filter(function -> function.returnType().name().equals(inspection.appInterface().rootState()))
                     .findFirst().orElse(null);
+            SemanticId actionId = inspection.symbols().stream()
+                    .filter(symbol -> symbol.name().equals(actionName))
+                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                    .findFirst().orElse(null);
             SemanticId owner = candidate == null
-                    ? operations.get(0).targetId()
+                    ? actionId == null ? operations.get(0).targetId() : actionId
                     : inspection.symbols().stream()
                             .filter(symbol -> symbol.name().equals(candidate.name()))
                             .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
@@ -377,19 +383,37 @@ public final class CanonicalCompiler {
                     ? "Action '" + actionName + "' has // @ui-update inside function '"
                             + candidate.name() + "'; move it immediately before export function"
                     : "Action '" + actionName + "' requires exactly one // @ui-update handler";
-            List<SemanticId> related = inspection.symbols().stream()
-                    .filter(symbol -> symbol.name().equals(actionName))
-                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
-                    .findFirst().map(List::of).orElseGet(List::of);
+            List<SemanticId> related = actionId == null ? List.of() : List.of(actionId);
+            List<RepairScope> targetedScopes = operations.stream()
+                    .filter(operation -> operationOwns(operation, owner))
+                    .map(operation -> new RepairScope(operationName(operation), owner))
+                    .toList();
+            if (targetedScopes.isEmpty() && actionId != null) {
+                targetedScopes = operations.stream()
+                        .filter(operation -> operationOwns(operation, actionId))
+                        .map(operation -> new RepairScope(operationName(operation), actionId))
+                        .toList();
+            }
+            if (targetedScopes.isEmpty()) targetedScopes = transactionScopes;
             diagnostics.add(new StructuredDiagnostic(
                     "UI2050", "error", message,
                     range, owner,
                     "// @ui-update immediately before export function "
                             + (candidate == null ? "handler" : candidate.name()),
                     markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
-                    related, transactionScopes, "query_deal_module"));
+                    related, targetedScopes, "query_deal_module"));
         }
         return List.copyOf(diagnostics);
+    }
+
+    private static boolean operationOwns(
+            DealCompilerWorkspace.Operation operation,
+            SemanticId semanticId) {
+        if (operation.targetId().equals(semanticId)) return true;
+        if (!(operation instanceof DealCompilerWorkspace.AddDeclaration value)) return false;
+        SemanticId produced = DealCompilerWorkspace.declarationSemanticId(
+                value.declaration(), "/generated/app.deal");
+        return semanticId.equals(produced);
     }
 
     private static boolean markerInsideRange(String source, SourceRange range, String marker) {

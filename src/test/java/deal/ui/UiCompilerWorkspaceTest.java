@@ -49,6 +49,7 @@ public final class UiCompilerWorkspaceTest {
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
         canonicalDealChangeRequiresAnnotatedUpdateHandlers();
+        frameworkDiagnosticsUseCompilerOwnedRepairSlots();
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
         documentQueryAddsAndRemovesViewsAtomically();
@@ -306,6 +307,47 @@ public final class UiCompilerWorkspaceTest {
         var accepted = CanonicalCompiler.applyDealChangeChecked(
                 bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), annotated);
         check(accepted.accepted(), "annotated canonical update must commit: " + accepted.diagnostics());
+    }
+
+    private static void frameworkDiagnosticsUseCompilerOwnedRepairSlots() {
+        String bootstrap = """
+                export class AppState { title: string = ""; }
+                export function initialState(): AppState { return {title: ""}; }
+                """;
+        var inspected = deal.compiler.DealCompilerWorkspace.inspect(
+                bootstrap, "/generated/app.deal", DealUiDealSource.ADAPTER);
+        var module = CanonicalCompiler.queryDealModule(bootstrap);
+        var changeInspection = CanonicalCompiler.inspectDealChange(
+                bootstrap, inspected.sourceDigest(), List.of(module.ownerId()),
+                List.of(deal.compiler.DealCompilerWorkspace.ADD_DECLARATION));
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspected.sourceDigest(), Map.of(
+                        module.ownerId().value(), module.allowedOperations().get(0).targetFingerprint()));
+        var operations = List.of(
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "export class IncrementAction {}"),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(),
+                        "export function update(state: AppState, action: IncrementAction): AppState { return state; }"));
+        var staged = CanonicalCompiler.stageDealChange(
+                bootstrap, precondition, changeInspection, operations);
+        check(!staged.accepted(), "UI2050 must reject inside the compiler-owned workspace");
+        check(staged.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
+                "workspace must retain the framework diagnostic");
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .toList();
+        check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function update"),
+                "only the unannotated handler slot must remain writable: " + staged.workspace().slots());
+        var repaired = CanonicalCompiler.patchDealRepairWorkspace(
+                bootstrap, staged.workspace(), List.of(new CompilerProtocol.SlotPatch(
+                        rejected.get(0).slotId(), Map.of("declaration",
+                                "// @ui-update\nexport function update(state: AppState, action: IncrementAction): AppState { return state; }"))));
+        check(repaired.accepted(), "a narrow handler patch must commit the preserved action sibling: "
+                + repaired.diagnostics());
+        check(repaired.source().contains("class IncrementAction")
+                        && repaired.source().contains("// @ui-update"),
+                "the repaired candidate must retain both dependent declarations");
     }
 
     private static void semanticQueryScopesUiOperations() {
