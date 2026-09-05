@@ -48,6 +48,7 @@ public final class UiCompilerWorkspaceTest {
         childInsertionUsesTheActualChildBlock();
         staleNodeCannotModifyNewRevision();
         canonicalFacadeBlocksCrossArtifactMismatch();
+        ancestorSubtreeCanRepairDescendantInterfaceErrors();
         canonicalDealChangeRequiresAnnotatedUpdateHandlers();
         unreachableActionDiagnosticIsComplete();
         frameworkDiagnosticsUseCompilerOwnedRepairSlots();
@@ -231,6 +232,33 @@ public final class UiCompilerWorkspaceTest {
                 List.of(new UiCompilerWorkspace.ReplaceSubtree(
                         scoped.ownerId(), "ui.Text(value: state.label)")));
         check(repaired.accepted(), "semantic-invalid UI must remain locally repairable: " + repaired.diagnostics());
+    }
+
+    private static void ancestorSubtreeCanRepairDescendantInterfaceErrors() {
+        String incompatible = DEAL.replace("title: string = \"Ready\";", "label: string = \"Ready\";")
+                .replace("title: \"Ready\"", "label: \"Ready\"")
+                .replace("title: state.title", "label: state.label");
+        var inspection = UiCompilerWorkspace.inspect(incompatible, UI, PACK, "./ui.pack");
+        check(!inspection.diagnostics().isEmpty(), "changed interface must invalidate the old descendant binding");
+        var column = inspection.nodes().stream()
+                .filter(value -> value.component().equals("ui.Column")).findFirst().orElseThrow();
+        var descriptor = UiCompilerWorkspace.queryNode(
+                        incompatible, UI, PACK, "./ui.pack", column.id()).allowedOperations().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_SUBTREE))
+                .findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspection.sourceDigest(), Map.of(column.id().value(), descriptor.targetFingerprint()));
+        var repaired = UiCompilerWorkspace.applyChecked(
+                incompatible, UI, PACK, "./ui.pack", precondition,
+                List.of(new UiCompilerWorkspace.ReplaceSubtree(column.id(), """
+                        ui.Column(onClick: action app.IncrementAction {}) {
+                          ui.Text(value: state.label)
+                          ui.Button(text: "Add", onClick: action app.IncrementAction {})
+                        }
+                        """)));
+        check(repaired.accepted(),
+                "a compiler-inspected parent subtree must be able to repair its invalid descendant: "
+                        + repaired.diagnostics());
     }
 
     private static void canonicalDealChangeRequiresAnnotatedUpdateHandlers() {

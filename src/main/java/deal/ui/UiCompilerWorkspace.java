@@ -442,11 +442,10 @@ public final class UiCompilerWorkspace {
                     "valid base source", "compiler diagnostics", List.of(), "inspectCanonicalApp"));
         }
         if (hasErrors(base.inspection().diagnostics())) {
-            Set<String> writable = new LinkedHashSet<>();
-            base.inspection().diagnostics().forEach(value -> value.repairScopes().forEach(scope ->
-                    writable.add(scope.operation() + ":" + scope.ownerId().value())));
+            List<RepairScope> writable = base.inspection().diagnostics().stream()
+                    .flatMap(value -> value.repairScopes().stream()).distinct().toList();
             boolean outsideRepairScope = requested.stream().anyMatch(value ->
-                    !writable.contains(operationName(value) + ":" + value.targetId().value()));
+                    writable.stream().noneMatch(scope -> operationCoversRepairScope(base, value, scope)));
             if (outsideRepairScope) {
                 return rejected(base, diagnostic(
                         "CP1007", "Change is outside the compiler-scoped Deal UI repair target",
@@ -581,6 +580,33 @@ public final class UiCompilerWorkspace {
                         .equals(componentCapabilities(checked.inspection())));
         return new UiChangeResult(
                 true, candidate, checked.inspection().sourceDigest(), checked.inspection(), impact, List.of());
+    }
+
+    private static boolean operationCoversRepairScope(
+            Analysis analysis,
+            Operation operation,
+            RepairScope scope) {
+        if (operationName(operation).equals(scope.operation())
+                && operation.targetId().equals(scope.ownerId())) return true;
+        if (operation instanceof ReplaceViewBody) {
+            Target view = analysis.targets().get(operation.targetId());
+            Target repair = analysis.targets().get(scope.ownerId());
+            return view != null && repair != null && view.kind().equals("view")
+                    && view.id().equals(repair.ownerViewId());
+        }
+        if (!(operation instanceof ReplaceSubtree)) return false;
+        SemanticId cursor = scope.ownerId();
+        while (cursor != null) {
+            if (cursor.equals(operation.targetId())) return true;
+            UiNodeSnapshot node = nodeSnapshotOrNull(analysis, cursor);
+            cursor = node == null ? null : node.parentId();
+        }
+        return false;
+    }
+
+    private static UiNodeSnapshot nodeSnapshotOrNull(Analysis analysis, SemanticId id) {
+        return analysis.inspection().nodes().stream()
+                .filter(node -> node.id().equals(id)).findFirst().orElse(null);
     }
 
     private static NodeSnapshot protocolNode(UiNodeSnapshot value) {
