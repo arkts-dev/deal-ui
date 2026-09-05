@@ -453,6 +453,7 @@ public final class CanonicalCompiler {
             case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
             case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
             case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
+            case DealCompilerWorkspace.SetCapabilities ignored -> DealCompilerWorkspace.SET_CAPABILITIES;
         };
     }
 
