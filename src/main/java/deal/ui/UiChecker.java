@@ -239,7 +239,12 @@ public final class UiChecker {
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
-                if (!key.name().equals("int") && !key.name().equals("string")) error("UI2015", "ForEach key must be int or string", each.key().span());
+                if (!key.name().equals("int") && !key.name().equals("string")) {
+                    throw new UiDiagnostic(
+                            "UI2015", "ForEach key must be a stable int or string item field",
+                            each.key().span().file(), each.key().span().line(), each.key().span().column(),
+                            "stable int|string item field", key.name());
+                }
                 if (!each.key().parts().get(0).equals(each.item().name())) error("UI2016", "ForEach key must be item-rooted", each.key().span());
                 result.add(new UiModel.RenderForEach(each.source(), each.item(), each.key(),
                     lower(each.children(), nodeIdentity + "/item", nested, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
