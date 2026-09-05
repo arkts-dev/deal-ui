@@ -104,9 +104,9 @@ public final class UiCompilerWorkspaceTest {
                 .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
                 .findFirst().orElseThrow();
         check(staged.workspace().slots().stream().anyMatch(value ->
-                        value.status() == CompilerProtocol.RepairSlotStatus.SEALED
+                        value.status() == CompilerProtocol.RepairSlotStatus.STAGED
                                 && value.payload().containsValue("\"Preserved\"")),
-                "independent valid UI payload must be sealed");
+                "independent valid UI payload must be staged and unavailable to repair");
         var repaired = UiCompilerWorkspace.patchRepairWorkspace(
                 DEAL, UI, PACK, "./ui.pack", staged.workspace(), List.of(
                         new CompilerProtocol.SlotPatch(rejected.slotId(),

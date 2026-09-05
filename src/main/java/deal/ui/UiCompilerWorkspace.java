@@ -360,7 +360,7 @@ public final class UiCompilerWorkspace {
                 dealSource, dealUiSource, packSource, packSpecifier, precondition, operations);
         RepairWorkspaceSnapshot workspace = workspace(
                 dealSource, dealUiSource, packSource, packSpecifier, precondition,
-                changeInspection, operations, change, 0);
+                changeInspection, operations, change, 0, List.of());
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : dealUiSource,
                 change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
@@ -413,7 +413,7 @@ public final class UiCompilerWorkspace {
                 dealSource, dealUiSource, packSource, packSpecifier, workspace.precondition(), operations);
         RepairWorkspaceSnapshot next = workspace(
                 dealSource, dealUiSource, packSource, packSpecifier, workspace.precondition(),
-                inspection, operations, change, workspace.repairRound() + 1);
+                inspection, operations, change, workspace.repairRound() + 1, workspace.slots());
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : dealUiSource,
                 change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
@@ -621,7 +621,8 @@ public final class UiCompilerWorkspace {
             ChangeInspection inspection,
             List<? extends Operation> operations,
             UiChangeResult change,
-            int round) {
+            int round,
+            List<RepairSlot> previousSlots) {
         Analysis base = analyze(dealSource, dealUiSource, packSource, packSpecifier);
         List<UiChangeResult> isolated = operations.stream().map(operation -> applyChecked(
                 dealSource, dealUiSource, packSource, packSpecifier,
@@ -646,7 +647,9 @@ public final class UiCompilerWorkspace {
             RepairSlotStatus status = change.accepted()
                     ? RepairSlotStatus.COMMIT_READY
                     : direct ? RepairSlotStatus.REJECTED
-                    : blocked ? RepairSlotStatus.BLOCKED : RepairSlotStatus.SEALED;
+                    : blocked ? RepairSlotStatus.BLOCKED
+                    : previouslyStaged(previousSlots, "R" + (index + 1), payload(operation))
+                            ? RepairSlotStatus.SEALED : RepairSlotStatus.STAGED;
             Map<String, String> payload = payload(operation);
             slots.add(new RepairSlot(
                     "R" + (index + 1), operationName(operation), operation.targetId(),
@@ -663,8 +666,12 @@ public final class UiCompilerWorkspace {
                     .filter(value -> value.dependencyGroupId().equals(groupId)).toList();
             String status = members.stream().anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)
                     ? "REPAIR_REQUIRED"
+                    : members.stream().anyMatch(value -> value.status() == RepairSlotStatus.BLOCKED)
+                            ? "BLOCKED"
                     : members.stream().allMatch(value -> value.status() == RepairSlotStatus.COMMIT_READY)
-                            ? "COMMIT_READY" : "SEALED";
+                            ? "COMMIT_READY"
+                    : members.stream().anyMatch(value -> value.status() == RepairSlotStatus.STAGED)
+                            ? "STAGED" : "SEALED";
             groups.add(new DependencyGroup(
                     groupId,
                     members.stream().map(RepairSlot::slotId).toList(),
@@ -681,6 +688,18 @@ public final class UiCompilerWorkspace {
         return new RepairWorkspaceSnapshot(
                 workspaceId, uiWorkspaceDigest(draft), draft.baseRevision(), draft.inspectionDigest(),
                 draft.precondition(), draft.slots(), draft.groups(), draft.repairRound());
+    }
+
+    private static boolean previouslyStaged(
+            List<RepairSlot> previousSlots,
+            String slotId,
+            Map<String, String> payload) {
+        String fingerprint = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(payload));
+        return previousSlots.stream().anyMatch(previous ->
+                previous.slotId().equals(slotId)
+                        && previous.payloadFingerprint().equals(fingerprint)
+                        && (previous.status() == RepairSlotStatus.STAGED
+                                || previous.status() == RepairSlotStatus.SEALED));
     }
 
     private static List<Set<Integer>> uiOperationDependencies(
