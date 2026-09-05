@@ -566,6 +566,19 @@ public final class UiCompilerWorkspaceTest {
                 """;
         check(UiCompilerWorkspace.inspect(deal, bound, pack, "./ui.pack").diagnostics().isEmpty(),
                 "a declared host capability must pass when its pack component is bound");
+
+        String typedDeal = deal.replace(
+                "export class IncrementAction {}",
+                "export class IncrementAction { deltaMillis: int; }");
+        String ignoredPayload = bound.replace(
+                "action app.IncrementAction {}",
+                "action app.IncrementAction { deltaMillis: 16 }");
+        check(UiCompilerWorkspace.inspect(typedDeal, ignoredPayload, pack, "./ui.pack")
+                        .diagnostics().stream().anyMatch(value -> value.code().equals("UI2052")),
+                "a payload-bearing host event must reject action fields that ignore its payload");
+        String consumedPayload = ignoredPayload.replace("deltaMillis: 16", "deltaMillis: payload");
+        check(UiCompilerWorkspace.inspect(typedDeal, consumedPayload, pack, "./ui.pack").diagnostics().isEmpty(),
+                "a payload-bearing host event must accept a compatible payload-derived action");
     }
 
     private static void check(boolean condition, String message) {

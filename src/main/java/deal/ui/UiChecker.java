@@ -224,6 +224,17 @@ public final class UiChecker {
                     UiModel.Field field = props.fields().stream().filter(value -> value.name().equals(argument.getKey())).findFirst().orElseThrow();
                     UiModel.Event event = events.get(argument.getKey());
                     checkAssignable(type(argument.getValue(), scope, deal, packClasses, tokens, aliases, actions, event), field.type(), argument.getValue().span());
+                    if (event != null && event.payload() != null
+                            && hasHostCapability(component)
+                            && argument.getValue() instanceof UiModel.Action action
+                            && !action.fields().isEmpty()
+                            && action.fields().values().stream().noneMatch(this::containsPayload)) {
+                        throw new UiDiagnostic(
+                                "UI2052", "Host event action fields must consume the event payload",
+                                action.span().file(), action.span().line(), action.span().column(),
+                                "At least one action field derived from payload or payload.<field>",
+                                "Host payload ignored by constant or state-only action fields");
+                    }
                 }
                 List<UiModel.RenderNode> loweredChildren = lower(call.children(), nodeIdentity, scope, views,
                     components, packClasses, tokens, deal, aliases, actions, viewStack);
@@ -264,6 +275,26 @@ public final class UiChecker {
             }
         }
         return List.copyOf(result);
+    }
+
+    private boolean hasHostCapability(UiModel.Component component) {
+        return component.contracts().stream()
+                .filter(UiModel.Capability.class::isInstance)
+                .map(UiModel.Capability.class::cast)
+                .map(UiModel.Capability::name)
+                .anyMatch(value -> value.startsWith("host."));
+    }
+
+    private boolean containsPayload(UiModel.Expr expression) {
+        if (expression instanceof UiModel.PathExpr path) {
+            return !path.parts().isEmpty() && path.parts().get(0).equals("payload");
+        }
+        if (expression instanceof UiModel.Has has) return containsPayload(has.path());
+        if (expression instanceof UiModel.Unary unary) return containsPayload(unary.operand());
+        if (expression instanceof UiModel.Binary binary) {
+            return containsPayload(binary.left()) || containsPayload(binary.right());
+        }
+        return false;
     }
 
     private UiModel.TypeRef type(UiModel.Expr expression, Map<String, UiModel.TypeRef> scope,
