@@ -321,7 +321,15 @@ public final class CanonicalCompiler {
         try {
             module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
         } catch (UiDiagnostic failure) {
-            SemanticId owner = operations.get(0).targetId();
+            SemanticId owner = inspection.symbols().stream()
+                    .filter(symbol -> contains(symbol.range(), failure.line(), failure.column()))
+                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                    .findFirst()
+                    .orElse(operations.get(0).targetId());
+            List<RepairScope> targetedScopes = operations.stream()
+                    .filter(operation -> operationOwns(operation, owner))
+                    .map(operation -> new RepairScope(operationName(operation), owner))
+                    .toList();
             return List.of(new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
                     new SourceRange(
@@ -330,7 +338,8 @@ public final class CanonicalCompiler {
                     owner,
                     failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
                     failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
-                    List.of(), transactionScopes, "query_deal_module"));
+                    List.of(), targetedScopes.isEmpty() ? transactionScopes : targetedScopes,
+                    "query_deal_symbol"));
         }
         if (inspection.appInterface() == null) {
             return List.of();
@@ -414,6 +423,15 @@ public final class CanonicalCompiler {
         SemanticId produced = DealCompilerWorkspace.declarationSemanticId(
                 value.declaration(), "/generated/app.deal");
         return semanticId.equals(produced);
+    }
+
+    private static boolean contains(SourceRange range, int line, int column) {
+        if (range == null) return false;
+        boolean afterStart = line > range.startLine()
+                || line == range.startLine() && column >= range.startColumn();
+        boolean beforeEnd = line < range.endLine()
+                || line == range.endLine() && column <= range.endColumn();
+        return afterStart && beforeEnd;
     }
 
     private static boolean markerInsideRange(String source, SourceRange range, String marker) {

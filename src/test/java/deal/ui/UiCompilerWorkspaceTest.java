@@ -51,6 +51,7 @@ public final class UiCompilerWorkspaceTest {
         canonicalDealChangeRequiresAnnotatedUpdateHandlers();
         unreachableActionDiagnosticIsComplete();
         frameworkDiagnosticsUseCompilerOwnedRepairSlots();
+        borrowedMutationDiagnosticOwnsHandlerSlot();
         semanticQueryScopesUiOperations();
         checkedUiChangesRequireQueriedFingerprint();
         documentQueryAddsAndRemovesViewsAtomically();
@@ -352,6 +353,45 @@ public final class UiCompilerWorkspaceTest {
         check(repaired.source().contains("class IncrementAction")
                         && repaired.source().contains("// @ui-update"),
                 "the repaired candidate must retain both dependent declarations");
+    }
+
+    private static void borrowedMutationDiagnosticOwnsHandlerSlot() {
+        String bootstrap = """
+                export class AppState { count: int = 0; }
+                export function initialState(): AppState { return {count: 0}; }
+                """;
+        var inspected = deal.compiler.DealCompilerWorkspace.inspect(
+                bootstrap, "/generated/app.deal", DealUiDealSource.ADAPTER);
+        var module = CanonicalCompiler.queryDealModule(bootstrap);
+        var changeInspection = CanonicalCompiler.inspectDealChange(
+                bootstrap, inspected.sourceDigest(), List.of(module.ownerId()),
+                List.of(deal.compiler.DealCompilerWorkspace.ADD_DECLARATION));
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(
+                inspected.sourceDigest(), Map.of(
+                        module.ownerId().value(), module.allowedOperations().get(0).targetFingerprint()));
+        var operations = List.of(
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), "export class DoneAction {}"),
+                new deal.compiler.DealCompilerWorkspace.AddDeclaration(
+                        module.ownerId(), """
+                                // @ui-update
+                                export function updateDone(state: AppState, action: DoneAction): AppState {
+                                  let next: AppState = state;
+                                  next.count = state.count + 1;
+                                  return next;
+                                }
+                                """));
+        var staged = CanonicalCompiler.stageDealChange(
+                bootstrap, precondition, changeInspection, operations);
+        var rejected = staged.workspace().slots().stream()
+                .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
+                .toList();
+        check(rejected.size() == 1
+                        && rejected.get(0).payload().get("declaration").contains("function updateDone")
+                        && rejected.get(0).diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
+                "borrowed mutation must open only its owning handler slot: " + staged.workspace().slots());
+        check(staged.workspace().slots().get(0).status() == CompilerProtocol.RepairSlotStatus.STAGED,
+                "the handler's action type must remain staged");
     }
 
     private static void semanticQueryScopesUiOperations() {
