@@ -1132,7 +1132,7 @@ public final class UiCompilerWorkspace {
             if (owner != null) repairScopes.add(new RepairScope(
                     owner.kind().equals("view") ? REPLACE_VIEW_BODY : REPLACE_SUBTREE, owner.id()));
             else if (viewSnapshots.isEmpty()) repairScopes.add(new RepairScope(ADD_VIEW, documentId));
-            if ((failure.code().equals("UI2006") || failure.code().equals("UI2051")) && owner != null) {
+            if ((failure.code().equals("UI2006") || failure.code().equals("UI2061")) && owner != null) {
                 SemanticId ownerView = owner.ownerViewId();
                 targets.values().stream()
                         .filter(Target::hasChildrenBlock)
@@ -1142,9 +1142,17 @@ public final class UiCompilerWorkspace {
             }
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
-                    new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.line(), failure.column()),
+                    new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn()),
                     ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
-                    owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")");
+                    owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")",
+                    null, failure.notes());
+            String diagnosticSource = switch (failure.file().toString()) {
+                case "/generated/app.deal" -> dealSource;
+                case "/generated/app.dealui" -> uiSource;
+                case "/generated/platform-ui.dealui-pack" -> packSource;
+                default -> null;
+            };
+            if (diagnosticSource != null) diagnostic = diagnostic.withSourceContext(diagnosticSource);
             UiInspection inspection = new UiInspection(
                     CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,
@@ -1185,7 +1193,7 @@ public final class UiCompilerWorkspace {
                 .sorted(Comparator.comparing(UiModel.Component::name))
                 .toList();
         throw new UiDiagnostic(
-                "UI2051",
+                "UI2061",
                 "Declared host capabilities are not implemented by the view graph: "
                         + String.join(", ", missing),
                 span.file(), span.line(), span.column(),
@@ -1520,7 +1528,8 @@ public final class UiCompilerWorkspace {
                 operations.get(0).targetId(), diagnostic.expected(), diagnostic.actual(),
                 operations.stream().map(Operation::targetId).toList(),
                 operations.stream().map(value -> new RepairScope(operationName(value), value.targetId())).toList(),
-                "queryDealUiNode(" + operations.get(0).targetId().value() + ")");
+                "queryDealUiNode(" + operations.get(0).targetId().value() + ")",
+                diagnostic.context(), diagnostic.notes());
     }
 
     private static StructuredDiagnostic diagnostic(

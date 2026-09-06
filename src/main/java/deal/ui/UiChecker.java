@@ -623,7 +623,7 @@ public final class UiChecker {
         if (type instanceof ArrayType array) return typeName(array.elementType()) + "[]";
         return type.toString();
     }
-    private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic.code(), diagnostic.message(), Path.of(diagnostic.range().file()), diagnostic.range().startLine(), diagnostic.range().startColumn()); }
+    private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic); }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
     private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {
         if (nodes.size() != 1) throw new UiDiagnostic(

@@ -40,6 +40,7 @@ public final class UiCompilerWorkspaceTest {
     private UiCompilerWorkspaceTest() {}
 
     public static void main(String[] args) {
+        diagnosticEvidenceUsesRejectedUiAndRealFile();
         stateProducerQueriesUseTypedBodies();
         eventContractsIncludeNestedPayloadTypes();
         identitiesAreDeterministicAndCommentIndependent();
@@ -64,6 +65,24 @@ public final class UiCompilerWorkspaceTest {
         editSurfaceCarriesForEachLexicalTypes();
         repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {
+        String badUi = UI.replace("value: state.title", "value: state.title state.count");
+        var diagnostic = CanonicalCompiler.inspectCanonicalApp(DEAL, badUi, PACK, "./ui.pack")
+                .diagnostics().stream().filter(value -> value.code().equals("UI1009")).findFirst().orElseThrow();
+        check(diagnostic.expected().equals(")") && diagnostic.actual().equals("state"),
+                "UI parser must identify expected and actual tokens");
+        check(diagnostic.range().endColumn() > diagnostic.range().startColumn(), "token range must not collapse to a point");
+        check(diagnostic.context() != null && diagnostic.context().excerpt().contains("state.title state.count")
+                        && diagnostic.context().sourceDigest().equals(deal.compiler.DealCompilerWorkspace.digest(badUi)),
+                "UI diagnostics must carry the rejected candidate, not accepted UI or DEAL");
+        try {
+            UiParser.parseViews(java.nio.file.Path.of("actual.dealui"), "/* unfinished");
+            throw new AssertionError("unfinished comment must fail");
+        } catch (UiDiagnostic failure) {
+            check(failure.file().toString().equals("actual.dealui"), "lexer diagnostics must preserve the caller file");
+        }
     }
 
     private static void stateProducerQueriesUseTypedBodies() {
@@ -398,7 +417,7 @@ public final class UiCompilerWorkspaceTest {
                 bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), missingDirective);
         check(!rejected.accepted(), "unannotated canonical update must reject");
         check(rejected.source().equals(bootstrap), "framework-contract rejection must roll back the whole ChangeSet");
-        check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
+        check(rejected.diagnostics().stream().anyMatch(value -> value.code().equals("UI2060")),
                 "missing update annotation must have a stable diagnostic");
 
         List<deal.compiler.DealCompilerWorkspace.Operation> orphanAction = List.of(
@@ -408,7 +427,7 @@ public final class UiCompilerWorkspaceTest {
         check(!orphanRejected.accepted(), "an exported nominal action without a handler must reject");
         check(orphanRejected.source().equals(bootstrap), "an orphan action must roll back the whole ChangeSet");
         check(orphanRejected.diagnostics().stream().anyMatch(value ->
-                        value.code().equals("UI2050") && value.message().contains("IncrementAction")),
+                        value.code().equals("UI2060") && value.message().contains("IncrementAction")),
                 "the orphan action diagnostic must identify the missing handler");
 
         List<deal.compiler.DealCompilerWorkspace.Operation> misplacedDirective = List.of(
@@ -418,7 +437,7 @@ public final class UiCompilerWorkspaceTest {
         var misplacedRejected = CanonicalCompiler.applyDealChangeChecked(
                 bootstrap, new CompilerProtocol.ChangeSetPrecondition(inspected.sourceDigest(), fingerprints), misplacedDirective);
         var misplacedDiagnostic = misplacedRejected.diagnostics().stream()
-                .filter(value -> value.code().equals("UI2050")).findFirst().orElseThrow();
+                .filter(value -> value.code().equals("UI2060")).findFirst().orElseThrow();
         check(misplacedDiagnostic.message().contains("inside function"),
                 "a misplaced marker must explain the actual location: " + misplacedDiagnostic);
         check(misplacedDiagnostic.expected().contains("immediately before export function update"),
@@ -468,15 +487,15 @@ public final class UiCompilerWorkspaceTest {
                         "export function update(state: AppState, action: IncrementAction): AppState { return state; }"));
         var staged = CanonicalCompiler.stageDealChange(
                 bootstrap, precondition, changeInspection, operations);
-        check(!staged.accepted(), "UI2050 must reject inside the compiler-owned workspace");
-        check(staged.diagnostics().stream().anyMatch(value -> value.code().equals("UI2050")),
+        check(!staged.accepted(), "UI2060 must reject inside the compiler-owned workspace");
+        check(staged.diagnostics().stream().anyMatch(value -> value.code().equals("UI2060")),
                 "workspace must retain the framework diagnostic");
         var rejected = staged.workspace().slots().stream()
                 .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
                 .toList();
         check(rejected.size() == 1 && rejected.get(0).payload().get("declaration").contains("function update"),
                 "only the unannotated handler slot must remain writable: " + staged.workspace().slots());
-        check(rejected.get(0).diagnostics().stream().anyMatch(value -> value.code().equals("UI2050"))
+        check(rejected.get(0).diagnostics().stream().anyMatch(value -> value.code().equals("UI2060"))
                         && rejected.get(0).diagnostics().stream().noneMatch(value -> value.code().equals("E3004")),
                 "the active slot must expose dependency-aware framework diagnostics, not isolated false failures");
         var repaired = CanonicalCompiler.patchDealRepairWorkspace(
@@ -653,7 +672,7 @@ public final class UiCompilerWorkspaceTest {
                 }
                 """;
         var diagnostic = UiCompilerWorkspace.inspect(deal, missing, pack, "./ui.pack")
-                .diagnostics().stream().filter(value -> value.code().equals("UI2051"))
+                .diagnostics().stream().filter(value -> value.code().equals("UI2061"))
                 .findFirst().orElseThrow();
         check(diagnostic.expected().contains(
                         "ui.FrameClock(onTick: action app.IncrementAction {})")

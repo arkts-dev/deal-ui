@@ -16,7 +16,12 @@ public final class UiParser {
 
     private UiParser(Path file, String source) {
         this.file = file;
-        tokens = lex(source);
+        try {
+            tokens = lex(source);
+        } catch (UiDiagnostic failure) {
+            throw new UiDiagnostic(failure.code(), failure.getMessage(), file, failure.line(), failure.column(),
+                    failure.endLine(), failure.endColumn(), failure.expected(), failure.actual());
+        }
     }
 
     public static UiModel.ViewModule parseViews(Path file, String source) {
@@ -354,8 +359,18 @@ public final class UiParser {
     private boolean at(K kind) { return peek().kind() == kind; }
     private boolean at(String text) { return peek().text().equals(text); }
     private boolean match(String text) { if (!at(text)) return false; position++; return true; }
-    private T require(String text) { if (!at(text)) fail("UI1009", "Expected '" + text + "'", peek()); return take(); }
-    private void fail(String code, String message, T token) { throw new UiDiagnostic(code, message, file, token.line(), token.column()); }
+    private T require(String text) {
+        if (!at(text)) {
+            T token = peek();
+            throw new UiDiagnostic("UI1009", "Expected '" + text + "'", file,
+                    token.line(), token.column(), token.endLine(), token.endColumn(), text, token.kind() == K.EOF ? "end of input" : token.text());
+        }
+        return take();
+    }
+    private void fail(String code, String message, T token) {
+        throw new UiDiagnostic(code, message, file, token.line(), token.column(), token.endLine(), token.endColumn(),
+                "", token.kind() == K.EOF ? "end of input" : token.text());
+    }
     private <V> void duplicate(Map<String, V> map, String name, V value) { if (map.putIfAbsent(name, value) != null) fail("UI1010", "Duplicate declaration '" + name + "'", previous()); }
 
     private static List<T> lex(String source) {

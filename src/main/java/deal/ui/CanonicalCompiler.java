@@ -382,12 +382,12 @@ public final class CanonicalCompiler {
                     failure.code(), "error", failure.getMessage(),
                     new SourceRange(
                             failure.file().toString(), failure.line(), failure.column(),
-                            failure.line(), failure.column()),
+                            failure.endLine(), failure.endColumn()),
                     owner,
                     failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
                     failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
                     List.of(), targetedScopes.isEmpty() ? transactionScopes : targetedScopes,
-                    "query_deal_symbol"));
+                    "query_deal_symbol", null, failure.notes()).withSourceContext(source));
         }
         if (inspection.appInterface() == null) {
             return List.of();
@@ -453,12 +453,12 @@ public final class CanonicalCompiler {
             }
             if (targetedScopes.isEmpty()) targetedScopes = transactionScopes;
             diagnostics.add(new StructuredDiagnostic(
-                    "UI2050", "error", message,
+                    "UI2060", "error", message,
                     range, owner,
                     "// @ui-update immediately before export function "
                             + (candidate == null ? "handler" : candidate.name()),
                     markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
-                    related, targetedScopes, "query_deal_module"));
+                    related, targetedScopes, "query_deal_module").withSourceContext(source));
         }
         return List.copyOf(diagnostics);
     }
