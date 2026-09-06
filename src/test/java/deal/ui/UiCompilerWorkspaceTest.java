@@ -40,6 +40,7 @@ public final class UiCompilerWorkspaceTest {
     private UiCompilerWorkspaceTest() {}
 
     public static void main(String[] args) {
+        eventContractsIncludeNestedPayloadTypes();
         identitiesAreDeterministicAndCommentIndependent();
         subtreeRepairIsAtomicAndScoped();
         propertyEditPreservesSiblings();
@@ -62,6 +63,21 @@ public final class UiCompilerWorkspaceTest {
         editSurfaceCarriesForEachLexicalTypes();
         repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void eventContractsIncludeNestedPayloadTypes() {
+        String pack = PACK + """
+                export class Position { x: int = 0; y: int = 0; }
+                export class Gesture { position: Position; phase: int = 0; }
+                export class GestureProps { onChange?: Action; }
+                export component GestureArea(props: GestureProps): View { event onChange(payload: Gesture); }
+                """;
+        var inspection = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, pack, "./ui.pack");
+        var event = inspection.componentPack().components().stream()
+                .filter(component -> component.name().equals("GestureArea")).findFirst().orElseThrow().events().get(0);
+        check(event.bindingRoot().equals("payload"), "event root is compiler-owned");
+        check(event.payloadTypes().size() == 2, "nested payload records must be included");
+        check(event.payloadTypes().get(1).fields().get(0).type().equals("int"), "payload field types survive metadata");
     }
 
     private static void editSurfaceContainsOnlyCompilerOwnedVisualContext() {

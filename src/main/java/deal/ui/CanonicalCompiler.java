@@ -82,7 +82,14 @@ public final class CanonicalCompiler {
 
     public record PropertySnapshot(String name, String type, boolean optional) {}
 
-    public record EventSnapshot(String property, String payloadType) {}
+    public record PayloadTypeSnapshot(String name, List<PropertySnapshot> fields) {
+        public PayloadTypeSnapshot { fields = List.copyOf(fields); }
+    }
+
+    public record EventSnapshot(String property, String payloadType, String bindingRoot,
+                                List<PayloadTypeSnapshot> payloadTypes) {
+        public EventSnapshot { payloadTypes = List.copyOf(payloadTypes); }
+    }
 
     public record TokenSnapshot(String name, String type) {}
 
@@ -193,7 +200,9 @@ public final class CanonicalCompiler {
                     parent = value.componentType();
                 } else if (contract instanceof UiModel.Event value) {
                     events.add(new EventSnapshot(
-                            value.prop(), value.payload() == null ? "none" : typeText(value.payload())));
+                            value.prop(), value.payload() == null ? "none" : typeText(value.payload()),
+                            value.payload() == null ? "" : "payload",
+                            payloadTypes(pack, value.payload())));
                 } else if (contract instanceof UiModel.Capability value) {
                     capabilities.add(value.name());
                 }
@@ -209,6 +218,24 @@ public final class CanonicalCompiler {
 
     private static String typeText(UiModel.TypeRef type) {
         return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? "?" : "");
+    }
+
+    private static List<PayloadTypeSnapshot> payloadTypes(UiModel.PackModule pack, UiModel.TypeRef root) {
+        if (root == null) return List.of();
+        List<String> pending = new ArrayList<>();
+        Set<String> visited = new LinkedHashSet<>();
+        List<PayloadTypeSnapshot> result = new ArrayList<>();
+        pending.add(simpleName(root.name()));
+        for (int i = 0; i < pending.size(); i++) {
+            String name = pending.get(i);
+            if (!visited.add(name)) continue;
+            UiModel.PackClass record = pack.classes().get(name);
+            if (record == null) continue;
+            result.add(new PayloadTypeSnapshot(name, record.fields().stream().map(field ->
+                    new PropertySnapshot(field.name(), typeText(field.type()), field.type().optional())).toList()));
+            record.fields().forEach(field -> pending.add(simpleName(field.type().name())));
+        }
+        return List.copyOf(result);
     }
 
     private static String defaultExpression(UiModel.TypeRef type) {
