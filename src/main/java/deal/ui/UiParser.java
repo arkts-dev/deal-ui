@@ -273,6 +273,14 @@ public final class UiParser {
         }
         if (match("action")) {
             String name = qualified();
+            if (!at("{")) {
+                T token = peek();
+                throw new UiDiagnostic("UI1009",
+                        "Expected '{' after action " + name + "; action bindings use field initializers, not function-call arguments",
+                        file, token.line(), token.column(), token.endLine(), token.endColumn(),
+                        "action " + name + " { field: value }; omit fields for a parameterless action",
+                        token.kind() == K.EOF ? "end of input" : token.text());
+            }
             require("{");
             Map<String, UiModel.Expr> fields = new LinkedHashMap<>();
             while (!match("}")) {

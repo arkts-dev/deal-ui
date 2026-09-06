@@ -68,6 +68,16 @@ public final class UiCompilerWorkspaceTest {
     }
 
     private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {
+        try {
+            UiParser.parseViews(java.nio.file.Path.of("action.dealui"),
+                    "export view App(state: app.State): View { ui.Button(onClick: action app.Select(id: 1) { }) }");
+            throw new AssertionError("action call syntax must fail");
+        } catch (UiDiagnostic failure) {
+            check(failure.code().equals("UI1009") && failure.actual().equals("(")
+                            && failure.expected().contains("action app.Select { field: value }")
+                            && failure.getMessage().contains("not function-call arguments"),
+                    "action initializer diagnostic must explain the grammar production being repaired");
+        }
         String badUi = UI.replace("value: state.title", "value: state.title state.count");
         var diagnostic = CanonicalCompiler.inspectCanonicalApp(DEAL, badUi, PACK, "./ui.pack")
                 .diagnostics().stream().filter(value -> value.code().equals("UI1009")).findFirst().orElseThrow();
