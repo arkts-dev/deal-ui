@@ -176,12 +176,16 @@ public final class UiCompilerWorkspace {
             List<TypeSnapshot> compatibleActions,
             String appThemeSource,
             List<UiComponentContract> componentContracts,
+            List<UiModel.Parameter> lexicalBindings,
+            List<TypeSnapshot> bindingTypes,
             OperationDescriptor allowedOperation) {
         public UiEditSurface {
             children = List.copyOf(children);
             statePaths = List.copyOf(statePaths);
             compatibleActions = List.copyOf(compatibleActions);
             componentContracts = List.copyOf(componentContracts);
+            lexicalBindings = List.copyOf(lexicalBindings);
+            bindingTypes = List.copyOf(bindingTypes);
         }
     }
 
@@ -409,10 +413,48 @@ public final class UiCompilerWorkspace {
                 .toList();
         OperationDescriptor replacement = descriptor(
                 analysis, target, REPLACE_SUBTREE, List.of("source"));
+        UiModel.ViewModule module = UiParser.parseViews(Path.of("/generated/app.dealui"), dealUiSource);
+        List<UiModel.Parameter> bindings = new ArrayList<>();
+        for (UiModel.View view : module.views()) {
+            if (containsSpan(view.span(), node.range().startLine(), node.range().startColumn())) {
+                bindings.addAll(view.parameters());
+                collectLexicalBindings(view.nodes(), node.range().startLine(), node.range().startColumn(), bindings);
+                break;
+            }
+        }
+        Set<String> requiredTypes = bindings.stream().map(value -> simpleName(value.type().name()))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<TypeSnapshot> types = dealInspection.appInterface().types();
+        boolean expanded;
+        do {
+            int before = requiredTypes.size();
+            types.stream().filter(value -> requiredTypes.contains(simpleName(value.name())))
+                    .forEach(value -> value.fields().forEach(field -> requiredTypes.add(simpleName(field.type().replace("[]", "")))));
+            expanded = before != requiredTypes.size();
+        } while (expanded);
+        Set<String> usedActions = analysis.inspection().nodes().stream().filter(value -> subtreeIds.contains(value.id()))
+                .flatMap(value -> value.actionBindings().stream()).map(UiCompilerWorkspace::simpleName)
+                .collect(java.util.stream.Collectors.toSet());
         return new UiEditSurface(
                 revision(analysis), node.id(), analysis.source().substring(target.start(), target.end()),
                 node, parent, directChildren, List.copyOf(statePaths),
-                dealInspection.appInterface().actions(), themeSource, contracts, replacement);
+                dealInspection.appInterface().actions().stream().filter(value -> usedActions.contains(simpleName(value.name()))).toList(),
+                themeSource, contracts, bindings,
+                types.stream().filter(value -> requiredTypes.contains(simpleName(value.name()))).toList(), replacement);
+    }
+
+    private static boolean containsSpan(UiModel.Span span, int line, int column) {
+        return (line > span.line() || line == span.line() && column >= span.column())
+                && (line < span.endLine() || line == span.endLine() && column <= span.endColumn());
+    }
+
+    private static void collectLexicalBindings(List<UiModel.Node> nodes, int line, int column, List<UiModel.Parameter> bindings) {
+        for (UiModel.Node node : nodes) {
+            if (!containsSpan(node.span(), line, column)) continue;
+            if (node instanceof UiModel.ForEach each) bindings.add(each.item());
+            collectLexicalBindings(children(node), line, column, bindings);
+            return;
+        }
     }
 
     private static void collectSubtreeIds(

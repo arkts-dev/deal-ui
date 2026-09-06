@@ -403,6 +403,13 @@ public final class UiFrameworkTest {
             "let item: Item = { id: 7, title: \"fresh\" }; let items: Item[] = [item]; items[0] = { id: 8, title: \"replacement\" }; " +
             "return { title: state.title, count: state.count, expanded: true, items: items }; }");
         expectValid(root, source(root), freshLocal, pack(root), "fresh local mutation is allowed in UI handlers");
+        for (String loop : List.of(
+                "while (i < 2) { item.title = \"changed\"; item = state.items[0]; i = i + 1; }",
+                "for (let j: int = 0; j < 2; j = j + 1) { item.title = \"changed\"; item = state.items[0]; }")) {
+            expect("UI2050", source(root), original.replace(originalUpdate,
+                    "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { "
+                    + "let item: Item = { id: 7, title: \"fresh\" }; let i: int = 0; " + loop + " return state; }"));
+        }
 
         String readOnlyHelper = original.replace("// @ui-update\n" + originalUpdate,
             "function titleOf(item: Item): string { return item.title; }\n" +

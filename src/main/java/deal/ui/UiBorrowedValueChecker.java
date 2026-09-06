@@ -181,17 +181,17 @@ final class UiBorrowedValueChecker {
                 merge(yes);
                 merge(no);
             } else if (statement instanceof WhileStatement loop) {
-                expression(loop.condition());
-                Analyzer body = new Analyzer(this);
-                body.block(loop.body());
-                merge(body);
+                loopFixedPoint(body -> {
+                    body.expression(loop.condition());
+                    body.block(loop.body());
+                });
             } else if (statement instanceof ForOfStatement loop) {
                 expression(loop.iterable());
                 Analyzer body = new Analyzer(this);
                 Shape itemShape = shape(loop.varType());
                 body.shapes.put(loop.varName(), itemShape);
                 body.origins.put(loop.varName(), origin(loop.iterable()).element(itemShape.reference(classes)));
-                body.block(loop.body());
+                body.loopFixedPoint(iteration -> iteration.block(loop.body()));
                 merge(body);
             } else if (statement instanceof ForStatement loop) {
                 Analyzer body = new Analyzer(this);
@@ -199,9 +199,11 @@ final class UiBorrowedValueChecker {
                     if (init instanceof ForInit.VarDecl variable) body.statement(variable.decl());
                     else body.assignment(((ForInit.AssignExpr) init).expr());
                 });
-                loop.condition().ifPresent(body::expression);
-                body.block(loop.body());
-                loop.update().ifPresent(body::expression);
+                body.loopFixedPoint(iteration -> {
+                    loop.condition().ifPresent(iteration::expression);
+                    iteration.block(loop.body());
+                    loop.update().ifPresent(iteration::expression);
+                });
                 merge(body);
             } else if (statement instanceof DeleteStatement deleted) {
                 mutate(deleted.target(), deleted.span(), "deletes through a borrowed value");
@@ -350,6 +352,18 @@ final class UiBorrowedValueChecker {
             branch.violations.forEach(violations::putIfAbsent);
             branch.origins.forEach((name, value) -> origins.merge(name, value, Origin::merge));
             branch.shapes.forEach(shapes::putIfAbsent);
+        }
+
+        private void loopFixedPoint(java.util.function.Consumer<Analyzer> iteration) {
+            Map<String, Origin> before;
+            Map<String, Shape> beforeShapes;
+            do {
+                before = Map.copyOf(origins);
+                beforeShapes = Map.copyOf(shapes);
+                Analyzer body = new Analyzer(this);
+                iteration.accept(body);
+                merge(body);
+            } while (!before.equals(origins) || !beforeShapes.equals(shapes));
         }
     }
 

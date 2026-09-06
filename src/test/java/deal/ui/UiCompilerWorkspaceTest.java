@@ -59,6 +59,7 @@ public final class UiCompilerWorkspaceTest {
         documentQueryAddsAndRemovesViewsAtomically();
         inspectChangeBuildsUiDependencyCone();
         editSurfaceContainsOnlyCompilerOwnedVisualContext();
+        editSurfaceCarriesForEachLexicalTypes();
         repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
     }
@@ -99,8 +100,9 @@ public final class UiCompilerWorkspaceTest {
                 "edit surface must include the immediate parent contract anchor");
         check(surface.statePaths().equals(List.of("state.title")),
                 "edit surface must include recursive state dependencies only");
-        check(surface.compatibleActions().stream().anyMatch(value -> value.name().equals("IncrementAction")),
-                "edit surface must include compiler-extracted compatible actions");
+        check(surface.compatibleActions().isEmpty(), "a text node must not receive unrelated actions");
+        check(surface.lexicalBindings().stream().anyMatch(value -> value.name().equals("state")), "root binding is typed");
+        check(surface.bindingTypes().stream().anyMatch(value -> value.name().equals("AppState")), "root type fields are available");
         check(surface.appThemeSource().contains("#336699") && !surface.appThemeSource().contains("ui.Text"),
                 "edit surface must include the theme without leaking the full view");
         check(surface.componentContracts().stream().map(UiCompilerWorkspace.UiComponentContract::name)
@@ -125,6 +127,33 @@ public final class UiCompilerWorkspaceTest {
         check(change.dependencyCone().edges().stream().anyMatch(value ->
                         value.to().equals(text.id()) && value.kind().equals("PARENT_CHILD")),
                 "UI cone must be owned by compiler parent/child identities");
+    }
+
+    private static void editSurfaceCarriesForEachLexicalTypes() {
+        String deal = "export class Item { id: int = 0; title: string = \"\"; }\n"
+                + "export class AppState { items: Item[] = []; }\n"
+                + "export function initialState(): AppState { return {items: []}; }";
+        String ui = """
+                import * as app from "./app.deal";
+                import * as ui from "./ui.pack";
+                // @ui-root
+                export view App(state: app.AppState): View {
+                  ui.Column() {
+                    ForEach(state.items, item: app.Item, key: item.id) {
+                      ui.Column() { ui.Text(value: item.title) }
+                    }
+                  }
+                }
+                """;
+        var inspection = UiCompilerWorkspace.inspect(deal, ui, PACK, "./ui.pack");
+        var node = inspection.nodes().stream().filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
+        var surface = UiCompilerWorkspace.queryEditSurface(deal, ui, PACK, "./ui.pack", node.id());
+        check(surface.lexicalBindings().stream().anyMatch(value -> value.name().equals("item") && value.type().name().equals("app.Item")),
+                "nested subtree inherits the ForEach variable even when its immediate parent is a Column");
+        check(surface.bindingTypes().stream().anyMatch(value -> value.name().equals("Item")
+                        && value.fields().stream().anyMatch(field -> field.name().equals("title") && field.type().equals("string"))),
+                "the lexical item record exposes checked field types");
+        check(surface.source().equals("ui.Text(value: item.title)"), "context lookup must not expand the source subtree");
     }
 
     private static void repairWorkspacePatchesOnlyRejectedUiSlot() {
