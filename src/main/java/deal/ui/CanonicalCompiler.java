@@ -310,6 +310,23 @@ public final class CanonicalCompiler {
                 rejectingResolver(), DealUiDealSource.ADAPTER);
     }
 
+    /** State-schema edits must review existing state producers, not only the initializer. */
+    public static List<SemanticSlice> queryRootStateProducers(String source) {
+        var inspected = DealCompilerWorkspace.inspect(
+                source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);
+        var module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
+        String root = inspected.appInterface().rootState();
+        var owners = inspected.symbols().stream().filter(symbol -> {
+            var function = module.functions().get(symbol.name());
+            return function != null && !symbol.name().equals("initialState")
+                    && function.returnType().name().equals(root)
+                    && function.returnType().dimensions() == 0;
+        }).map(deal.compiler.CompilerProtocol.SymbolSnapshot::id).toList();
+        return inspected.nodes().stream()
+                .filter(node -> node.kind().equals("function-body") && owners.contains(node.ownerId()))
+                .map(node -> queryDealNode(source, node.id())).toList();
+    }
+
     public static SemanticSlice queryDealModule(String source) {
         return DealCompilerWorkspace.queryModule(
                 source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);

@@ -40,6 +40,7 @@ public final class UiCompilerWorkspaceTest {
     private UiCompilerWorkspaceTest() {}
 
     public static void main(String[] args) {
+        stateProducerQueriesUseTypedBodies();
         eventContractsIncludeNestedPayloadTypes();
         identitiesAreDeterministicAndCommentIndependent();
         subtreeRepairIsAtomicAndScoped();
@@ -63,6 +64,17 @@ public final class UiCompilerWorkspaceTest {
         editSurfaceCarriesForEachLexicalTypes();
         repairWorkspacePatchesOnlyRejectedUiSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void stateProducerQueriesUseTypedBodies() {
+        String source = DEAL + "\nfunction cloneState(state: AppState): AppState { return state; }\n"
+                + "function unrelated(): int { return 3; }\n";
+        var producers = CanonicalCompiler.queryRootStateProducers(source);
+        check(producers.size() == 2, "state producers include helpers but exclude initializer and scalar functions");
+        check(producers.stream().allMatch(slice -> slice.allowedOperations().stream()
+                .anyMatch(operation -> operation.operation().equals("replaceFunctionBody"))),
+                "each producer must carry its compiler-issued body edit operation");
+        check(producers.equals(CanonicalCompiler.queryRootStateProducers(source)), "producer inspection is deterministic");
     }
 
     private static void eventContractsIncludeNestedPayloadTypes() {
