@@ -12,7 +12,7 @@ import static deal.compiler.CompilerProtocolJson.*;
 public final class CanonicalConstruction extends DealConstruction {
     private final boolean ui;
     public CanonicalConstruction(boolean ui) { this.ui = ui; }
-    private static final Set<String> UI_VALUES = Set.of("text", "integer", "boolean", "reference", "field", "binary", "unary");
+    private static final Set<String> UI_VALUES = Set.of("text", "integer", "boolean", "reference", "path", "field", "binary", "unary");
 
     @Override protected Built invoke(String op, CanonicalJson.Obj c) {
         if (!ui) {
@@ -49,12 +49,12 @@ public final class CanonicalConstruction extends DealConstruction {
             return !ui || UI_VALUES.contains(op);
         }).toList());
         var s = textSchema();
-        var fields = arraySchema(objectSchema(Map.of("name", s, "value", s)));
+        var fields = arraySchema(objectSchema(Map.of("name", s, "value", operandSchema())));
         if (!ui) operations.add(callSchema("declareUpdate", functionSchema()));
         else {
             operations.add(callSchema("action", Map.of("name", s, "fields", fields)));
             operations.add(callSchema("component", Map.of("name", s, "fields", fields, "children", arraySchema(s))));
-            operations.add(callSchema("when", Map.of("condition", s, "children", arraySchema(s))));
+            operations.add(callSchema("when", Map.of("condition", operandSchema(), "children", arraySchema(s))));
             operations.add(callSchema("forEach", Map.of("collection", s, "item", s, "type", s, "key", s, "children", arraySchema(s))));
             operations.add(callSchema("uiBody", Map.of("children", arraySchema(s))));
             operations.add(callSchema("view", Map.of("name", s, "stateType", s, "body", s)));
