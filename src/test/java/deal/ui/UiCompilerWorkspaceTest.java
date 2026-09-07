@@ -40,6 +40,7 @@ public final class UiCompilerWorkspaceTest {
     private UiCompilerWorkspaceTest() {}
 
     public static void main(String[] args) {
+        hostReadinessUsesPackAndActionTypes();
         diagnosticEvidenceUsesRejectedUiAndRealFile();
         stateProducerQueriesUseTypedBodies();
         eventContractsIncludeNestedPayloadTypes();
@@ -714,6 +715,29 @@ public final class UiCompilerWorkspaceTest {
         String consumedPayload = ignoredPayload.replace("deltaMillis: 16", "deltaMillis: payload");
         check(UiCompilerWorkspace.inspect(typedDeal, consumedPayload, pack, "./ui.pack").diagnostics().isEmpty(),
                 "a payload-bearing host event must accept a compatible payload-derived action");
+    }
+
+    private static void hostReadinessUsesPackAndActionTypes() {
+        String pack = """
+                pack version "host-check";
+                export class ClockProps { onTick: Action; }
+                export component Clock(props: ClockProps): View {
+                  event onTick(payload: int); capability "host.clock.minute";
+                }
+                """;
+        var manifest = CanonicalCompiler.inspectComponentPack(pack);
+        String source = "// generated-capability: clock.minute\n" + DEAL
+                .replace("export class IncrementAction {}", "export class IncrementAction { text: string = \"\"; }");
+        var blocked = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(source), manifest);
+        check(blocked.size() == 1 && blocked.getFirst().supported() && !blocked.getFirst().ready()
+                && !blocked.getFirst().missingEvents().isEmpty(), "missing payload type must block readiness");
+        var ready = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(
+                source.replace("text: string = \"\"", "value: int = 0")), manifest);
+        check(ready.getFirst().ready(), "compatible integer payload must unblock readiness");
+        var unsupported = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(
+                "// generated-capability: storage.private\n" + DEAL), manifest);
+        check(!unsupported.getFirst().supported() && !unsupported.getFirst().ready(),
+                "absent pack capability must never be advertised as constructible");
     }
 
     private static void check(boolean condition, String message) {

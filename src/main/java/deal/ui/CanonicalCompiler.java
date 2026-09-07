@@ -93,6 +93,40 @@ public final class CanonicalCompiler {
 
     public record TokenSnapshot(String name, String type) {}
 
+    public record HostRequirement(String capability, boolean supported, boolean ready,
+                                  List<ComponentSnapshot> components, List<String> missingEvents) {}
+
+    /** Necessary structural conditions for constructing host bindings before authoring a view.
+     * Final view validation still checks the actual expressions and event payload consumption. */
+    public static List<HostRequirement> inspectHostRequirements(
+            deal.compiler.CompilerProtocol.AppInterfaceSnapshot app, ComponentPackSnapshot pack) {
+        return app.capabilities().stream().map(capability -> {
+            var components = pack.components().stream()
+                    .filter(component -> component.capabilities().contains("host." + capability)).toList();
+            List<String> missing = new ArrayList<>();
+            boolean ready = false;
+            for (var component : components) {
+                List<String> componentMissing = new ArrayList<>();
+                for (var event : component.events()) {
+                    boolean compatible = app.actions().stream().anyMatch(action -> {
+                        if (action.fields().isEmpty()) return true;
+                        if (event.payloadType() == null || event.payloadType().isEmpty()) return true;
+                        return action.fields().stream().anyMatch(field ->
+                                field.type().equals(event.payloadType()) || event.payloadTypes().stream()
+                                        .flatMap(type -> type.fields().stream())
+                                        .anyMatch(payloadField -> payloadField.type().equals(field.type())));
+                    });
+                    if (!compatible) componentMissing.add(component.name() + "." + event.property()
+                            + " requires an action field consuming payload:" + event.payloadType());
+                }
+                if (componentMissing.isEmpty()) ready = true;
+                missing.addAll(componentMissing);
+            }
+            return new HostRequirement(capability, !components.isEmpty(), ready,
+                    components, ready ? List.of() : List.copyOf(missing));
+        }).toList();
+    }
+
     public record CanonicalBootstrap(String deal, String dealUi) {}
 
     public record EditContract(
