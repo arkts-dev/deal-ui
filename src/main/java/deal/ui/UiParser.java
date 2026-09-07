@@ -238,7 +238,7 @@ public final class UiParser {
     private UiModel.Expr binary(int level) {
         if (level == 7) return unary();
         UiModel.Expr left = binary(level + 1);
-        while (precedence(peek().text()) == level) {
+        while (at(K.SYMBOL) && precedence(peek().text()) == level) {
             T operator = take();
             left = new UiModel.Binary(operator.text(), left, binary(level + 1), span(operator));
         }
@@ -360,12 +360,15 @@ public final class UiParser {
     private T take() { return tokens.get(position++); }
     private boolean atNamespacedStructural(String name) {
         return position + 2 < tokens.size()
+            && tokens.get(position).kind() == K.ID
+            && tokens.get(position + 1).kind() == K.SYMBOL
+            && tokens.get(position + 2).kind() == K.ID
             && tokens.get(position).text().equals("ui")
             && tokens.get(position + 1).text().equals(".")
             && tokens.get(position + 2).text().equals(name);
     }
     private boolean at(K kind) { return peek().kind() == kind; }
-    private boolean at(String text) { return peek().text().equals(text); }
+    private boolean at(String text) { return (at(K.ID) || at(K.SYMBOL)) && peek().text().equals(text); }
     private boolean match(String text) { if (!at(text)) return false; position++; return true; }
     private T require(String text) {
         if (!at(text)) {

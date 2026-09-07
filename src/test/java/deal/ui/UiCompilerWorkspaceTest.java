@@ -39,7 +39,22 @@ public final class UiCompilerWorkspaceTest {
 
     private UiCompilerWorkspaceTest() {}
 
+    private static void quotedSyntaxRemainsLiteralText() {
+        for (String text : List.of("-", "+", "!", "null", "true", "false", "action", "has", "(", ")", "{", "}", "[", "]", ",", ":", "When", "ForEach")) {
+            String source = UI.replace("\"Add\"", "\"" + text + "\"");
+            var parsed = UiParser.parseViews(java.nio.file.Path.of("app.dealui"), source);
+            var column = (UiModel.Call) parsed.views().getFirst().nodes().getFirst();
+            var button = (UiModel.Call) column.children().getLast();
+            check(button.arguments().get("text") instanceof UiModel.Literal literal
+                    && literal.type().equals("string") && text.equals(literal.value()),
+                    "quoted syntax must remain a string literal: " + text);
+            check(CanonicalCompiler.compileCanonicalApp(DEAL, source, PACK, "./ui.pack").valid(),
+                    "quoted label must compile through the canonical checker: " + text);
+        }
+    }
+
     public static void main(String[] args) {
+        quotedSyntaxRemainsLiteralText();
         hostReadinessUsesPackAndActionTypes();
         diagnosticEvidenceUsesRejectedUiAndRealFile();
         stateProducerQueriesUseTypedBodies();
