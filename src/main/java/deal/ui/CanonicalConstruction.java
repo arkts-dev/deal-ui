@@ -14,6 +14,15 @@ public final class CanonicalConstruction extends DealConstruction {
     public CanonicalConstruction(boolean ui) { this.ui = ui; }
     private static final Set<String> UI_VALUES = Set.of("text", "integer", "boolean", "reference", "path", "field", "binary", "unary");
 
+    @Override protected String value(CanonicalJson.Obj c, String key) {
+        var operand = field(c, key);
+        if (ui && operand instanceof CanonicalJson.Obj inline && inline.entries().size() == 1
+                && inline.entries().getFirst().key().equals("action")) {
+            return invoke("action", requireObject(field(inline, "action"), "action")).source();
+        }
+        return super.value(c, key);
+    }
+
     @Override protected Built invoke(String op, CanonicalJson.Obj c) {
         if (!ui) {
             if (op.equals("declareUpdate")) return new Built(Kind.DECLARATION, "// @ui-update\n" + function(c).source());
@@ -52,8 +61,12 @@ public final class CanonicalConstruction extends DealConstruction {
         var fields = arraySchema(objectSchema(Map.of("name", s, "value", operandSchema())));
         if (!ui) operations.add(callSchema("declareUpdate", functionSchema()));
         else {
+            var componentOperands = new ArrayList<Map<String, Object>>();
+            componentOperands.add(operandSchema());
+            componentOperands.add(objectSchema(Map.of("action", objectSchema(Map.of("name", s, "fields", fields)))));
+            var componentFields = arraySchema(objectSchema(Map.of("name", s, "value", Map.of("anyOf", componentOperands))));
             operations.add(callSchema("action", Map.of("name", s, "fields", fields)));
-            operations.add(callSchema("component", Map.of("name", s, "fields", fields, "children", arraySchema(s))));
+            operations.add(callSchema("component", Map.of("name", s, "fields", componentFields, "children", arraySchema(s))));
             operations.add(callSchema("when", Map.of("condition", operandSchema(), "children", arraySchema(s))));
             operations.add(callSchema("forEach", Map.of("collection", s, "item", s, "type", s, "key", s, "children", arraySchema(s))));
             operations.add(callSchema("uiBody", Map.of("children", arraySchema(s))));
