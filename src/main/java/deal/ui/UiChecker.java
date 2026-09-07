@@ -106,7 +106,7 @@ public final class UiChecker {
                 "Update actions are unreachable: " + String.join(", ", unreachableActions),
                 span.file(), span.line(), span.column(),
                 "Bind every listed action to a compatible component event in the checked view graph",
-                String.join(", ", unreachableActions));
+                String.join(", ", unreachableActions)).withRepairArtifact("dealui");
         }
         for (Map.Entry<String, UiModel.Handler> effect : effects.entrySet()) {
             if (!updates.containsKey(effect.getKey())) error("UI2007", "Effect action requires an update", effect.getValue().span());
@@ -508,7 +508,10 @@ public final class UiChecker {
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
         if (actual.name().equals("null") && expected.optional()) return;
-        if (!sameName(actual.name(), expected.name()) || actual.array() != expected.array()) error("UI2031", "Expected " + expected.name() + ", got " + actual.name(), span);
+        if (!sameName(actual.name(), expected.name()) || actual.array() != expected.array())
+            throw new UiDiagnostic("UI2031", "Expected " + expected.name() + ", got " + actual.name(),
+                    span.file(), span.line(), span.column(),
+                    expected.name() + (expected.array() ? "[]" : ""), actual.name() + (actual.array() ? "[]" : ""));
     }
     private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) { if (!actual.name().equals(expected)) error("UI2032", "Expected " + expected, span); }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }

@@ -80,6 +80,7 @@ public final class UiCompilerWorkspaceTest {
         editSurfaceContainsOnlyCompilerOwnedVisualContext();
         editSurfaceCarriesForEachLexicalTypes();
         repairWorkspacePatchesOnlyRejectedUiSlot();
+        repairCanAllocateNewUiNodeSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
     }
 
@@ -263,6 +264,13 @@ public final class UiCompilerWorkspaceTest {
                         new UiCompilerWorkspace.ReplaceSubtree(text.id(), "ui.Unknown(value: state.title)"),
                         new UiCompilerWorkspace.SetProperty(button.id(), "text", "\"Preserved\"")));
         check(!staged.accepted(), "invalid UI subtree must keep the candidate staged");
+        var grant = CanonicalCompiler.expandRepairScope(staged.workspace(), staged.workspace().workspaceDigest(), List.of());
+        var staleDeal = UiCompilerWorkspace.applyRepairTransaction(DEAL + "\n", UI, PACK, "./ui.pack", staged.workspace(), grant, List.of());
+        check(!staleDeal.accepted() && staleDeal.source().equals(UI)
+                        && staleDeal.workspace().equals(staged.workspace()) && staleDeal.diagnostics().getFirst().code().equals("CP2021"),
+                "UI grant must be rejected before changes when the DEAL context changes");
+        var stalePack = UiCompilerWorkspace.applyRepairTransaction(DEAL, UI, PACK + "\n", "./ui.pack", staged.workspace(), grant, List.of());
+        check(!stalePack.accepted() && stalePack.workspace().equals(staged.workspace()), "pack changes invalidate UI workspace grants");
         var rejected = staged.workspace().slots().stream()
                 .filter(value -> value.status() == CompilerProtocol.RepairSlotStatus.REJECTED)
                 .findFirst().orElseThrow();
@@ -277,6 +285,49 @@ public final class UiCompilerWorkspaceTest {
         check(repaired.accepted(), "narrow UI slot patch must commit: " + repaired.diagnostics());
         check(repaired.source().contains("Repaired") && repaired.source().contains("Preserved"),
                 "repaired and sealed UI payloads must both reach canonical source");
+    }
+
+    private static void repairCanAllocateNewUiNodeSlot() {
+        String ui = UI.replace("ui.Column(onClick: action app.IncrementAction {})", "ui.Column()");
+        var inspection = UiCompilerWorkspace.inspect(DEAL, ui, PACK, "./ui.pack");
+        var button = inspection.nodes().stream().filter(n -> n.component().equals("ui.Button")).findFirst().orElseThrow();
+        var precondition = new CompilerProtocol.ChangeSetPrecondition(inspection.sourceDigest(),
+                Map.of(button.id().value(), button.fingerprint()));
+        var scope = UiCompilerWorkspace.inspectChange(DEAL, ui, PACK, "./ui.pack", inspection.sourceDigest(),
+                List.of(button.id()), List.of(UiCompilerWorkspace.REPLACE_SUBTREE));
+        var original = UiCompilerWorkspace.stageChange(DEAL, ui, PACK, "./ui.pack", precondition, scope,
+                List.of(new UiCompilerWorkspace.ReplaceSubtree(button.id(), "ui.Text(value: \"Preserved replacement\")")));
+        check(!original.accepted(), "removing the last action binding requires repair");
+        var permissions = UiCompilerWorkspace.inspectRepairInsertions(DEAL, ui, PACK, "./ui.pack", original.workspace());
+        check(permissions.size() == 1, "only the untouched parent must receive insertion permission: " + permissions);
+        var permission = permissions.getFirst();
+        var expanded = UiCompilerWorkspace.expandRepairInsertion(DEAL, ui, PACK, "./ui.pack", original.workspace(),
+                original.workspace().workspaceDigest(), permission.id());
+        check(expanded.slots().size() == 2 && original.workspace().slots().size() == 1,
+                "expansion creates a new compiler slot without changing the previous workspace");
+        check(expanded.repairRound() == original.workspace().repairRound(), "scope expansion is not semantic repair");
+        check(expanded.slots().getFirst().payloadFingerprint().equals(original.workspace().slots().getFirst().payloadFingerprint()),
+                "expansion must preserve the original candidate operation");
+        check(UiCompilerWorkspace.inspectRepairInsertions(DEAL, ui, PACK, "./ui.pack", expanded).isEmpty(),
+                "an unresolved insertion must not allocate more placeholders");
+        boolean stale = false;
+        try { UiCompilerWorkspace.expandRepairInsertion(DEAL, ui, PACK, "./ui.pack", expanded,
+                original.workspace().workspaceDigest(), permission.id()); }
+        catch (IllegalArgumentException expected) { stale = true; }
+        check(stale, "stale insertion permission must fail before mutation");
+        var offer = CanonicalCompiler.inspectRepair(expanded);
+        var grant = CanonicalCompiler.expandRepairScope(expanded, expanded.workspaceDigest(),
+                offer.expansions().stream().map(deal.compiler.RepairWorkspaceProtocol.Expansion::id).toList());
+        var newSlot = expanded.slots().getLast();
+        var bad = UiCompilerWorkspace.applyRepairTransaction(DEAL, ui, PACK, "./ui.pack", expanded, grant,
+                List.of(new CompilerProtocol.SlotPatch(newSlot.slotId(), Map.of("index", "2", "source", "ui.Text(value: 123)"))));
+        check(!bad.accepted() && bad.source().equals(ui), "invalid inserted node must roll back canonical UI");
+        var good = UiCompilerWorkspace.applyRepairTransaction(DEAL, ui, PACK, "./ui.pack", expanded, grant,
+                List.of(new CompilerProtocol.SlotPatch(newSlot.slotId(), Map.of("index", "2", "source",
+                        "ui.Button(text: \"Increment\", onClick: action app.IncrementAction {})"))));
+        check(good.accepted(), "granted new node must fulfill the missing binding: " + good.diagnostics());
+        check(good.source().contains("Preserved replacement") && good.source().contains("Increment"),
+                "new node and previous candidate must commit together");
     }
 
     private static void identitiesAreDeterministicAndCommentIndependent() {

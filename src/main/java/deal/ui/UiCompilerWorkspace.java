@@ -25,6 +25,7 @@ import deal.compiler.CompilerProtocol.SlotPatch;
 import deal.compiler.CompilerProtocol.SemanticSlice;
 import deal.compiler.CompilerProtocolJson;
 import deal.compiler.DealCompilerWorkspace;
+import deal.compiler.RepairWorkspaceProtocol;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -548,11 +549,99 @@ public final class UiCompilerWorkspace {
             String packSpecifier,
             RepairWorkspaceSnapshot workspace,
             List<SlotPatch> patches) {
+        return applyRepairTransaction(dealSource, dealUiSource, packSource, packSpecifier, workspace, null, patches);
+    }
+
+    /** An insertion permission, bound to the complete candidate and its compiler context. */
+    public record RepairInsertion(String id, String workspaceDigest, SemanticId parentId,
+                                  int index, List<UiComponentContract> parentContracts,
+                                  List<StructuredDiagnostic> obligations) {
+        public RepairInsertion { parentContracts = List.copyOf(parentContracts); obligations = List.copyOf(obligations); }
+    }
+
+    public static List<RepairInsertion> inspectRepairInsertions(
+            String deal, String ui, String pack, String specifier, RepairWorkspaceSnapshot workspace) {
+        requireRepairContext(deal, ui, pack, specifier, workspace);
+        var offer = CanonicalCompiler.inspectRepair(workspace);
+        if (offer.disposition() == RepairWorkspaceProtocol.Disposition.UNSUPPORTED) return List.of();
+        Analysis base = analyze(deal, ui, pack, specifier);
+        var packModule = UiParser.parsePack(Path.of("/generated/platform-ui.dealui-pack"), pack);
+        List<RepairInsertion> result = new ArrayList<>();
+        for (Target parent : base.targets().values()) {
+            if (!parent.hasChildrenBlock()) continue;
+            // A second placeholder at the same parent must be repaired, not expanded again.
+            if (workspace.slots().stream().anyMatch(slot -> slot.operation().equals(INSERT_CHILD)
+                    && slot.targetId().equals(parent.id()) && slot.payload().getOrDefault("source", "").isBlank())) continue;
+            List<StructuredDiagnostic> obligations = offer.diagnostics().stream()
+                    .filter(d -> d.repairScopes().contains(new RepairScope(INSERT_CHILD, parent.id()))).toList();
+            if (obligations.isEmpty()) continue;
+            int index = base.inspection().nodes().stream().filter(n -> n.id().equals(parent.id()))
+                    .findFirst().map(n -> n.children().size()).orElse(0);
+            String id = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
+                    "ui-repair-insertion-v1", workspace.workspaceDigest(), parent.id(), index, obligations)));
+            var contracts = base.inspection().nodes().stream().filter(n -> n.id().equals(parent.id()))
+                    .map(n -> packModule.components().get(simpleName(n.component())))
+                    .filter(Objects::nonNull).map(c -> componentContract(c, packModule)).toList();
+            result.add(new RepairInsertion(id, workspace.workspaceDigest(), parent.id(), index, contracts, obligations));
+        }
+        return List.copyOf(result);
+    }
+
+    /** Scope expansion creates a compiler-owned slot; it never supplies or commits author code. */
+    public static RepairWorkspaceSnapshot expandRepairInsertion(
+            String deal, String ui, String pack, String specifier, RepairWorkspaceSnapshot workspace,
+            String expectedDigest, String insertionId) {
+        if (!workspace.workspaceDigest().equals(expectedDigest)) throw new IllegalArgumentException("Stale UI repair expansion");
+        RepairInsertion permission = inspectRepairInsertions(deal, ui, pack, specifier, workspace).stream()
+                .filter(value -> value.id().equals(insertionId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("UI repair insertion is not granted"));
+        List<Operation> operations = new ArrayList<>();
+        workspace.slots().forEach(slot -> operations.add(operation(slot.operation(), slot.targetId(), slot.payload())));
+        operations.add(new InsertChild(permission.parentId(), permission.index(), ""));
+        ChangeInspection inspection = inspectChange(deal, ui, pack, specifier, workspace.baseRevision().sourceDigest(),
+                operations.stream().map(Operation::targetId).distinct().toList(),
+                operations.stream().map(UiCompilerWorkspace::operationName).distinct().toList());
+        Map<String, String> fingerprints = new LinkedHashMap<>(workspace.precondition().expectedTargetFingerprints());
+        Analysis base = analyze(deal, ui, pack, specifier);
+        fingerprints.put(permission.parentId().value(), targetFingerprint(base, permission.parentId()));
+        var precondition = new ChangeSetPrecondition(workspace.precondition().baseDigest(), fingerprints);
+        UiChangeResult candidate = applyChecked(deal, ui, pack, specifier, precondition, operations);
+        return workspace(deal, ui, pack, specifier, precondition, inspection, operations, candidate,
+                workspace.repairRound(), workspace.slots());
+    }
+
+    private static void requireRepairContext(String deal, String ui, String pack, String specifier,
+                                             RepairWorkspaceSnapshot workspace) {
+        if (!DealCompilerWorkspace.digest(ui).equals(workspace.baseRevision().sourceDigest())
+                || !uiWorkspaceDigest(workspace).equals(workspace.workspaceDigest())
+                || !workspace.workspaceId().equals(uiWorkspaceId(deal, pack, specifier,
+                    workspace.precondition().baseDigest(), workspace.inspectionDigest(),
+                    workspace.slots().stream().map(RepairSlot::payload).toList())))
+            throw new IllegalArgumentException("Stale or invalid UI repair workspace context");
+    }
+
+    public static RepairWorkspaceResult applyRepairTransaction(
+            String dealSource, String dealUiSource, String packSource, String packSpecifier,
+            RepairWorkspaceSnapshot workspace, deal.compiler.RepairWorkspaceProtocol.Grant grant,
+            List<SlotPatch> patches) {
         if (!DealCompilerWorkspace.digest(dealUiSource).equals(workspace.baseRevision().sourceDigest())) {
             return rejectedWorkspace(dealUiSource, workspace, "CP2021", "Repair workspace base source is stale");
         }
         if (!uiWorkspaceDigest(workspace).equals(workspace.workspaceDigest())) {
             return rejectedWorkspace(dealUiSource, workspace, "CP2022", "Repair workspace digest is invalid");
+        }
+        if (!workspace.workspaceId().equals(uiWorkspaceId(dealSource, packSource, packSpecifier,
+                workspace.precondition().baseDigest(), workspace.inspectionDigest(),
+                workspace.slots().stream().map(RepairSlot::payload).toList()))) {
+            return rejectedWorkspace(dealUiSource, workspace, "CP2021", "Repair workspace DEAL or component-pack context is stale");
+        }
+        if (grant != null) {
+            try {
+                deal.compiler.RepairWorkspaceProtocol.validateGrant(workspace, grant, UiRepairDiagnostics.registry());
+                if (!grant.obligations().isEmpty()) throw new IllegalArgumentException("UI transaction cannot fulfill DEAL declaration obligations");
+            } catch (IllegalArgumentException invalid) {
+                return rejectedWorkspace(dealUiSource, workspace, "CP1030", invalid.getMessage());
+            }
         }
         Map<String, SlotPatch> bySlot = new LinkedHashMap<>();
         for (SlotPatch patch : patches) {
@@ -563,11 +652,12 @@ public final class UiCompilerWorkspace {
         List<Operation> operations = new ArrayList<>();
         for (RepairSlot slot : workspace.slots()) {
             SlotPatch patch = bySlot.remove(slot.slotId());
-            if (patch != null && slot.status() != RepairSlotStatus.REJECTED) {
-                return rejectedWorkspace(dealUiSource, workspace, "CP2024", "Only rejected repair slots are writable");
+            if (patch != null && (grant == null ? slot.status() != RepairSlotStatus.REJECTED : !grant.slots().contains(slot.slotId()))) {
+                return rejectedWorkspace(dealUiSource, workspace, "CP2024", "Repair slot is outside the writable scope");
             }
             Map<String, String> payload = new LinkedHashMap<>(slot.payload());
             if (patch != null) {
+                if (patch.drop()) return rejectedWorkspace(dealUiSource, workspace, "CP2025", "Dropping UI slots is not granted");
                 if (!payload.keySet().equals(patch.payload().keySet())) {
                     return rejectedWorkspace(dealUiSource, workspace, "CP2025", "Repair patch fields do not match the slot contract");
                 }
@@ -673,6 +763,11 @@ public final class UiCompilerWorkspace {
                     replacements.add(new Replacement(target.start(), target.end(), "", false));
                 }
                 case InsertChild value -> {
+                    if (value.source() == null || value.source().isBlank()) {
+                        return rejected(base, diagnostic("CP2004", "A Deal UI child node is required", target.id(), target.range(),
+                                "one constructed UI node", "empty child slot", List.of(new RepairScope(INSERT_CHILD, target.id())),
+                                "queryDealUiNode"));
+                    }
                     if (!target.hasChildrenBlock()) {
                         return rejected(base, diagnostic(
                                 "CP2001", "Target has no child block", target.id(), target.range(),
@@ -734,7 +829,7 @@ public final class UiCompilerWorkspace {
         Analysis checked = analyze(dealSource, candidate, packSource, packSpecifier);
         if (hasErrors(checked.inspection().diagnostics())) {
             List<StructuredDiagnostic> scoped = checked.inspection().diagnostics().stream()
-                    .map(value -> scopeDiagnostic(value, requested))
+                    .map(value -> scopeDiagnostic(value, requested, base))
                     .toList();
             return new UiChangeResult(
                     false, dealUiSource, base.inspection().sourceDigest(), base.inspection(),
@@ -883,9 +978,8 @@ public final class UiCompilerWorkspace {
                             .sorted().map(value -> "G" + (value + 1)).toList(),
                     status));
         }
-        String workspaceId = DealCompilerWorkspace.digest(precondition.baseDigest() + "\u0000"
-                + inspection.inspectionDigest() + "\u0000"
-                + CompilerProtocolJson.encode(operations.stream().map(UiCompilerWorkspace::payload).toList()));
+        String workspaceId = uiWorkspaceId(dealSource, packSource, packSpecifier, precondition.baseDigest(),
+                inspection.inspectionDigest(), operations.stream().map(UiCompilerWorkspace::payload).toList());
         RepairWorkspaceSnapshot draft = new RepairWorkspaceSnapshot(
                 workspaceId, "", new RevisionRef(CompilerProtocol.VERSION, DealCompilerWorkspace.digest(dealUiSource)),
                 inspection.inspectionDigest(), precondition, slots, groups, round);
@@ -934,6 +1028,9 @@ public final class UiCompilerWorkspace {
                 if (node != null && Objects.equals(node.parentId(), candidate.targetId())) {
                     result.get(consumer).add(provider);
                 }
+                UiNodeSnapshot other = nodes.get(candidate.targetId());
+                if (node != null && other != null && (!disjoint(node.statePaths(), other.statePaths())
+                        || !disjoint(node.actionBindings(), other.actionBindings()))) result.get(consumer).add(provider);
                 if (operation instanceof MoveNode move
                         && move.newParentId().equals(candidate.targetId())) {
                     result.get(consumer).add(provider);
@@ -1056,6 +1153,13 @@ public final class UiCompilerWorkspace {
                 workspace.precondition(), workspace.slots(), workspace.groups(), workspace.repairRound())));
     }
 
+    private static String uiWorkspaceId(String deal, String pack, String packSpecifier, String baseDigest,
+                                        String inspectionDigest, List<Map<String, String>> payloads) {
+        return DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
+                "ui-repair-context-v2", DealCompilerWorkspace.digest(deal), DealCompilerWorkspace.digest(pack),
+                packSpecifier, baseDigest, inspectionDigest, payloads)));
+    }
+
     private static RepairWorkspaceResult rejectedWorkspace(
             String source, RepairWorkspaceSnapshot workspace, String code, String message) {
         SemanticId owner = workspace.slots().isEmpty()
@@ -1121,8 +1225,10 @@ public final class UiCompilerWorkspace {
                     viewSnapshots, nodeSnapshots, checked.metadata(), ALLOWED_OPERATIONS, List.of());
             return new Analysis(uiSource, inspection, documentId, targets, index);
         } catch (UiDiagnostic failure) {
-            Target owner = narrowestTarget(targets.values(), failure.line(), failure.column());
-            if (owner == null && !viewSnapshots.isEmpty()) {
+            boolean uiOwned = failure.repairArtifact().equals("dealui") || failure.file().toString().equals("/generated/app.dealui");
+            Target owner = failure.file().toString().equals("/generated/app.dealui")
+                    ? narrowestTarget(targets.values(), failure.line(), failure.column()) : null;
+            if (uiOwned && owner == null && !viewSnapshots.isEmpty()) {
                 SemanticId root = viewSnapshots.stream().filter(UiViewSnapshot::root)
                         .map(UiViewSnapshot::id).findFirst().orElse(viewSnapshots.get(0).id());
                 owner = targets.get(root);
@@ -1131,7 +1237,7 @@ public final class UiCompilerWorkspace {
             List<RepairScope> repairScopes = new ArrayList<>();
             if (owner != null) repairScopes.add(new RepairScope(
                     owner.kind().equals("view") ? REPLACE_VIEW_BODY : REPLACE_SUBTREE, owner.id()));
-            else if (viewSnapshots.isEmpty()) repairScopes.add(new RepairScope(ADD_VIEW, documentId));
+            else if (uiOwned && viewSnapshots.isEmpty()) repairScopes.add(new RepairScope(ADD_VIEW, documentId));
             if ((failure.code().equals("UI2006") || failure.code().equals("UI2061")) && owner != null) {
                 SemanticId ownerView = owner.ownerViewId();
                 targets.values().stream()
@@ -1203,7 +1309,7 @@ public final class UiCompilerWorkspace {
                                 + matchingComponents.stream()
                                 .map(component -> hostComponentRepairContract(component, appInterface))
                                 .reduce((left, right) -> left + "; " + right).orElse(""),
-                String.join(", ", missing));
+                String.join(", ", missing)).withRepairArtifact("dealui");
     }
 
     private static String hostComponentRepairContract(
@@ -1522,14 +1628,39 @@ public final class UiCompilerWorkspace {
 
     private static StructuredDiagnostic scopeDiagnostic(
             StructuredDiagnostic diagnostic,
-            List<? extends Operation> operations) {
+            List<? extends Operation> operations, Analysis base) {
+        List<RepairScope> scopes = new ArrayList<>(operations.stream()
+                .map(value -> new RepairScope(operationName(value), value.targetId())).toList());
+        // Candidate node ids are revision-scoped. Reissue global insertion permissions on
+        // untouched base containers, never forward a candidate id into a base transaction.
+        if (diagnostic.repairScopes().stream().anyMatch(scope -> scope.operation().equals(INSERT_CHILD))) {
+            for (Target parent : base.targets().values()) {
+                if (!parent.hasChildrenBlock()) continue;
+                boolean nearestContainer = operations.stream().anyMatch(operation -> {
+                    if (operation instanceof InsertChild) return false;
+                    Target target = base.targets().get(operation.targetId());
+                    if (target == null || parent.start() > target.start() || parent.end() < target.end()) return false;
+                    return base.targets().values().stream().noneMatch(other -> other.hasChildrenBlock()
+                            && !other.id().equals(parent.id()) && !other.id().equals(target.id())
+                            && other.start() >= parent.start() && other.end() <= parent.end()
+                            && other.start() <= target.start() && other.end() >= target.end());
+                });
+                if (!nearestContainer) continue;
+                boolean replaced = operations.stream().anyMatch(operation -> {
+                    Target target = base.targets().get(operation.targetId());
+                    return target != null && !(operation instanceof InsertChild) && !(operation instanceof SetProperty)
+                            && target.start() <= parent.start() && target.end() >= parent.end();
+                });
+                if (!replaced) scopes.add(new RepairScope(INSERT_CHILD, parent.id()));
+            }
+        }
         return new StructuredDiagnostic(
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
                 operations.get(0).targetId(), diagnostic.expected(), diagnostic.actual(),
                 operations.stream().map(Operation::targetId).toList(),
-                operations.stream().map(value -> new RepairScope(operationName(value), value.targetId())).toList(),
+                scopes,
                 "queryDealUiNode(" + operations.get(0).targetId().value() + ")",
-                diagnostic.context(), diagnostic.notes());
+                diagnostic.context(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
     }
 
     private static StructuredDiagnostic diagnostic(

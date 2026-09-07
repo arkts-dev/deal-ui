@@ -33,7 +33,11 @@ public final class CanonicalCompiler {
                         "deal-semantic-slices",
                         "dealui-semantic-slices",
                         "fingerprint-preconditions",
-                        "atomic-change-sets"));
+                        "atomic-change-sets",
+                        "repair-workspace-v2-local-groups",
+                        "repair-workspace-v2-ui-insertions",
+                        "repair-workspace-v2-deal-dependencies",
+                        deal.compiler.RepairDiagnosticRegistry.VERSION));
     }
 
     public static deal.compiler.CompilerProtocol.AppInterfaceSnapshot extractAppInterface(String source) {
@@ -334,6 +338,40 @@ public final class CanonicalCompiler {
                 source, "/generated/app.deal", workspace, patches,
                 rejectingResolver(), DealUiDealSource.ADAPTER,
                 CanonicalCompiler::dealUiContractDiagnostics);
+    }
+
+    public static RepairWorkspaceResult applyDealRepairTransaction(
+            String source, RepairWorkspaceSnapshot workspace, deal.compiler.RepairWorkspaceProtocol.Grant grant,
+            List<SlotPatch> patches, List<deal.compiler.RepairWorkspaceProtocol.Dependency> dependencies) {
+        return DealCompilerWorkspace.applyRepairTransaction(source, "/generated/app.deal", workspace, grant, patches,
+                dependencies, rejectingResolver(), DealUiDealSource.ADAPTER, CanonicalCompiler::dealUiContractDiagnostics,
+                UiRepairDiagnostics.registry());
+    }
+
+    public static deal.compiler.RepairWorkspaceProtocol.Offer inspectRepair(RepairWorkspaceSnapshot workspace) {
+        return deal.compiler.RepairWorkspaceProtocol.inspectRepair(workspace, UiRepairDiagnostics.registry());
+    }
+
+    public static deal.compiler.RepairWorkspaceProtocol.Grant expandRepairScope(
+            RepairWorkspaceSnapshot workspace, String digest, List<String> selections) {
+        return deal.compiler.RepairWorkspaceProtocol.expandRepairScope(workspace, digest, selections, UiRepairDiagnostics.registry());
+    }
+
+    public static RepairWorkspaceResult applyDealUiRepairTransaction(
+            String deal, String ui, String pack, String packSpecifier, RepairWorkspaceSnapshot workspace,
+            deal.compiler.RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches) {
+        return UiCompilerWorkspace.applyRepairTransaction(deal, ui, pack, packSpecifier, workspace, grant, patches);
+    }
+
+    public static List<UiCompilerWorkspace.RepairInsertion> inspectUiRepairInsertions(
+            String deal, String ui, String pack, String specifier, RepairWorkspaceSnapshot workspace) {
+        return UiCompilerWorkspace.inspectRepairInsertions(deal, ui, pack, specifier, workspace);
+    }
+
+    public static RepairWorkspaceSnapshot expandUiRepairInsertion(
+            String deal, String ui, String pack, String specifier, RepairWorkspaceSnapshot workspace,
+            String expectedDigest, String insertionId) {
+        return UiCompilerWorkspace.expandRepairInsertion(deal, ui, pack, specifier, workspace, expectedDigest, insertionId);
     }
 
     public static SemanticSlice queryDealSymbol(

@@ -12,6 +12,7 @@ public final class UiDiagnostic extends RuntimeException {
     private final int endColumn;
     private final String expected;
     private final String actual;
+    private final String repairArtifact;
     private final transient java.util.List<deal.diagnostics.DiagnosticNote> notes;
 
     public UiDiagnostic(String code, String message, Path file, int line, int column) {
@@ -38,6 +39,12 @@ public final class UiDiagnostic extends RuntimeException {
     private UiDiagnostic(String code, String message, Path file, int line, int column,
                          int endLine, int endColumn, String expected, String actual,
                          java.util.List<deal.diagnostics.DiagnosticNote> notes) {
+        this(code, message, file, line, column, endLine, endColumn, expected, actual, notes, "");
+    }
+
+    private UiDiagnostic(String code, String message, Path file, int line, int column,
+                         int endLine, int endColumn, String expected, String actual,
+                         java.util.List<deal.diagnostics.DiagnosticNote> notes, String repairArtifact) {
         super(message);
         this.code = code;
         this.file = file;
@@ -48,7 +55,15 @@ public final class UiDiagnostic extends RuntimeException {
         this.expected = expected;
         this.actual = actual;
         this.notes = java.util.List.copyOf(notes);
+        this.repairArtifact = repairArtifact;
     }
+
+    public UiDiagnostic withRepairArtifact(String artifact) {
+        if (!java.util.List.of("deal", "dealui", "pack").contains(artifact)) throw new IllegalArgumentException("Unknown repair artifact");
+        return new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, artifact);
+    }
+
+    public String repairArtifact() { return repairArtifact; }
 
     public String code() { return code; }
     public Path file() { return file; }
