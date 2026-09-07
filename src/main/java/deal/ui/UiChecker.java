@@ -217,7 +217,14 @@ public final class UiChecker {
                         if (!eventField.type().name().equals("Action")) error("UI2013", "Event prop must have Action type", call.span());
                     }
                     if (contract instanceof UiModel.Accessibility accessibility && call.arguments().containsKey(accessibility.prop())) requireType(type(call.arguments().get(accessibility.prop()), scope, deal, packClasses, tokens, aliases, actions, null), "string", call.span());
-                    if (contract instanceof UiModel.TokenProp tokenProp && call.arguments().containsKey(tokenProp.prop()) && !(call.arguments().get(tokenProp.prop()) instanceof UiModel.PathExpr path && tokens.containsKey(String.join(".", path.parts())))) error("UI2013", "Token prop requires a declared token", call.span());
+                    if (contract instanceof UiModel.TokenProp tokenProp && call.arguments().containsKey(tokenProp.prop()) && !(call.arguments().get(tokenProp.prop()) instanceof UiModel.PathExpr path && tokens.containsKey(String.join(".", path.parts())))) {
+                        String tokenType = props.fields().stream().filter(f -> f.name().equals(tokenProp.prop())).findFirst().orElseThrow().type().name();
+                        String available = String.join(", ", tokens.entrySet().stream().filter(e -> e.getValue().type().name().equals(tokenType))
+                                .map(Map.Entry::getKey).sorted().toList());
+                        error("UI2013", "Token property '" + call.name() + "." + tokenProp.prop()
+                                + "' requires a " + tokenType + " token reference, not quoted text. Available references: " + available,
+                                call.arguments().get(tokenProp.prop()).span());
+                    }
                 }
                 if (!children && !call.children().isEmpty()) error("UI2013", "Component rejects children", call.span());
                 for (Map.Entry<String, UiModel.Expr> argument : call.arguments().entrySet()) {

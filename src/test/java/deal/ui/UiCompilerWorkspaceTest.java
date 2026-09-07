@@ -69,6 +69,14 @@ public final class UiCompilerWorkspaceTest {
     }
 
     private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {
+        String tokenPack = PACK.replace("export class ColumnProps {", "export class ColumnProps { spacing?: Space;")
+                .replace("children optional; event onClick;", "children optional; event onClick; token spacing;")
+                + "\nexport class Space { value: int; }\nexport token spaceMd: Space = { value: 16 };\n";
+        var tokenDiagnostic = CanonicalCompiler.inspectCanonicalApp(DEAL,
+                UI.replace("ui.Column(onClick:", "ui.Column(spacing: \"spaceMd\", onClick:"), tokenPack, "./ui.pack")
+                .diagnostics().stream().filter(d -> d.code().equals("UI2013")).findFirst().orElseThrow();
+        check(tokenDiagnostic.message().contains("ui.Column.spacing") && tokenDiagnostic.message().contains("ui.spaceMd")
+                && tokenDiagnostic.message().contains("not quoted text"), "token diagnostic must identify property and valid references");
         try {
             UiParser.parseViews(java.nio.file.Path.of("action.dealui"),
                     "export view App(state: app.State): View { ui.Button(onClick: action app.Select(id: 1) { }) }");
