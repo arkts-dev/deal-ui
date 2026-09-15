@@ -33,6 +33,18 @@ import java.util.Map;
 import java.util.Set;
 
 public final class UiChecker {
+    private List<UiDiagnostic> collectedDiagnostics;
+
+    public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
+                                      UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
+        if (collectedDiagnostics != null) throw new IllegalStateException("Nested diagnostic collection");
+        collectedDiagnostics = new ArrayList<>();
+        try {
+            try { check(viewFile, module, dealFile, deal, packs); }
+            catch (UiDiagnostic diagnostic) { collectedDiagnostics.add(diagnostic); }
+            return List.copyOf(collectedDiagnostics);
+        } finally { collectedDiagnostics = null; }
+    }
     public UiModel.DealModule parseDeal(Path file, String source) {
         LexResult lexed = new Lexer(DealUiDealSource.parserSource(source), file.toString()).tokenize();
         first(lexed.diagnostics());
@@ -181,6 +193,7 @@ public final class UiChecker {
         int index = 0;
         for (UiModel.Node node : source) {
             String nodeIdentity = identity + "/" + index++;
+            try {
             if (node instanceof UiModel.Call call) {
                 UiModel.View view = views.get(simple(call.name()));
                 if (view != null && !components.containsKey(call.name())) {
@@ -203,7 +216,12 @@ public final class UiChecker {
                 UiModel.Component component = components.get(call.name());
                 if (component == null) error("UI2012", "Unknown component or view '" + call.name() + "'", call.span());
                 UiModel.PackClass props = findPackClass(component.propsType(), call.name(), packClasses);
-                exactProps(call.arguments(), props, call.span());
+                var propertyErrors = exactProps(call.arguments(), props, call.span());
+                if (!propertyErrors.isEmpty()) {
+                    if (collectedDiagnostics == null) throw propertyErrors.getFirst();
+                    propertyErrors.forEach(diagnostic -> collectedDiagnostics.add(diagnostic.atNode(call)));
+                    continue;
+                }
                 Map<String, UiModel.Event> events = new LinkedHashMap<>();
                 boolean children = false;
                 for (UiModel.Contract contract : component.contracts()) {
@@ -279,6 +297,10 @@ public final class UiChecker {
                 result.add(new UiModel.RenderForEach(each.source(), each.item(), each.key(),
                     lower(each.children(), nodeIdentity + "/item", nested, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, each.span()));
+            }
+            } catch (UiDiagnostic diagnostic) {
+                if (collectedDiagnostics == null) throw diagnostic.atNode(node);
+                collectedDiagnostics.add(diagnostic.atNode(node));
             }
         }
         return List.copyOf(result);
@@ -358,7 +380,11 @@ public final class UiChecker {
         UiModel.Token token = tokens.get(joined);
         if (token != null) return token.type();
         UiModel.TypeRef current = scope.get(path.parts().get(0));
-        if (current == null) error("UI2021", "Unknown path root '" + path.parts().get(0) + "'", path.span());
+        if (current == null) throw new UiDiagnostic("UI2021", "Unknown path root '" + path.parts().get(0)
+                + "'. Only bindings visible in this lexical scope may be used.", path.span().file(), path.span().line(), path.span().column(),
+                scope.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                        .map(e -> e.getKey() + ": " + e.getValue().name()).collect(java.util.stream.Collectors.joining(", ")),
+                path.parts().get(0));
         for (int i = 1; i < path.parts().size(); i++) {
             String fieldName = path.parts().get(i);
             if (current.optional()) error("UI2022", "Nullable intermediate path access", path.span());
@@ -369,7 +395,10 @@ public final class UiChecker {
             UiModel.Field field = clazz != null
                 ? clazz.fields().get(fieldName)
                 : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
-            if (field == null) error("UI2024", "Unknown field '" + fieldName + "'", path.span());
+            if (field == null) throw new UiDiagnostic("UI2024", "Unknown field '" + fieldName + "'",
+                    path.span().file(), path.span().line(), path.span().column(),
+                    (clazz != null ? clazz.fields().keySet().stream() : packClass.fields().stream().map(UiModel.Field::name))
+                            .sorted().collect(java.util.stream.Collectors.joining(", ")), fieldName);
             current = field.type();
         }
         return current;
@@ -493,13 +522,18 @@ public final class UiChecker {
         }
     }
 
-    private void exactProps(Map<String, UiModel.Expr> values, UiModel.PackClass props, UiModel.Span span) {
+    private List<UiDiagnostic> exactProps(Map<String, UiModel.Expr> values, UiModel.PackClass props, UiModel.Span span) {
+        var diagnostics = new ArrayList<UiDiagnostic>();
         Set<String> known = new LinkedHashSet<>();
         for (UiModel.Field field : props.fields()) {
             known.add(field.name());
-            if (!field.type().optional() && field.defaultValue() == null && !values.containsKey(field.name())) error("UI2028", "Missing required prop '" + field.name() + "'", span);
+            if (!field.type().optional() && field.defaultValue() == null && !values.containsKey(field.name()))
+                diagnostics.add(new UiDiagnostic("UI2028", "Missing required prop '" + field.name() + "'", span.file(), span.line(), span.column(),
+                        field.name() + ": " + field.type().name() + (field.type().array() ? "[]" : ""), "absent"));
         }
-        for (String name : values.keySet()) if (!known.contains(name)) error("UI2029", "Unknown prop '" + name + "'", span);
+        for (String name : values.keySet()) if (!known.contains(name)) diagnostics.add(new UiDiagnostic("UI2029", "Unknown prop '" + name + "'",
+                span.file(), span.line(), span.column(), known.stream().sorted().collect(java.util.stream.Collectors.joining(", ")), name));
+        return List.copyOf(diagnostics);
     }
 
     private void exactArguments(Map<String, ?> values, List<String> names, UiModel.Span span) {

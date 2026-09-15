@@ -13,6 +13,7 @@ public final class UiDiagnostic extends RuntimeException {
     private final String expected;
     private final String actual;
     private final String repairArtifact;
+    private transient UiModel.Node owningNode;
     private final transient java.util.List<deal.diagnostics.DiagnosticNote> notes;
 
     public UiDiagnostic(String code, String message, Path file, int line, int column) {
@@ -60,7 +61,19 @@ public final class UiDiagnostic extends RuntimeException {
 
     public UiDiagnostic withRepairArtifact(String artifact) {
         if (!java.util.List.of("deal", "dealui", "pack").contains(artifact)) throw new IllegalArgumentException("Unknown repair artifact");
-        return new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, artifact);
+        var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, artifact);
+        result.owningNode = owningNode;
+        return result;
+    }
+
+    /** The actual node in this check's AST, not an identity reconstructed from source coordinates. */
+    public UiModel.Node owningNode() { return owningNode; }
+
+    UiDiagnostic atNode(UiModel.Node node) {
+        if (owningNode != null) return this;
+        var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, repairArtifact);
+        result.owningNode = java.util.Objects.requireNonNull(node);
+        return result;
     }
 
     public String repairArtifact() { return repairArtifact; }
