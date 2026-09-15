@@ -388,10 +388,17 @@ public final class UiChecker {
         for (int i = 1; i < path.parts().size(); i++) {
             String fieldName = path.parts().get(i);
             if (current.optional()) error("UI2022", "Nullable intermediate path access", path.span());
-            if (current.array()) error("UI2023", "Path traverses non-class type", path.span());
+            if (current.array()) throw new UiDiagnostic(
+                    "UI2023",
+                    "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
+                    path.span().file(), path.span().line(), path.span().column(),
+                    "direct ForEach collection path or explicit scalar field", joined);
             UiModel.DealClass clazz = deal.classes().get(simple(current.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
-            if (clazz == null && packClass == null) error("UI2023", "Path traverses non-class type", path.span());
+            if (clazz == null && packClass == null) throw new UiDiagnostic(
+                    "UI2023", "Path traverses a value that has no declared fields",
+                    path.span().file(), path.span().line(), path.span().column(),
+                    "declared nominal field path", joined);
             UiModel.Field field = clazz != null
                 ? clazz.fields().get(fieldName)
                 : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
@@ -485,8 +492,9 @@ public final class UiChecker {
                     if (policy != null) {
                         Set<String> expected = componentTypes(policy.componentType(), call.name());
                         if (parent == null || !expected.contains(parent)) {
-                            error("UI2049", "Component requires parent '" + String.join(" | ", expected)
-                                    + "', got '" + (parent == null ? "root" : parent) + "'", call.span());
+                            throw new UiDiagnostic("UI2049", "Component is outside its compiler-declared parent contract",
+                                    call.span().file(), call.span().line(), call.span().column(),
+                                    String.join(" | ", expected), parent == null ? "root" : parent);
                         }
                     }
                 }
@@ -510,7 +518,10 @@ public final class UiChecker {
         String expectedDescription = String.join(" | ", expected);
         for (UiModel.RenderNode node : nodes) {
             if (node instanceof UiModel.RenderCall call) {
-                if (!expected.contains(call.name())) error("UI2048", "Component requires children of type '" + expectedDescription + "', got '" + call.name() + "'", call.span());
+                if (!expected.contains(call.name())) throw new UiDiagnostic(
+                        "UI2048", "Child violates the compiler-declared typed-child contract",
+                        call.span().file(), call.span().line(), call.span().column(),
+                        expectedDescription, call.name());
             } else if (node instanceof UiModel.RenderWhen when) {
                 validateTypedChildren(when.thenNodes(), expected, components, parentSpan);
                 validateTypedChildren(when.elseNodes(), expected, components, parentSpan);
