@@ -8,7 +8,7 @@ import java.util.Map;
 
 public final class UiParser {
     private enum K { ID, STRING, INT, NUMBER, SYMBOL, EOF }
-    private record T(K kind, String text, int line, int column) {}
+    private record T(K kind, String text, int line, int column, int endLine, int endColumn) {}
 
     private final Path file;
     private final List<T> tokens;
@@ -16,7 +16,12 @@ public final class UiParser {
 
     private UiParser(Path file, String source) {
         this.file = file;
-        tokens = lex(source);
+        try {
+            tokens = lex(source);
+        } catch (UiDiagnostic failure) {
+            throw new UiDiagnostic(failure.code(), failure.getMessage(), file, failure.line(), failure.column(),
+                    failure.endLine(), failure.endColumn(), failure.expected(), failure.actual());
+        }
     }
 
     public static UiModel.ViewModule parseViews(Path file, String source) {
@@ -55,6 +60,12 @@ public final class UiParser {
 
     private UiModel.PackModule pack(String source) {
         List<UiModel.Import> imports = imports();
+        String version = "unversioned";
+        if (match("pack")) {
+            require("version");
+            version = string();
+            require(";");
+        }
         Map<String, UiModel.PackClass> classes = new LinkedHashMap<>();
         Map<String, UiModel.Component> components = new LinkedHashMap<>();
         Map<String, UiModel.Token> tokens = new LinkedHashMap<>();
@@ -91,7 +102,18 @@ public final class UiParser {
                         if (match("children")) {
                             boolean required = match("required");
                             if (!required) match("optional");
-                            contracts.add(new UiModel.Children(required));
+                            String componentType = null;
+                            if (at(K.ID)) {
+                                StringBuilder types = new StringBuilder(qualified());
+                                while (match("|")) types.append('|').append(qualified());
+                                componentType = types.toString();
+                            }
+                            contracts.add(new UiModel.Children(required, componentType));
+                        } else if (match("parent")) {
+                            require("required");
+                            StringBuilder types = new StringBuilder(qualified());
+                            while (match("|")) types.append('|').append(qualified());
+                            contracts.add(new UiModel.Parent(types.toString()));
                         } else if (match("event")) {
                             String prop = id();
                             UiModel.TypeRef payload = null;
@@ -122,7 +144,7 @@ public final class UiParser {
                 duplicate(tokens, name, new UiModel.Token(name, type, value, span(start)));
             } else fail("UI1003", "Expected pack class, component, or token", peek());
         }
-        return new UiModel.PackModule(imports, classes, components, tokens, source);
+        return new UiModel.PackModule(version, sha256(source), imports, classes, components, tokens, source);
     }
 
     private List<UiModel.Import> imports() {
@@ -149,6 +171,14 @@ public final class UiParser {
 
     private UiModel.Node node() {
         T start = peek();
+        if (atNamespacedStructural("When") || atNamespacedStructural("ForEach")) {
+            String structural = tokens.get(position + 2).text();
+            fail(
+                "UI1014",
+                "Structural control flow is not namespaced; write " + structural + "(...) instead of ui." + structural + "(...)",
+                start
+            );
+        }
         if (match("When")) {
             require("(");
             UiModel.Expr condition = expression();
@@ -182,17 +212,33 @@ public final class UiParser {
             } while (match(",") && !at(")"));
         }
         require(")");
-        List<UiModel.Node> children = at("{") ? nodes() : List.of();
+        UiModel.Span childBlock = null;
+        List<UiModel.Node> children = List.of();
+        if (at("{")) {
+            T childStart = peek();
+            children = nodes();
+            childBlock = span(childStart);
+        }
         match(";");
-        return new UiModel.Call(name, arguments, children, span(start));
+        return new UiModel.Call(name, arguments, children, childBlock, span(start));
     }
 
-    private UiModel.Expr expression() { return binary(1); }
+    private UiModel.Expr expression() {
+        UiModel.Expr value = binary(1);
+        if (at("?")) {
+            fail(
+                "UI1015",
+                "Conditional expressions are not part of Deal UI; render alternatives with When(condition) { ... } Else { ... }",
+                peek()
+            );
+        }
+        return value;
+    }
 
     private UiModel.Expr binary(int level) {
         if (level == 7) return unary();
         UiModel.Expr left = binary(level + 1);
-        while (precedence(peek().text()) == level) {
+        while (at(K.SYMBOL) && precedence(peek().text()) == level) {
             T operator = take();
             left = new UiModel.Binary(operator.text(), left, binary(level + 1), span(operator));
         }
@@ -227,6 +273,14 @@ public final class UiParser {
         }
         if (match("action")) {
             String name = qualified();
+            if (!at("{")) {
+                T token = peek();
+                throw new UiDiagnostic("UI1009",
+                        "Expected '{' after action " + name + "; action bindings use field initializers, not function-call arguments",
+                        file, token.line(), token.column(), token.endLine(), token.endColumn(),
+                        "action " + name + " { field: value }; omit fields for a parameterless action",
+                        token.kind() == K.EOF ? "end of input" : token.text());
+            }
             require("{");
             Map<String, UiModel.Expr> fields = new LinkedHashMap<>();
             while (!match("}")) {
@@ -297,15 +351,37 @@ public final class UiParser {
         if (!at(K.STRING)) fail("UI1008", "Expected string literal", peek());
         return take().text();
     }
-    private UiModel.Span span(T token) { return new UiModel.Span(file, token.line(), token.column()); }
+    private UiModel.Span span(T token) {
+        T end = position == 0 ? token : previous();
+        return new UiModel.Span(file, token.line(), token.column(), end.endLine(), end.endColumn());
+    }
     private T peek() { return tokens.get(position); }
     private T previous() { return tokens.get(position - 1); }
     private T take() { return tokens.get(position++); }
+    private boolean atNamespacedStructural(String name) {
+        return position + 2 < tokens.size()
+            && tokens.get(position).kind() == K.ID
+            && tokens.get(position + 1).kind() == K.SYMBOL
+            && tokens.get(position + 2).kind() == K.ID
+            && tokens.get(position).text().equals("ui")
+            && tokens.get(position + 1).text().equals(".")
+            && tokens.get(position + 2).text().equals(name);
+    }
     private boolean at(K kind) { return peek().kind() == kind; }
-    private boolean at(String text) { return peek().text().equals(text); }
+    private boolean at(String text) { return (at(K.ID) || at(K.SYMBOL)) && peek().text().equals(text); }
     private boolean match(String text) { if (!at(text)) return false; position++; return true; }
-    private T require(String text) { if (!at(text)) fail("UI1009", "Expected '" + text + "'", peek()); return take(); }
-    private void fail(String code, String message, T token) { throw new UiDiagnostic(code, message, file, token.line(), token.column()); }
+    private T require(String text) {
+        if (!at(text)) {
+            T token = peek();
+            throw new UiDiagnostic("UI1009", "Expected '" + text + "'", file,
+                    token.line(), token.column(), token.endLine(), token.endColumn(), text, token.kind() == K.EOF ? "end of input" : token.text());
+        }
+        return take();
+    }
+    private void fail(String code, String message, T token) {
+        throw new UiDiagnostic(code, message, file, token.line(), token.column(), token.endLine(), token.endColumn(),
+                "", token.kind() == K.EOF ? "end of input" : token.text());
+    }
     private <V> void duplicate(Map<String, V> map, String name, V value) { if (map.putIfAbsent(name, value) != null) fail("UI1010", "Duplicate declaration '" + name + "'", previous()); }
 
     private static List<T> lex(String source) {
@@ -318,7 +394,7 @@ public final class UiParser {
                 int start = i, startColumn = column;
                 while (i < source.length() && source.charAt(i) != '\n') { i++; column++; }
                 String comment = source.substring(start, i).trim();
-                if (comment.equals("// @ui-root")) result.add(new T(K.ID, "@ui-root", line, startColumn));
+                if (comment.equals("// @ui-root")) result.add(new T(K.ID, "@ui-root", line, startColumn, line, column - 1));
                 continue;
             }
             if (c == '/' && i + 1 < source.length() && source.charAt(i + 1) == '*') {
@@ -333,7 +409,7 @@ public final class UiParser {
                 int start = i++;
                 column++;
                 while (i < source.length() && (Character.isLetterOrDigit(source.charAt(i)) || source.charAt(i) == '_')) { i++; column++; }
-                result.add(new T(K.ID, source.substring(start, i), startLine, startColumn));
+                result.add(new T(K.ID, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
             }
             if (Character.isDigit(c)) {
@@ -342,7 +418,7 @@ public final class UiParser {
                 while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
                 K kind = K.INT;
                 if (i < source.length() && source.charAt(i) == '.') { kind = K.NUMBER; i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
-                result.add(new T(kind, source.substring(start, i), startLine, startColumn));
+                result.add(new T(kind, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
             }
             if (c == '"') {
@@ -356,18 +432,28 @@ public final class UiParser {
                     else value.append(d);
                 }
                 if (!closed) throw new UiDiagnostic("UI1012", "Unterminated string", Path.of("<source>"), startLine, startColumn);
-                result.add(new T(K.STRING, value.toString(), startLine, startColumn));
+                result.add(new T(K.STRING, value.toString(), startLine, startColumn, line, column - 1));
                 continue;
             }
             String two = i + 1 < source.length() ? source.substring(i, i + 2) : "";
             if (List.of("||", "&&", "===", "!==", "<=", ">=").contains(two) || (i + 2 < source.length() && List.of("===", "!==").contains(source.substring(i, i + 3)))) {
                 String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
-                result.add(new T(K.SYMBOL, op, startLine, startColumn)); i += op.length(); column += op.length(); continue;
+                result.add(new T(K.SYMBOL, op, startLine, startColumn, line, startColumn + op.length() - 1)); i += op.length(); column += op.length(); continue;
             }
-            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn)); i++; column++; continue; }
+            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
             throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
-        result.add(new T(K.EOF, "", line, column));
+        result.add(new T(K.EOF, "", line, column, line, column));
         return List.copyOf(result);
+    }
+
+    private static String sha256(String source) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 }

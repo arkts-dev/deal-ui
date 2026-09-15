@@ -246,7 +246,19 @@ final class UiDealGenerator {
             UiModel.TypeRef root = scope.get(path.parts().get(0));
             if (root != null) return pathType(root, path.parts().subList(1, path.parts().size()));
         }
-        return new UiModel.TypeRef("string", false, false);
+        if (expression instanceof UiModel.Has) return new UiModel.TypeRef("boolean", false, false);
+        if (expression instanceof UiModel.Unary unary) {
+            if (unary.operator().equals("!")) return new UiModel.TypeRef("boolean", false, false);
+            return expressionType(unary.operand(), scope);
+        }
+        if (expression instanceof UiModel.Binary binary) {
+            return switch (binary.operator()) {
+                case "&&", "||", "===", "!==", "<", "<=", ">", ">=" -> new UiModel.TypeRef("boolean", false, false);
+                case "+", "-", "*", "/", "%" -> expressionType(binary.left(), scope);
+                default -> throw new IllegalStateException("Unknown UI expression operator " + binary.operator());
+            };
+        }
+        throw new IllegalStateException("Unknown UI expression type " + expression.getClass().getName());
     }
 
     private UiModel.TypeRef fieldType(UiModel.TypeRef root, UiModel.PathExpr path) { return pathType(root, path.parts().subList(1, path.parts().size())); }

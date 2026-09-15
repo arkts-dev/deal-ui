@@ -33,8 +33,20 @@ import java.util.Map;
 import java.util.Set;
 
 public final class UiChecker {
+    private List<UiDiagnostic> collectedDiagnostics;
+
+    public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
+                                      UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
+        if (collectedDiagnostics != null) throw new IllegalStateException("Nested diagnostic collection");
+        collectedDiagnostics = new ArrayList<>();
+        try {
+            try { check(viewFile, module, dealFile, deal, packs); }
+            catch (UiDiagnostic diagnostic) { collectedDiagnostics.add(diagnostic); }
+            return List.copyOf(collectedDiagnostics);
+        } finally { collectedDiagnostics = null; }
+    }
     public UiModel.DealModule parseDeal(Path file, String source) {
-        LexResult lexed = new Lexer(source, file.toString()).tokenize();
+        LexResult lexed = new Lexer(DealUiDealSource.parserSource(source), file.toString()).tokenize();
         first(lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), file.toString()).parse();
         first(parsed.diagnostics());
@@ -44,6 +56,12 @@ public final class UiChecker {
 
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
                                          UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
+        return check(viewFile, viewModule, dealFile, deal, packs, false);
+    }
+
+    public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
+                                         UiModel.DealModule deal, Map<String, UiModel.PackModule> packs,
+                                         boolean allowUnreachableUpdates) {
         Map<String, String> aliases = aliases(viewModule.imports());
         UiModel.View root = null;
         Map<String, UiModel.View> views = new LinkedHashMap<>();
@@ -82,13 +100,25 @@ public final class UiChecker {
         scope.put(root.parameters().get(0).name(), new UiModel.TypeRef(stateType, false, false));
         List<UiModel.RenderNode> nodes = lower(root.nodes(), root.name(), scope, views, components, packClasses,
             tokens, deal, aliases, reachableActions, new LinkedHashSet<>());
+        validateParentContracts(nodes, null, components);
         for (String action : reachableActions) {
             if (!updates.containsKey(action)) error("UI2005", "Reachable action '" + action + "' requires exactly one @ui-update", root.span());
         }
         Set<String> completionActions = effectCompletion(actions(effects));
         completionActions.addAll(effectCompletion(actions(effectFailures)));
-        for (String action : updates.keySet()) if (!reachableActions.contains(action) && !completionActions.contains(action)) {
-            error("UI2006", "Update action '" + action + "' is unreachable", updates.get(action).span());
+        List<String> unreachableActions = updates.keySet().stream()
+            .filter(action -> !allowUnreachableUpdates
+                && !reachableActions.contains(action)
+                && !completionActions.contains(action))
+            .toList();
+        if (!unreachableActions.isEmpty()) {
+            UiModel.Span span = updates.get(unreachableActions.get(0)).span();
+            throw new UiDiagnostic(
+                "UI2006",
+                "Update actions are unreachable: " + String.join(", ", unreachableActions),
+                span.file(), span.line(), span.column(),
+                "Bind every listed action to a compatible component event in the checked view graph",
+                String.join(", ", unreachableActions)).withRepairArtifact("dealui");
         }
         for (Map.Entry<String, UiModel.Handler> effect : effects.entrySet()) {
             if (!updates.containsKey(effect.getKey())) error("UI2007", "Effect action requires an update", effect.getValue().span());
@@ -106,14 +136,49 @@ public final class UiChecker {
             if (policy.mayStartEffect() && !effects.containsKey(policy.actionType())) error("UI2040", "Starting effect policy requires an effect", policy.span());
         }
         for (UiModel.Handler failure : effectFailures.values()) if (!effects.containsKey(failure.actionType())) error("UI2041", "Effect failure mapper requires an effect", failure.span());
+        Set<String> usedComponents = new LinkedHashSet<>();
+        collectComponents(nodes, usedComponents);
+        Map<String, String> capabilities = new LinkedHashMap<>();
+        for (String name : usedComponents) {
+            UiModel.Component component = components.get(name);
+            if (component == null) continue;
+            component.contracts().stream().filter(UiModel.Capability.class::isInstance)
+                .map(UiModel.Capability.class::cast).findFirst()
+                .ifPresent(capability -> capabilities.put(name, capability.name()));
+        }
+        Map<String, String> packVersions = new LinkedHashMap<>();
+        Map<String, String> packDigests = new LinkedHashMap<>();
+        packs.forEach((specifier, pack) -> {
+            packVersions.put(specifier, pack.version());
+            packDigests.put(specifier, pack.digest());
+        });
+        UiModel.CheckedMetadata metadata = new UiModel.CheckedMetadata(stateType,
+            reachableActions.stream().sorted().toList(), completionActions.stream().sorted().toList(),
+            usedComponents.stream().sorted().toList(), capabilities, packVersions, packDigests);
         return new UiModel.CheckedProgram(viewFile, dealFile, root.name(), stateType, views, components,
-            packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures);
+            packClasses, tokens, deal, nodes, updates, effects, effectPolicies, effectFailures, metadata);
     }
 
     private Set<String> effectCompletion(Map<String, UiModel.Handler> effects) {
         Set<String> result = new LinkedHashSet<>();
         effects.values().forEach(handler -> result.add(handler.returnType()));
         return result;
+    }
+
+    private void collectComponents(List<UiModel.RenderNode> nodes, Set<String> result) {
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                result.add(call.name());
+                collectComponents(call.children(), result);
+            } else if (node instanceof UiModel.RenderWhen when) {
+                collectComponents(when.thenNodes(), result);
+                collectComponents(when.elseNodes(), result);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                collectComponents(each.children(), result);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                collectComponents(scope.children(), result);
+            }
+        }
     }
 
     private Map<String, UiModel.Handler> actions(Map<String, UiModel.Handler> handlers) { return handlers; }
@@ -128,6 +193,7 @@ public final class UiChecker {
         int index = 0;
         for (UiModel.Node node : source) {
             String nodeIdentity = identity + "/" + index++;
+            try {
             if (node instanceof UiModel.Call call) {
                 UiModel.View view = views.get(simple(call.name()));
                 if (view != null && !components.containsKey(call.name())) {
@@ -138,7 +204,7 @@ public final class UiChecker {
                     Map<String, UiModel.Expr> bindings = new LinkedHashMap<>();
                     for (UiModel.Parameter parameter : view.parameters()) {
                         UiModel.Expr argument = call.arguments().get(parameter.name());
-                        checkAssignable(type(argument, scope, deal, tokens, aliases, actions, null), parameter.type(), call.span());
+                        checkAssignable(type(argument, scope, deal, packClasses, tokens, aliases, actions, null), parameter.type(), call.span());
                         nested.put(parameter.name(), parameter.type());
                         bindings.put(parameter.name(), argument);
                     }
@@ -150,7 +216,12 @@ public final class UiChecker {
                 UiModel.Component component = components.get(call.name());
                 if (component == null) error("UI2012", "Unknown component or view '" + call.name() + "'", call.span());
                 UiModel.PackClass props = findPackClass(component.propsType(), call.name(), packClasses);
-                exactProps(call.arguments(), props, call.span());
+                var propertyErrors = exactProps(call.arguments(), props, call.span());
+                if (!propertyErrors.isEmpty()) {
+                    if (collectedDiagnostics == null) throw propertyErrors.getFirst();
+                    propertyErrors.forEach(diagnostic -> collectedDiagnostics.add(diagnostic.atNode(call)));
+                    continue;
+                }
                 Map<String, UiModel.Event> events = new LinkedHashMap<>();
                 boolean children = false;
                 for (UiModel.Contract contract : component.contracts()) {
@@ -163,48 +234,106 @@ public final class UiChecker {
                         UiModel.Field eventField = props.fields().stream().filter(field -> field.name().equals(event.prop())).findFirst().orElseThrow();
                         if (!eventField.type().name().equals("Action")) error("UI2013", "Event prop must have Action type", call.span());
                     }
-                    if (contract instanceof UiModel.Accessibility accessibility && call.arguments().containsKey(accessibility.prop())) requireType(type(call.arguments().get(accessibility.prop()), scope, deal, tokens, aliases, actions, null), "string", call.span());
-                    if (contract instanceof UiModel.TokenProp tokenProp && call.arguments().containsKey(tokenProp.prop()) && !(call.arguments().get(tokenProp.prop()) instanceof UiModel.PathExpr path && tokens.containsKey(String.join(".", path.parts())))) error("UI2013", "Token prop requires a declared token", call.span());
+                    if (contract instanceof UiModel.Accessibility accessibility && call.arguments().containsKey(accessibility.prop())) requireType(type(call.arguments().get(accessibility.prop()), scope, deal, packClasses, tokens, aliases, actions, null), "string", call.span());
+                    if (contract instanceof UiModel.TokenProp tokenProp && call.arguments().containsKey(tokenProp.prop()) && !(call.arguments().get(tokenProp.prop()) instanceof UiModel.PathExpr path && tokens.containsKey(String.join(".", path.parts())))) {
+                        String tokenType = props.fields().stream().filter(f -> f.name().equals(tokenProp.prop())).findFirst().orElseThrow().type().name();
+                        String available = String.join(", ", tokens.entrySet().stream().filter(e -> e.getValue().type().name().equals(tokenType))
+                                .map(Map.Entry::getKey).sorted().toList());
+                        error("UI2013", "Token property '" + call.name() + "." + tokenProp.prop()
+                                + "' requires a " + tokenType + " token reference, not quoted text. Available references: " + available,
+                                call.arguments().get(tokenProp.prop()).span());
+                    }
                 }
                 if (!children && !call.children().isEmpty()) error("UI2013", "Component rejects children", call.span());
                 for (Map.Entry<String, UiModel.Expr> argument : call.arguments().entrySet()) {
                     UiModel.Field field = props.fields().stream().filter(value -> value.name().equals(argument.getKey())).findFirst().orElseThrow();
                     UiModel.Event event = events.get(argument.getKey());
-                    checkAssignable(type(argument.getValue(), scope, deal, tokens, aliases, actions, event), field.type(), argument.getValue().span());
+                    checkAssignable(type(argument.getValue(), scope, deal, packClasses, tokens, aliases, actions, event), field.type(), argument.getValue().span());
+                    if (event != null && event.payload() != null
+                            && hasHostCapability(component)
+                            && argument.getValue() instanceof UiModel.Action action
+                            && !action.fields().isEmpty()
+                            && action.fields().values().stream().noneMatch(this::containsPayload)) {
+                        throw new UiDiagnostic(
+                                "UI2052", "Host event action fields must consume the event payload",
+                                action.span().file(), action.span().line(), action.span().column(),
+                                "At least one action field derived from payload or payload.<field>",
+                                "Host payload ignored by constant or state-only action fields");
+                    }
                 }
-                result.add(new UiModel.RenderCall(call.name(), call.arguments(),
-                    lower(call.children(), nodeIdentity, scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
+                List<UiModel.RenderNode> loweredChildren = lower(call.children(), nodeIdentity, scope, views,
+                    components, packClasses, tokens, deal, aliases, actions, viewStack);
+                UiModel.Children childPolicy = component.contracts().stream()
+                    .filter(UiModel.Children.class::isInstance)
+                    .map(UiModel.Children.class::cast)
+                    .findFirst()
+                    .orElse(null);
+                if (childPolicy != null && childPolicy.typed()) {
+                    Set<String> expected = childTypes(childPolicy, call.name());
+                    validateTypedChildren(loweredChildren, expected, components, call.span());
+                }
+                result.add(new UiModel.RenderCall(call.name(), call.arguments(), loweredChildren,
                     nodeIdentity, call.span()));
             } else if (node instanceof UiModel.When when) {
-                requireType(type(when.condition(), scope, deal, tokens, aliases, actions, null), "boolean", when.condition().span());
+                requireType(type(when.condition(), scope, deal, packClasses, tokens, aliases, actions, null), "boolean", when.condition().span());
                 result.add(new UiModel.RenderWhen(when.condition(),
                     lower(when.thenNodes(), nodeIdentity + "/then", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     lower(when.elseNodes(), nodeIdentity + "/else", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, when.span()));
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
-                UiModel.TypeRef array = type(each.source(), scope, deal, tokens, aliases, actions, null);
+                UiModel.TypeRef array = type(each.source(), scope, deal, packClasses, tokens, aliases, actions, null);
                 if (!array.array() || !sameName(array.name(), each.item().type().name())) error("UI2014", "ForEach source must be exact item array", each.span());
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
-                UiModel.TypeRef key = type(each.key(), nested, deal, tokens, aliases, actions, null);
-                if (!key.name().equals("int") && !key.name().equals("string")) error("UI2015", "ForEach key must be int or string", each.key().span());
+                UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
+                if (!key.name().equals("int") && !key.name().equals("string")) {
+                    throw new UiDiagnostic(
+                            "UI2015", "ForEach key must be a stable int or string item field",
+                            each.key().span().file(), each.key().span().line(), each.key().span().column(),
+                            "stable int|string item field", key.name());
+                }
                 if (!each.key().parts().get(0).equals(each.item().name())) error("UI2016", "ForEach key must be item-rooted", each.key().span());
                 result.add(new UiModel.RenderForEach(each.source(), each.item(), each.key(),
                     lower(each.children(), nodeIdentity + "/item", nested, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, each.span()));
             }
+            } catch (UiDiagnostic diagnostic) {
+                if (collectedDiagnostics == null) throw diagnostic.atNode(node);
+                collectedDiagnostics.add(diagnostic.atNode(node));
+            }
         }
         return List.copyOf(result);
     }
 
+    private boolean hasHostCapability(UiModel.Component component) {
+        return component.contracts().stream()
+                .filter(UiModel.Capability.class::isInstance)
+                .map(UiModel.Capability.class::cast)
+                .map(UiModel.Capability::name)
+                .anyMatch(value -> value.startsWith("host."));
+    }
+
+    private boolean containsPayload(UiModel.Expr expression) {
+        if (expression instanceof UiModel.PathExpr path) {
+            return !path.parts().isEmpty() && path.parts().get(0).equals("payload");
+        }
+        if (expression instanceof UiModel.Has has) return containsPayload(has.path());
+        if (expression instanceof UiModel.Unary unary) return containsPayload(unary.operand());
+        if (expression instanceof UiModel.Binary binary) {
+            return containsPayload(binary.left()) || containsPayload(binary.right());
+        }
+        return false;
+    }
+
     private UiModel.TypeRef type(UiModel.Expr expression, Map<String, UiModel.TypeRef> scope,
-                                 UiModel.DealModule deal, Map<String, UiModel.Token> tokens,
+                                 UiModel.DealModule deal, Map<String, UiModel.PackClass> packClasses,
+                                 Map<String, UiModel.Token> tokens,
                                  Map<String, String> aliases, Set<String> actions, UiModel.Event event) {
         if (expression instanceof UiModel.Literal literal) return new UiModel.TypeRef(literal.type(), literal.value() == null, false);
-        if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, tokens);
+        if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, packClasses, tokens);
         if (expression instanceof UiModel.Has has) {
-            UiModel.TypeRef operand = pathType(has.path(), scope, deal, tokens);
+            UiModel.TypeRef operand = pathType(has.path(), scope, deal, packClasses, tokens);
             if (!operand.optional()) error("UI2017", "has requires an optional final field", has.span());
             return primitive("boolean");
         }
@@ -216,44 +345,74 @@ public final class UiChecker {
             Map<String, UiModel.TypeRef> actionScope = new LinkedHashMap<>(scope);
             if (event != null && event.payload() != null) actionScope.put("payload", event.payload());
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
-                checkAssignable(type(field.getValue(), actionScope, deal, tokens, aliases, actions, null), declaration.fields().get(field.getKey()).type(), field.getValue().span());
+                checkAssignable(type(field.getValue(), actionScope, deal, packClasses, tokens, aliases, actions, null), declaration.fields().get(field.getKey()).type(), field.getValue().span());
             }
             actions.add(name);
             return primitive("Action");
         }
         if (expression instanceof UiModel.Unary unary) {
-            UiModel.TypeRef operand = type(unary.operand(), scope, deal, tokens, aliases, actions, event);
+            UiModel.TypeRef operand = type(unary.operand(), scope, deal, packClasses, tokens, aliases, actions, event);
             requireType(operand, unary.operator().equals("!") ? "boolean" : operand.name(), unary.span());
             if (unary.operator().equals("-") && !operand.name().equals("int") && !operand.name().equals("number")) error("UI2019", "Unary - requires numeric operand", unary.span());
             return operand;
         }
         UiModel.Binary binary = (UiModel.Binary) expression;
-        UiModel.TypeRef left = type(binary.left(), scope, deal, tokens, aliases, actions, event);
-        UiModel.TypeRef right = type(binary.right(), scope, deal, tokens, aliases, actions, event);
+        UiModel.TypeRef left = type(binary.left(), scope, deal, packClasses, tokens, aliases, actions, event);
+        UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
             case "&&", "||" -> { requireType(left, "boolean", binary.span()); requireType(right, "boolean", binary.span()); yield primitive("boolean"); }
-            case "===", "!==", "<", "<=", ">", ">=" -> { if (!sameName(left.name(), right.name())) error("UI2020", "Operands require matching types", binary.span()); yield primitive("boolean"); }
-            case "+", "-", "*", "/", "%" -> { if (!sameName(left.name(), right.name())) error("UI2020", "Operands require matching types", binary.span()); yield left; }
+            case "===", "!==", "<", "<=", ">", ">=" -> {
+                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+                yield primitive("boolean");
+            }
+            case "+", "-", "*", "/", "%" -> {
+                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+                yield left;
+            }
             default -> throw new IllegalStateException(binary.operator());
         };
     }
 
     private UiModel.TypeRef pathType(UiModel.PathExpr path, Map<String, UiModel.TypeRef> scope,
-                                     UiModel.DealModule deal, Map<String, UiModel.Token> tokens) {
+                                     UiModel.DealModule deal, Map<String, UiModel.PackClass> packClasses,
+                                     Map<String, UiModel.Token> tokens) {
         String joined = String.join(".", path.parts());
         UiModel.Token token = tokens.get(joined);
         if (token != null) return token.type();
         UiModel.TypeRef current = scope.get(path.parts().get(0));
-        if (current == null) error("UI2021", "Unknown path root '" + path.parts().get(0) + "'", path.span());
+        if (current == null) throw new UiDiagnostic("UI2021", "Unknown path root '" + path.parts().get(0)
+                + "'. Only bindings visible in this lexical scope may be used.", path.span().file(), path.span().line(), path.span().column(),
+                scope.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                        .map(e -> e.getKey() + ": " + e.getValue().name()).collect(java.util.stream.Collectors.joining(", ")),
+                path.parts().get(0));
         for (int i = 1; i < path.parts().size(); i++) {
+            String fieldName = path.parts().get(i);
             if (current.optional()) error("UI2022", "Nullable intermediate path access", path.span());
+            if (current.array()) error("UI2023", "Path traverses non-class type", path.span());
             UiModel.DealClass clazz = deal.classes().get(simple(current.name()));
-            if (clazz == null) error("UI2023", "Path traverses non-class type", path.span());
-            UiModel.Field field = clazz.fields().get(path.parts().get(i));
-            if (field == null) error("UI2024", "Unknown field '" + path.parts().get(i) + "'", path.span());
+            UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
+            if (clazz == null && packClass == null) error("UI2023", "Path traverses non-class type", path.span());
+            UiModel.Field field = clazz != null
+                ? clazz.fields().get(fieldName)
+                : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
+            if (field == null) throw new UiDiagnostic("UI2024", "Unknown field '" + fieldName + "'",
+                    path.span().file(), path.span().line(), path.span().column(),
+                    (clazz != null ? clazz.fields().keySet().stream() : packClass.fields().stream().map(UiModel.Field::name))
+                            .sorted().collect(java.util.stream.Collectors.joining(", ")), fieldName);
             current = field.type();
         }
         return current;
+    }
+
+    private UiModel.PackClass uniquePackClass(String typeName, Map<String, UiModel.PackClass> classes,
+                                               UiModel.Span span) {
+        List<UiModel.PackClass> matches = classes.entrySet().stream()
+            .filter(entry -> entry.getKey().equals(typeName) || simple(entry.getKey()).equals(simple(typeName)))
+            .map(Map.Entry::getValue)
+            .distinct()
+            .toList();
+        if (matches.size() > 1) error("UI2023", "Ambiguous pack class '" + typeName + "'", span);
+        return matches.isEmpty() ? null : matches.get(0);
     }
 
     private void validatePack(Map<String, UiModel.Component> components, Map<String, UiModel.PackClass> classes,
@@ -271,6 +430,16 @@ public final class UiChecker {
                     UiModel.Field field = props.fields().stream().filter(value -> value.name().equals(event.prop())).findFirst().orElseThrow();
                     if (!field.type().name().equals("Action")) error("UI2025", "Event prop must have Action type", entry.getValue().span());
                 }
+                if (contract instanceof UiModel.Children children && children.typed()) {
+                    for (String expected : childTypes(children, entry.getKey())) {
+                        if (!components.containsKey(expected)) error("UI2047", "Typed children reference unknown component '" + expected + "'", entry.getValue().span());
+                    }
+                }
+                if (contract instanceof UiModel.Parent parent) {
+                    for (String expected : componentTypes(parent.componentType(), entry.getKey())) {
+                        if (!components.containsKey(expected)) error("UI2047", "Parent contract references unknown component '" + expected + "'", entry.getValue().span());
+                    }
+                }
             }
         }
         for (UiModel.PackClass clazz : classes.values()) for (UiModel.Field field : clazz.fields()) {
@@ -285,13 +454,86 @@ public final class UiChecker {
         return result;
     }
 
-    private void exactProps(Map<String, UiModel.Expr> values, UiModel.PackClass props, UiModel.Span span) {
+    private String qualifyComponent(String name, String parent) {
+        return name.contains(".") ? name : prefix(parent) + name;
+    }
+
+    private Set<String> childTypes(UiModel.Children policy, String parent) {
+        return componentTypes(policy.componentType(), parent);
+    }
+
+    private Set<String> componentTypes(String specification, String relativeTo) {
+        Set<String> result = new LinkedHashSet<>();
+        for (String name : specification.split("\\|")) {
+            result.add(qualifyComponent(name, relativeTo));
+        }
+        return result;
+    }
+
+    private void validateParentContracts(
+            List<UiModel.RenderNode> nodes,
+            String parent,
+            Map<String, UiModel.Component> components) {
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                UiModel.Component component = components.get(call.name());
+                if (component != null) {
+                    UiModel.Parent policy = component.contracts().stream()
+                            .filter(UiModel.Parent.class::isInstance)
+                            .map(UiModel.Parent.class::cast)
+                            .findFirst().orElse(null);
+                    if (policy != null) {
+                        Set<String> expected = componentTypes(policy.componentType(), call.name());
+                        if (parent == null || !expected.contains(parent)) {
+                            error("UI2049", "Component requires parent '" + String.join(" | ", expected)
+                                    + "', got '" + (parent == null ? "root" : parent) + "'", call.span());
+                        }
+                    }
+                }
+                validateParentContracts(call.children(), call.name(), components);
+            } else if (node instanceof UiModel.RenderWhen when) {
+                validateParentContracts(when.thenNodes(), parent, components);
+                validateParentContracts(when.elseNodes(), parent, components);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                validateParentContracts(each.children(), parent, components);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                validateParentContracts(scope.children(), parent, components);
+            }
+        }
+    }
+
+    private void validateTypedChildren(List<UiModel.RenderNode> nodes, Set<String> expected,
+                                       Map<String, UiModel.Component> components, UiModel.Span parentSpan) {
+        for (String component : expected) {
+            if (!components.containsKey(component)) error("UI2047", "Unknown typed child component '" + component + "'", parentSpan);
+        }
+        String expectedDescription = String.join(" | ", expected);
+        for (UiModel.RenderNode node : nodes) {
+            if (node instanceof UiModel.RenderCall call) {
+                if (!expected.contains(call.name())) error("UI2048", "Component requires children of type '" + expectedDescription + "', got '" + call.name() + "'", call.span());
+            } else if (node instanceof UiModel.RenderWhen when) {
+                validateTypedChildren(when.thenNodes(), expected, components, parentSpan);
+                validateTypedChildren(when.elseNodes(), expected, components, parentSpan);
+            } else if (node instanceof UiModel.RenderForEach each) {
+                validateTypedChildren(each.children(), expected, components, parentSpan);
+            } else if (node instanceof UiModel.RenderScope scope) {
+                validateTypedChildren(scope.children(), expected, components, parentSpan);
+            }
+        }
+    }
+
+    private List<UiDiagnostic> exactProps(Map<String, UiModel.Expr> values, UiModel.PackClass props, UiModel.Span span) {
+        var diagnostics = new ArrayList<UiDiagnostic>();
         Set<String> known = new LinkedHashSet<>();
         for (UiModel.Field field : props.fields()) {
             known.add(field.name());
-            if (!field.type().optional() && field.defaultValue() == null && !values.containsKey(field.name())) error("UI2028", "Missing required prop '" + field.name() + "'", span);
+            if (!field.type().optional() && field.defaultValue() == null && !values.containsKey(field.name()))
+                diagnostics.add(new UiDiagnostic("UI2028", "Missing required prop '" + field.name() + "'", span.file(), span.line(), span.column(),
+                        field.name() + ": " + field.type().name() + (field.type().array() ? "[]" : ""), "absent"));
         }
-        for (String name : values.keySet()) if (!known.contains(name)) error("UI2029", "Unknown prop '" + name + "'", span);
+        for (String name : values.keySet()) if (!known.contains(name)) diagnostics.add(new UiDiagnostic("UI2029", "Unknown prop '" + name + "'",
+                span.file(), span.line(), span.column(), known.stream().sorted().collect(java.util.stream.Collectors.joining(", ")), name));
+        return List.copyOf(diagnostics);
     }
 
     private void exactArguments(Map<String, ?> values, List<String> names, UiModel.Span span) {
@@ -300,7 +542,10 @@ public final class UiChecker {
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
         if (actual.name().equals("null") && expected.optional()) return;
-        if (!sameName(actual.name(), expected.name()) || actual.array() != expected.array()) error("UI2031", "Expected " + expected.name() + ", got " + actual.name(), span);
+        if (!sameName(actual.name(), expected.name()) || actual.array() != expected.array())
+            throw new UiDiagnostic("UI2031", "Expected " + expected.name() + ", got " + actual.name(),
+                    span.file(), span.line(), span.column(),
+                    expected.name() + (expected.array() ? "[]" : ""), actual.name() + (actual.array() ? "[]" : ""));
     }
     private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) { if (!actual.name().equals(expected)) error("UI2032", "Expected " + expected, span); }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
@@ -332,17 +577,21 @@ public final class UiChecker {
 
     private UiModel.DealModule dealModule(ProgramNode program, Path file, String source) {
         Map<String, UiModel.DealClass> classes = new LinkedHashMap<>();
+        Map<String, ClassDeclaration> classDeclarations = new LinkedHashMap<>();
+        Map<String, FunctionDeclaration> functionDeclarations = new LinkedHashMap<>();
         List<FunctionDeclaration> functions = new ArrayList<>();
         Set<String> exported = new LinkedHashSet<>();
         for (StatementNode statement : program.statements()) {
             boolean isExported = statement instanceof ExportDeclaration;
             StatementNode declaration = isExported ? ((ExportDeclaration) statement).declaration() : statement;
             if (declaration instanceof ClassDeclaration clazz) {
+                classDeclarations.put(clazz.name(), clazz);
                 Map<String, UiModel.Field> fields = new LinkedHashMap<>();
                 for (ClassField field : clazz.fields()) fields.put(field.name(), new UiModel.Field(field.name(), type(field.type(), field.optional()), null, span(file, field.span().startLine(), field.span().startColumn())));
                 classes.put(clazz.name(), new UiModel.DealClass(clazz.name(), fields, isExported));
             } else if (declaration instanceof FunctionDeclaration function) {
                 functions.add(function);
+                functionDeclarations.put(function.name(), function);
                 if (isExported) exported.add(function.name());
             }
         }
@@ -368,6 +617,8 @@ public final class UiChecker {
             if (!effect && !policy && !state.equals(returned)) throw new UiDiagnostic("UI2036", "Update must return root state", file, function.span().startLine(), function.span().startColumn());
             handlers.add(new UiModel.Handler(function.name(), state, action, returned, directive, directive.equals("ui-effect-policy") && policyMayStart(function.body()), span(file, function.span().startLine(), function.span().startColumn())));
         }
+        new UiBorrowedValueChecker(file, classDeclarations, functionDeclarations)
+            .check(handlers.stream().map(UiModel.Handler::name).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
         return new UiModel.DealModule(classes, functionInfo, handlers, file);
     }
 
@@ -416,12 +667,17 @@ public final class UiChecker {
         if (type instanceof ArrayType array) return typeName(array.elementType()) + "[]";
         return type.toString();
     }
-    private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic.code(), diagnostic.message(), Path.of(diagnostic.range().file()), diagnostic.range().startLine(), diagnostic.range().startColumn()); }
+    private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic); }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
     private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {
-        if (nodes.size() != 1) error("UI2037", "View must produce exactly one root node", span);
+        if (nodes.size() != 1) throw new UiDiagnostic(
+                "UI2037", "View must produce exactly one root node",
+                span.file(), span.line(), span.column(), "one root node", nodes.size() + " root nodes");
         UiModel.Node root = nodes.get(0);
-        if (root instanceof UiModel.ForEach) error("UI2037", "View root cannot be repeated", root.span());
+        if (root instanceof UiModel.ForEach) throw new UiDiagnostic(
+                "UI2037", "View root cannot be repeated",
+                root.span().file(), root.span().line(), root.span().column(),
+                "one non-repeated component root", "ForEach root");
         if (root instanceof UiModel.When when) {
             requireSingleRoot(when.thenNodes(), when.span());
             requireSingleRoot(when.elseNodes(), when.span());
@@ -429,4 +685,12 @@ public final class UiChecker {
     }
 
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
+
+    private void typeMismatch(UiModel.Binary binary, UiModel.TypeRef left, UiModel.TypeRef right) {
+        throw new UiDiagnostic(
+                "UI2020",
+                "Operator '" + binary.operator() + "' requires matching operand types; Deal UI performs no implicit coercion",
+                binary.span().file(), binary.span().line(), binary.span().column(),
+                left.name(), right.name());
+    }
 }

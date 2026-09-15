@@ -27,8 +27,17 @@ public final class Main {
         String command = args[0];
         Path source = null;
         Path fs = defaultFsRoot();
+        UiCompiler.Target target = UiCompiler.Target.SWING;
         for (int i = 1; i < args.length; i++) {
             if (args[i].equals("--fs-root")) { if (++i == args.length) throw new IllegalArgumentException("--fs-root requires path"); fs = Path.of(args[i]); }
+            else if (args[i].equals("--renderer")) {
+                if (++i == args.length) throw new IllegalArgumentException("--renderer requires swing or portable");
+                target = switch (args[i]) {
+                    case "swing" -> UiCompiler.Target.SWING;
+                    case "portable" -> UiCompiler.Target.PORTABLE;
+                    default -> throw new IllegalArgumentException("Unknown renderer target: " + args[i]);
+                };
+            }
             else if (args[i].startsWith("-")) throw new IllegalArgumentException("Unknown option: " + args[i]);
             else if (source == null) source = Path.of(args[i]);
             else throw new IllegalArgumentException("Only one .dealui source is accepted");
@@ -36,7 +45,8 @@ public final class Main {
         if (source == null) throw new IllegalArgumentException("Missing .dealui source");
         Path output = Files.createTempDirectory("deal-ui-").resolve("application");
         UiCompiler compiler = new UiCompiler(fs);
-        UiCompiler.Result result = compiler.compile(source, output);
+        if (command.equals("run") && target != UiCompiler.Target.SWING) throw new IllegalArgumentException("run requires the swing renderer");
+        UiCompiler.Result result = compiler.compile(source, output, target);
         switch (command) {
             case "check" -> System.out.println("UI validation successful: " + result.viewSource());
             case "dump-ir" -> System.out.print(Files.readString(result.uiIr()));
@@ -58,5 +68,5 @@ public final class Main {
     }
     private static Path runtimeClasses() throws Exception { return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()); }
     private static Path defaultFsRoot() { String configured = System.getenv("DEAL_FS_ROOT"); return configured == null || configured.isBlank() ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(configured); }
-    private static void usage() { System.err.println("Usage: deal-ui <check|dump-ir|build|run> <root.dealui> [--fs-root PATH]"); }
+    private static void usage() { System.err.println("Usage: deal-ui <check|dump-ir|build|run> <root.dealui> [--fs-root PATH] [--renderer swing|portable]"); }
 }
