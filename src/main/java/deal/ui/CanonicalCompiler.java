@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** Stateless cross-artifact facade over the DEAL and Deal UI transpilers. */
@@ -84,7 +85,12 @@ public final class CanonicalCompiler {
         }
     }
 
-    public record PropertySnapshot(String name, String type, boolean optional) {}
+    public record PropertySnapshot(String name, String type, boolean optional, boolean hasDefault, Object defaultValue) {
+        public PropertySnapshot(String name, String type, boolean optional) {
+            this(name, type, optional, false, null);
+        }
+        public boolean omittable() { return optional || hasDefault; }
+    }
 
     public record PayloadTypeSnapshot(String name, List<PropertySnapshot> fields) {
         public PayloadTypeSnapshot { fields = List.copyOf(fields); }
@@ -224,7 +230,9 @@ public final class CanonicalCompiler {
             UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
             List<PropertySnapshot> properties = props == null ? List.of() : props.fields().stream()
                     .map(field -> new PropertySnapshot(
-                            field.name(), typeText(field.type()), field.type().optional()))
+                            field.name(), typeText(field.type()), field.type().optional(), field.defaultValue() != null,
+                            field.defaultValue() instanceof UiModel.Literal literal ? snapshotLiteral(literal.value())
+                                    : field.defaultValue() instanceof UiModel.PathExpr path ? Map.of("path", path.parts()) : null))
                     .toList();
             String children = "none";
             String parent = "any";
@@ -252,6 +260,12 @@ public final class CanonicalCompiler {
                 .map(token -> new TokenSnapshot(token.name(), typeText(token.type())))
                 .toList();
         return new ComponentPackSnapshot(pack.version(), pack.digest(), components, tokens);
+    }
+
+    private static Object snapshotLiteral(Object value) {
+        // Canonical IR floats use hex spelling; public metadata must remain standard JSON.
+        if (value instanceof Double || value instanceof Float) return Map.of("number", value.toString());
+        return value;
     }
 
     private static String typeText(UiModel.TypeRef type) {
@@ -448,7 +462,7 @@ public final class CanonicalCompiler {
                     .orElse(operations.get(0).targetId());
             List<RepairScope> targetedScopes = operations.stream()
                     .filter(operation -> operationOwns(operation, owner))
-                    .map(operation -> new RepairScope(operationName(operation), owner))
+                    .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                     .toList();
             return List.of(new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
@@ -515,12 +529,12 @@ public final class CanonicalCompiler {
             List<SemanticId> related = actionId == null ? List.of() : List.of(actionId);
             List<RepairScope> targetedScopes = operations.stream()
                     .filter(operation -> operationOwns(operation, owner))
-                    .map(operation -> new RepairScope(operationName(operation), owner))
+                    .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                     .toList();
             if (targetedScopes.isEmpty() && actionId != null) {
                 targetedScopes = operations.stream()
                         .filter(operation -> operationOwns(operation, actionId))
-                        .map(operation -> new RepairScope(operationName(operation), actionId))
+                        .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                         .toList();
             }
             if (targetedScopes.isEmpty()) targetedScopes = transactionScopes;

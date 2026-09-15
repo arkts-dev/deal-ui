@@ -760,7 +760,7 @@ public final class UiCompilerWorkspaceTest {
                 .diagnostics().stream().filter(value -> value.code().equals("UI2061"))
                 .findFirst().orElseThrow();
         check(diagnostic.expected().contains(
-                        "ui.FrameClock(onTick: action app.IncrementAction {})")
+                        "`onTick: action app.IncrementAction {}`")
                         && diagnostic.actual().equals("clock.frame"),
                 "missing host capability must publish an exact compatible binding: " + diagnostic);
 
@@ -776,6 +776,27 @@ public final class UiCompilerWorkspaceTest {
                 """;
         check(UiCompilerWorkspace.inspect(deal, bound, pack, "./ui.pack").diagnostics().isEmpty(),
                 "a declared host capability must pass when its pack component is bound");
+
+        String twoActions = deal + """
+                export class ResetAction {}
+                // @ui-update
+                export function reset(state: AppState, action: ResetAction): AppState {
+                  return {title: state.title, count: 0};
+                }
+                """;
+        var choices = UiCompilerWorkspace.inspect(twoActions, missing, pack, "./ui.pack")
+                .diagnostics().stream().filter(value -> value.code().equals("UI2061"))
+                .findFirst().orElseThrow();
+        check(!choices.expected().contains(" | ")
+                        && choices.expected().contains("choose exactly one alternative per event")
+                        && choices.expected().contains("`onTick: action app.IncrementAction {}`")
+                        && choices.expected().contains("`onTick: action app.ResetAction {}`"),
+                "alternatives must remain separate binding fragments, never a synthetic union expression");
+        String bothBindings = bound.replace("ui.FrameClock(onTick: action app.IncrementAction {})",
+                "ui.FrameClock(onTick: action app.IncrementAction {})\n"
+                        + "ui.FrameClock(onTick: action app.ResetAction {})");
+        check(UiCompilerWorkspace.inspect(twoActions, bothBindings, pack, "./ui.pack").diagnostics().isEmpty(),
+                "both offered alternatives must parse and typecheck independently");
 
         String typedDeal = deal.replace(
                 "export class IncrementAction {}",

@@ -1320,10 +1320,9 @@ public final class UiCompilerWorkspace {
                 .map(UiModel.Event.class::cast)
                 .toList();
         if (events.isEmpty()) return "ui." + component.name() + "()";
-        return "ui." + component.name() + "("
+        return "ui." + component.name() + "; event bindings (choose exactly one alternative per event): "
                 + events.stream().map(event -> eventRepairContract(event, appInterface))
-                .reduce((left, right) -> left + ", " + right).orElse("")
-                + ")";
+                .reduce((left, right) -> left + "; " + right).orElse("");
     }
 
     private static String eventRepairContract(
@@ -1337,7 +1336,9 @@ public final class UiCompilerWorkspace {
         String expected = event.prop() + " event"
                 + (payloadType == null ? "" : " payload:" + payloadType);
         if (bindings.isEmpty()) return expected + " (no compatible app action; update DEAL first)";
-        return event.prop() + ": " + String.join(" | ", bindings);
+        return event.prop() + " alternatives: " + bindings.stream()
+                .map(binding -> "`" + event.prop() + ": " + binding + "`")
+                .reduce((left, right) -> left + " or " + right).orElse("");
     }
 
     private static String compatibleActionBinding(
@@ -1606,8 +1607,9 @@ public final class UiCompilerWorkspace {
         if (value.isBlank()) return "";
         int lineStart = source.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
         String indentation = source.substring(lineStart, offset).replaceAll("[^ \\t]", "") + "  ";
-        return "\n" + value.lines().map(line -> indentation + line.stripLeading())
-                .reduce((left, right) -> left + "\n" + right).orElse("") + "\n" + indentation.substring(0, Math.max(0, indentation.length() - 2));
+        return deal.compiler.ConstructionProjection.indentBlock(
+                new deal.compiler.ConstructionProjection.Result(value, List.of()), indentation,
+                indentation.substring(0, Math.max(0, indentation.length() - 2))).source();
     }
 
     private static UiChangeResult wrongKind(Analysis base, Operation operation, Target target, String expected) {
