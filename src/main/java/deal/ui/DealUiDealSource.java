@@ -1,10 +1,10 @@
 package deal.ui;
 
-import deal.compiler.DealCompilerWorkspace;
+import deal.amend.AmendWorkspace;
 
 /** Length-preserving DEAL parser projection for Deal UI framework directives. */
 final class DealUiDealSource {
-    static final DealCompilerWorkspace.SourceAdapter ADAPTER = DealUiDealSource::parserSource;
+    static final AmendWorkspace.SourceAdapter ADAPTER = DealUiDealSource::parserSource;
 
     private DealUiDealSource() {}
 

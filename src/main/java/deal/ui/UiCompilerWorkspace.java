@@ -1,31 +1,28 @@
 package deal.ui;
 
-import deal.compiler.CompilerProtocol;
-import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
-import deal.compiler.CompilerProtocol.ChangeInspection;
-import deal.compiler.CompilerProtocol.AppInterfaceSnapshot;
-import deal.compiler.CompilerProtocol.FieldSnapshot;
-import deal.compiler.CompilerProtocol.TypeSnapshot;
-import deal.compiler.CompilerProtocol.DependencyCone;
-import deal.compiler.CompilerProtocol.DependencyEdge;
-import deal.compiler.CompilerProtocol.DependencyGroup;
-import deal.compiler.CompilerProtocol.DependencyMember;
-import deal.compiler.CompilerProtocol.NodeSnapshot;
-import deal.compiler.CompilerProtocol.OperationDescriptor;
-import deal.compiler.CompilerProtocol.RepairScope;
-import deal.compiler.CompilerProtocol.RepairSlot;
-import deal.compiler.CompilerProtocol.RepairSlotStatus;
-import deal.compiler.CompilerProtocol.RepairWorkspaceResult;
-import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
-import deal.compiler.CompilerProtocol.RevisionRef;
-import deal.compiler.CompilerProtocol.SemanticId;
-import deal.compiler.CompilerProtocol.SourceRange;
-import deal.compiler.CompilerProtocol.StructuredDiagnostic;
-import deal.compiler.CompilerProtocol.SlotPatch;
-import deal.compiler.CompilerProtocol.SemanticSlice;
-import deal.compiler.CompilerProtocolJson;
-import deal.compiler.DealCompilerWorkspace;
-import deal.compiler.RepairWorkspaceProtocol;
+import deal.amend.CompilerProtocol;
+import deal.amend.CompilerProtocol.ChangeSetPrecondition;
+import deal.amend.CompilerProtocol.ChangeInspection;
+import deal.amend.CompilerProtocol.AppInterfaceSnapshot;
+import deal.amend.CompilerProtocol.FieldSnapshot;
+import deal.amend.CompilerProtocol.TypeSnapshot;
+import deal.amend.CompilerProtocol.DependencyGroup;
+import deal.amend.CompilerProtocol.NodeSnapshot;
+import deal.amend.CompilerProtocol.OperationDescriptor;
+import deal.amend.CompilerProtocol.RepairScope;
+import deal.amend.CompilerProtocol.RepairSlot;
+import deal.amend.CompilerProtocol.RepairSlotStatus;
+import deal.amend.CompilerProtocol.RepairWorkspaceResult;
+import deal.amend.CompilerProtocol.RepairWorkspaceSnapshot;
+import deal.amend.CompilerProtocol.RevisionRef;
+import deal.amend.CompilerProtocol.SemanticId;
+import deal.amend.CompilerProtocol.SourceRange;
+import deal.amend.CompilerProtocol.StructuredDiagnostic;
+import deal.amend.CompilerProtocol.SlotPatch;
+import deal.amend.CompilerProtocol.SemanticSlice;
+import deal.amend.CompilerProtocolJson;
+import deal.amend.AmendWorkspace;
+import deal.amend.RepairWorkspaceProtocol;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -216,79 +213,33 @@ public final class UiCompilerWorkspace {
             StructuredDiagnostic diagnostic = diagnostic(
                     "CP1001", "Stale Deal UI source digest", analysis.documentId(), null,
                     analysis.inspection().sourceDigest(), baseDigest, List.of(), "inspectCanonicalApp");
-            DependencyCone empty = new DependencyCone(DealCompilerWorkspace.digest("empty"), List.of(), List.of(), List.of());
-            return new ChangeInspection(revision(analysis), DealCompilerWorkspace.digest(baseDigest + "\u0000stale"),
-                    empty, List.of(), List.of(), List.of(diagnostic));
+            return new ChangeInspection(revision(analysis), AmendWorkspace.digest(baseDigest + "\u0000stale"),
+                    List.of(), List.of(diagnostic));
         }
         LinkedHashSet<SemanticId> selected = new LinkedHashSet<>(anchors);
         if (selected.isEmpty()) selected.add(analysis.documentId());
-        LinkedHashMap<SemanticId, DependencyMember> members = new LinkedHashMap<>();
-        LinkedHashSet<DependencyEdge> edges = new LinkedHashSet<>();
         LinkedHashMap<String, OperationDescriptor> operations = new LinkedHashMap<>();
-        List<SemanticSlice> slices = new ArrayList<>();
         for (SemanticId anchor : selected) {
             Target target = analysis.targets().get(anchor);
             if (target == null) {
                 StructuredDiagnostic diagnostic = diagnostic(
                         "CP2020", "Unknown Deal UI change anchor", anchor, null,
                         "target issued for " + baseDigest, "missing", List.of(), "inspectCanonicalApp");
-                DependencyCone empty = new DependencyCone(DealCompilerWorkspace.digest("empty"),
-                        List.copyOf(selected), List.of(), List.of());
-                return new ChangeInspection(revision(analysis), DealCompilerWorkspace.digest(baseDigest + "\u0000unknown"),
-                        empty, List.of(), List.of(), List.of(diagnostic));
+                return new ChangeInspection(revision(analysis), AmendWorkspace.digest(baseDigest + "\u0000unknown"),
+                        List.of(), List.of(diagnostic));
             }
             UiSemanticSlice uiSlice = target.kind().equals("document")
                     ? queryDocument(dealSource, dealUiSource, packSource, packSpecifier)
                     : target.kind().equals("view")
                             ? queryView(dealSource, dealUiSource, packSource, packSpecifier, anchor)
                             : queryNode(dealSource, dealUiSource, packSource, packSpecifier, anchor);
-            List<NodeSnapshot> nodes = new ArrayList<>();
-            if (uiSlice.node() != null) nodes.add(protocolNode(uiSlice.node()));
-            uiSlice.children().forEach(value -> nodes.add(protocolNode(value)));
-            List<SemanticId> dependencies = new ArrayList<>();
-            if (uiSlice.node() != null && uiSlice.node().parentId() != null) dependencies.add(uiSlice.node().parentId());
-            dependencies.addAll(uiSlice.children().stream().map(UiNodeSnapshot::id).toList());
-            SemanticSlice slice = new SemanticSlice(
-                    uiSlice.revision(), uiSlice.ownerId(), uiSlice.kind(), uiSlice.source(),
-                    List.of(), nodes, dependencies, uiSlice.allowedOperations());
-            slices.add(slice);
-            members.put(anchor, new DependencyMember(
-                    anchor, target.kind(), "EDIT_BODY", targetFingerprint(analysis, anchor)));
             uiSlice.allowedOperations().stream()
                     .filter(value -> requestedOperations.isEmpty() || requestedOperations.contains(value.operation()))
                     .forEach(value -> operations.put(value.operation() + "\u0000" + value.targetId().value(), value));
-            if (uiSlice.node() != null) {
-                UiNodeSnapshot node = uiSlice.node();
-                if (node.parentId() != null) {
-                    addUiMember(analysis, members, node.parentId(), "SIGNATURE_ONLY");
-                    edges.add(new DependencyEdge(node.parentId(), node.id(), "PARENT_CHILD"));
-                }
-                for (SemanticId child : node.children()) {
-                    addUiMember(analysis, members, child, "IMPACT_ONLY");
-                    edges.add(new DependencyEdge(node.id(), child, "PARENT_CHILD"));
-                }
-                for (UiNodeSnapshot candidate : analysis.inspection().nodes()) {
-                    if (candidate.id().equals(node.id())) continue;
-                    if (!disjoint(node.statePaths(), candidate.statePaths())) {
-                        addUiMember(analysis, members, candidate.id(), "IMPACT_ONLY");
-                        edges.add(new DependencyEdge(node.id(), candidate.id(), "SHARES_STATE_PATH"));
-                    }
-                    if (!disjoint(node.actionBindings(), candidate.actionBindings())) {
-                        addUiMember(analysis, members, candidate.id(), "IMPACT_ONLY");
-                        edges.add(new DependencyEdge(node.id(), candidate.id(), "SHARES_ACTION_BINDING"));
-                    }
-                }
-            }
         }
-        List<DependencyMember> memberList = List.copyOf(members.values());
-        List<DependencyEdge> edgeList = List.copyOf(edges);
-        String coneFingerprint = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(
-                List.of(List.copyOf(selected), memberList, edgeList)));
-        DependencyCone cone = new DependencyCone(
-                coneFingerprint, List.copyOf(selected), memberList, edgeList);
-        String inspectionDigest = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(
-                List.of(baseDigest, coneFingerprint, List.copyOf(operations.values()))));
-        return new ChangeInspection(revision(analysis), inspectionDigest, cone, slices,
+        String inspectionDigest = AmendWorkspace.digest(CompilerProtocolJson.encode(
+                List.of(baseDigest, List.copyOf(operations.values()))));
+        return new ChangeInspection(revision(analysis), inspectionDigest,
                 List.copyOf(operations.values()), List.of());
     }
 
@@ -403,7 +354,7 @@ public final class UiCompilerWorkspace {
                 .orElse("");
         UiModel.PackModule packModule = UiParser.parsePack(
                 Path.of("/generated/platform-ui.dealui-pack"), packSource);
-        var dealInspection = DealCompilerWorkspace.inspect(
+        var dealInspection = AmendWorkspace.inspect(
                 dealSource, "/generated/app.deal", DealUiDealSource.ADAPTER);
         List<UiComponentContract> contracts = componentNames.stream()
                 .map(UiCompilerWorkspace::simpleName)
@@ -538,7 +489,7 @@ public final class UiCompilerWorkspace {
                 changeInspection, operations, change, 0, List.of());
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : dealUiSource,
-                change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
+                change.accepted() ? change.sourceDigest() : AmendWorkspace.digest(dealUiSource),
                 workspace, change, change.diagnostics());
     }
 
@@ -577,7 +528,7 @@ public final class UiCompilerWorkspace {
             if (obligations.isEmpty()) continue;
             int index = base.inspection().nodes().stream().filter(n -> n.id().equals(parent.id()))
                     .findFirst().map(n -> n.children().size()).orElse(0);
-            String id = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
+            String id = AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
                     "ui-repair-insertion-v1", workspace.workspaceDigest(), parent.id(), index, obligations)));
             var contracts = base.inspection().nodes().stream().filter(n -> n.id().equals(parent.id()))
                     .map(n -> packModule.components().get(simpleName(n.component())))
@@ -612,7 +563,7 @@ public final class UiCompilerWorkspace {
 
     private static void requireRepairContext(String deal, String ui, String pack, String specifier,
                                              RepairWorkspaceSnapshot workspace) {
-        if (!DealCompilerWorkspace.digest(ui).equals(workspace.baseRevision().sourceDigest())
+        if (!AmendWorkspace.digest(ui).equals(workspace.baseRevision().sourceDigest())
                 || !uiWorkspaceDigest(workspace).equals(workspace.workspaceDigest())
                 || !workspace.workspaceId().equals(uiWorkspaceId(deal, pack, specifier,
                     workspace.precondition().baseDigest(), workspace.inspectionDigest(),
@@ -622,9 +573,9 @@ public final class UiCompilerWorkspace {
 
     public static RepairWorkspaceResult applyRepairTransaction(
             String dealSource, String dealUiSource, String packSource, String packSpecifier,
-            RepairWorkspaceSnapshot workspace, deal.compiler.RepairWorkspaceProtocol.Grant grant,
+            RepairWorkspaceSnapshot workspace, deal.amend.RepairWorkspaceProtocol.Grant grant,
             List<SlotPatch> patches) {
-        if (!DealCompilerWorkspace.digest(dealUiSource).equals(workspace.baseRevision().sourceDigest())) {
+        if (!AmendWorkspace.digest(dealUiSource).equals(workspace.baseRevision().sourceDigest())) {
             return rejectedWorkspace(dealUiSource, workspace, "CP2021", "Repair workspace base source is stale");
         }
         if (!uiWorkspaceDigest(workspace).equals(workspace.workspaceDigest())) {
@@ -637,7 +588,7 @@ public final class UiCompilerWorkspace {
         }
         if (grant != null) {
             try {
-                deal.compiler.RepairWorkspaceProtocol.validateGrant(workspace, grant, UiRepairDiagnostics.registry());
+                deal.amend.RepairWorkspaceProtocol.validateGrant(workspace, grant, UiRepairDiagnostics.registry());
                 if (!grant.obligations().isEmpty()) throw new IllegalArgumentException("UI transaction cannot fulfill DEAL declaration obligations");
             } catch (IllegalArgumentException invalid) {
                 return rejectedWorkspace(dealUiSource, workspace, "CP1030", invalid.getMessage());
@@ -680,7 +631,7 @@ public final class UiCompilerWorkspace {
                 inspection, operations, change, workspace.repairRound() + 1, workspace.slots());
         return new RepairWorkspaceResult(
                 change.accepted(), change.accepted() ? change.source() : dealUiSource,
-                change.accepted() ? change.sourceDigest() : DealCompilerWorkspace.digest(dealUiSource),
+                change.accepted() ? change.sourceDigest() : AmendWorkspace.digest(dealUiSource),
                 next, change, change.diagnostics());
     }
 
@@ -882,26 +833,6 @@ public final class UiCompilerWorkspace {
         return new NodeSnapshot(value.id(), value.ownerViewId(), value.kind(), value.range(), value.fingerprint());
     }
 
-    private static void addUiMember(
-            Analysis analysis,
-            Map<SemanticId, DependencyMember> members,
-            SemanticId id,
-            String exposure) {
-        UiNodeSnapshot node = analysis.inspection().nodes().stream()
-                .filter(value -> value.id().equals(id)).findFirst().orElse(null);
-        if (node == null) return;
-        DependencyMember current = members.get(id);
-        if (current != null && exposureRank(current.exposure()) >= exposureRank(exposure)) return;
-        members.put(id, new DependencyMember(id, node.kind(), exposure, node.fingerprint()));
-    }
-
-    private static int exposureRank(String value) {
-        return switch (value) {
-            case "EDIT_BODY" -> 3;
-            case "SIGNATURE_ONLY" -> 2;
-            default -> 1;
-        };
-    }
 
     private static boolean disjoint(List<String> left, List<String> right) {
         return left.stream().noneMatch(right::contains);
@@ -954,7 +885,7 @@ public final class UiCompilerWorkspace {
             slots.add(new RepairSlot(
                     "R" + (index + 1), operationName(operation), operation.targetId(),
                     precondition.expectedTargetFingerprints().getOrDefault(operation.targetId().value(), ""),
-                    payload, DealCompilerWorkspace.digest(CompilerProtocolJson.encode(payload)), status,
+                    payload, AmendWorkspace.digest(CompilerProtocolJson.encode(payload)), status,
                     "G" + (groupIndexes[index] + 1), owned));
         }
         List<DependencyGroup> groups = new ArrayList<>();
@@ -973,7 +904,6 @@ public final class UiCompilerWorkspace {
                             ? "STAGED" : "SEALED";
             groups.add(new DependencyGroup(
                     groupId,
-                    members.stream().map(RepairSlot::slotId).toList(),
                     dependencyGroups.groupDependencies().get(group).stream()
                             .sorted().map(value -> "G" + (value + 1)).toList(),
                     status));
@@ -981,7 +911,7 @@ public final class UiCompilerWorkspace {
         String workspaceId = uiWorkspaceId(dealSource, packSource, packSpecifier, precondition.baseDigest(),
                 inspection.inspectionDigest(), operations.stream().map(UiCompilerWorkspace::payload).toList());
         RepairWorkspaceSnapshot draft = new RepairWorkspaceSnapshot(
-                workspaceId, "", new RevisionRef(CompilerProtocol.VERSION, DealCompilerWorkspace.digest(dealUiSource)),
+                workspaceId, "", new RevisionRef(AmendWorkspace.digest(dealUiSource)),
                 inspection.inspectionDigest(), precondition, slots, groups, round);
         return new RepairWorkspaceSnapshot(
                 workspaceId, uiWorkspaceDigest(draft), draft.baseRevision(), draft.inspectionDigest(),
@@ -992,7 +922,7 @@ public final class UiCompilerWorkspace {
             List<RepairSlot> previousSlots,
             String slotId,
             Map<String, String> payload) {
-        String fingerprint = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(payload));
+        String fingerprint = AmendWorkspace.digest(CompilerProtocolJson.encode(payload));
         return previousSlots.stream().anyMatch(previous ->
                 previous.slotId().equals(slotId)
                         && previous.payloadFingerprint().equals(fingerprint)
@@ -1148,15 +1078,15 @@ public final class UiCompilerWorkspace {
     }
 
     private static String uiWorkspaceDigest(RepairWorkspaceSnapshot workspace) {
-        return DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
+        return AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
                 workspace.workspaceId(), workspace.baseRevision(), workspace.inspectionDigest(),
                 workspace.precondition(), workspace.slots(), workspace.groups(), workspace.repairRound())));
     }
 
     private static String uiWorkspaceId(String deal, String pack, String packSpecifier, String baseDigest,
                                         String inspectionDigest, List<Map<String, String>> payloads) {
-        return DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(
-                "ui-repair-context-v2", DealCompilerWorkspace.digest(deal), DealCompilerWorkspace.digest(pack),
+        return AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
+                "ui-repair-context-v2", AmendWorkspace.digest(deal), AmendWorkspace.digest(pack),
                 packSpecifier, baseDigest, inspectionDigest, payloads)));
     }
 
@@ -1167,12 +1097,12 @@ public final class UiCompilerWorkspace {
         StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                 code, "error", message, null, owner, "valid repair workspace",
                 "invalid repair request", List.of(), List.of(), "inspectChange");
-        return new RepairWorkspaceResult(false, source, DealCompilerWorkspace.digest(source),
+        return new RepairWorkspaceResult(false, source, AmendWorkspace.digest(source),
                 workspace, null, List.of(diagnostic));
     }
 
     private static Analysis analyze(String dealSource, String uiSource, String packSource, String packSpecifier) {
-        String digest = DealCompilerWorkspace.digest(uiSource);
+        String digest = AmendWorkspace.digest(uiSource);
         SemanticId documentId = new SemanticId("dealui:document:app.dealui");
         SourceIndex index = new SourceIndex(uiSource);
         Map<SemanticId, Target> targets = new LinkedHashMap<>();
@@ -1204,9 +1134,9 @@ public final class UiCompilerWorkspace {
                 targets.put(viewId, viewTarget);
                 viewSnapshots.add(new UiViewSnapshot(
                         viewId, view.name(), view.root(), range(view.span()),
-                        DealCompilerWorkspace.digest(index.slice(view.span())), roots));
+                        AmendWorkspace.digest(index.slice(view.span())), roots));
             }
-            var dealInspection = DealCompilerWorkspace.inspect(
+            var dealInspection = AmendWorkspace.inspect(
                     dealSource, dealFile.toString(), DealUiDealSource.ADAPTER);
             interfaceFingerprint = dealInspection.appInterface() == null
                     ? "" : dealInspection.appInterface().fingerprint();
@@ -1251,14 +1181,13 @@ public final class UiCompilerWorkspace {
                     new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn()),
                     ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
                     owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")",
-                    null, failure.notes());
+                    failure.notes());
             String diagnosticSource = switch (failure.file().toString()) {
                 case "/generated/app.deal" -> dealSource;
                 case "/generated/app.dealui" -> uiSource;
                 case "/generated/platform-ui.dealui-pack" -> packSource;
                 default -> null;
             };
-            if (diagnosticSource != null) diagnostic = diagnostic.withSourceContext(diagnosticSource);
             UiInspection inspection = new UiInspection(
                     CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,
@@ -1360,7 +1289,7 @@ public final class UiCompilerWorkspace {
     }
 
     private static RevisionRef revision(Analysis analysis) {
-        return new RevisionRef(CompilerProtocol.VERSION, analysis.inspection().sourceDigest());
+        return new RevisionRef(analysis.inspection().sourceDigest());
     }
 
     private static Target requireTarget(Analysis analysis, SemanticId id, String kind) {
@@ -1387,7 +1316,7 @@ public final class UiCompilerWorkspace {
     private static OperationDescriptor descriptor(
             Analysis analysis, Target target, String operation, List<String> requiredFields) {
         return new OperationDescriptor(
-                operation, target.id(), target.kind(), targetFingerprint(analysis, target.id()), requiredFields);
+                operation, target.id(), targetFingerprint(analysis, target.id()));
     }
 
     private static String targetFingerprint(Analysis analysis, SemanticId id) {
@@ -1451,7 +1380,7 @@ public final class UiCompilerWorkspace {
         for (int position = 0; position < nodes.size(); position++) {
             UiModel.Node node = nodes.get(position);
             String nodePath = path + "/" + position;
-            SemanticId id = new SemanticId("dealui-node:" + DealCompilerWorkspace
+            SemanticId id = new SemanticId("dealui-node:" + AmendWorkspace
                     .digest(sourceDigest + "\u0000" + nodePath).substring(0, 24));
             List<UiModel.Node> children = children(node);
             List<SemanticId> childIds = collectNodes(
@@ -1478,7 +1407,7 @@ public final class UiCompilerWorkspace {
             targets.put(id, target);
             snapshots.add(new UiNodeSnapshot(
                     id, viewId, parentId, kind, component, range(node.span()),
-                    DealCompilerWorkspace.digest(index.source().substring(start, end)),
+                    AmendWorkspace.digest(index.source().substring(start, end)),
                     childIds, List.copyOf(paths), List.copyOf(actions), properties, writableProperties));
             result.add(id);
         }
@@ -1607,9 +1536,31 @@ public final class UiCompilerWorkspace {
         if (value.isBlank()) return "";
         int lineStart = source.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
         String indentation = source.substring(lineStart, offset).replaceAll("[^ \\t]", "") + "  ";
-        return deal.compiler.ConstructionProjection.indentBlock(
-                new deal.compiler.ConstructionProjection.Result(value, List.of()), indentation,
-                indentation.substring(0, Math.max(0, indentation.length() - 2))).source();
+        return indentBlock(value, indentation, indentation.substring(0, Math.max(0, indentation.length() - 2)));
+    }
+
+    /** Re-indents an inserted block, preserving blank lines and trailing newline placement. */
+    private static String indentBlock(String source, String indentation, String closingIndentation) {
+        if (source.isBlank()) return "";
+        StringBuilder output = new StringBuilder("\n");
+        int cursor = 0;
+        while (cursor < source.length()) {
+            output.append(indentation);
+            int end = cursor;
+            while (end < source.length() && source.charAt(end) != '\n' && source.charAt(end) != '\r') end++;
+            int content = cursor;
+            while (content < end && Character.isWhitespace(source.codePointAt(content))) {
+                content += Character.charCount(source.codePointAt(content));
+            }
+            while (cursor < end) output.append(source.charAt(cursor++));
+            if (cursor < source.length()) {
+                char newline = source.charAt(cursor++);
+                if (newline == '\r' && cursor < source.length() && source.charAt(cursor) == '\n') cursor++;
+            }
+            output.append('\n');
+        }
+        output.append(closingIndentation);
+        return output.toString();
     }
 
     private static UiChangeResult wrongKind(Analysis base, Operation operation, Target target, String expected) {
@@ -1662,7 +1613,7 @@ public final class UiCompilerWorkspace {
                 operations.stream().map(Operation::targetId).toList(),
                 scopes,
                 "queryDealUiNode(" + operations.get(0).targetId().value() + ")",
-                diagnostic.context(), diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
+                diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
     }
 
     private static StructuredDiagnostic diagnostic(

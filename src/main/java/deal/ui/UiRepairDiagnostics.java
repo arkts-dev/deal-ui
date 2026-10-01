@@ -1,8 +1,8 @@
 package deal.ui;
 
-import deal.compiler.RepairDiagnosticRegistry;
+import deal.amend.RepairDiagnosticRegistry;
 import java.util.List;
-import static deal.compiler.RepairDiagnosticRegistry.Category.*;
+import static deal.amend.RepairDiagnosticRegistry.Category.*;
 
 /** UI syntax, framework and cross-artifact diagnostic inventory owned by the UI frontend. */
 public final class UiRepairDiagnostics {

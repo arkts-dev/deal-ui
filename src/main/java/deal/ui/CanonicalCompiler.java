@@ -1,18 +1,17 @@
 package deal.ui;
 
-import deal.compiler.CompilerProtocol.ChangeResult;
-import deal.compiler.CompilerProtocol.ChangeInspection;
-import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
-import deal.compiler.CompilerProtocol.ProtocolHandshake;
-import deal.compiler.CompilerProtocol.RepairScope;
-import deal.compiler.CompilerProtocol.RepairWorkspaceResult;
-import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
-import deal.compiler.CompilerProtocol.SlotPatch;
-import deal.compiler.CompilerProtocol.SemanticId;
-import deal.compiler.CompilerProtocol.SemanticSlice;
-import deal.compiler.CompilerProtocol.SourceRange;
-import deal.compiler.CompilerProtocol.StructuredDiagnostic;
-import deal.compiler.DealCompilerWorkspace;
+import deal.amend.CompilerProtocol.ChangeResult;
+import deal.amend.CompilerProtocol.ChangeInspection;
+import deal.amend.CompilerProtocol.ChangeSetPrecondition;
+import deal.amend.CompilerProtocol.RepairScope;
+import deal.amend.CompilerProtocol.RepairWorkspaceResult;
+import deal.amend.CompilerProtocol.RepairWorkspaceSnapshot;
+import deal.amend.CompilerProtocol.SlotPatch;
+import deal.amend.CompilerProtocol.SemanticId;
+import deal.amend.CompilerProtocol.SemanticSlice;
+import deal.amend.CompilerProtocol.SourceRange;
+import deal.amend.CompilerProtocol.StructuredDiagnostic;
+import deal.amend.AmendWorkspace;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -25,29 +24,13 @@ import java.util.Set;
 public final class CanonicalCompiler {
     private CanonicalCompiler() {}
 
-    public static ProtocolHandshake handshake() {
-        return new ProtocolHandshake(
-                deal.compiler.CompilerProtocol.VERSION,
-                "DEAL 1.2 + Deal UI",
-                List.of(
-                        "canonical-cross-artifact-check",
-                        "deal-semantic-slices",
-                        "dealui-semantic-slices",
-                        "fingerprint-preconditions",
-                        "atomic-change-sets",
-                        "repair-workspace-v2-local-groups",
-                        "repair-workspace-v2-ui-insertions",
-                        "repair-workspace-v2-deal-dependencies",
-                        deal.compiler.RepairDiagnosticRegistry.VERSION));
-    }
-
-    public static deal.compiler.CompilerProtocol.AppInterfaceSnapshot extractAppInterface(String source) {
-        return DealCompilerWorkspace.inspect(
+    public static deal.amend.CompilerProtocol.AppInterfaceSnapshot extractAppInterface(String source) {
+        return AmendWorkspace.inspect(
                 source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER).appInterface();
     }
 
     public record Inspection(
-            deal.compiler.CompilerProtocol.Inspection deal,
+            deal.amend.CompilerProtocol.Inspection deal,
             UiCompilerWorkspace.UiInspection dealUi,
             String packVersion,
             String packDigest,
@@ -109,7 +92,7 @@ public final class CanonicalCompiler {
     /** Necessary structural conditions for constructing host bindings before authoring a view.
      * Final view validation still checks the actual expressions and event payload consumption. */
     public static List<HostRequirement> inspectHostRequirements(
-            deal.compiler.CompilerProtocol.AppInterfaceSnapshot app, ComponentPackSnapshot pack) {
+            deal.amend.CompilerProtocol.AppInterfaceSnapshot app, ComponentPackSnapshot pack) {
         return app.capabilities().stream().map(capability -> {
             var components = pack.components().stream()
                     .filter(component -> component.capabilities().contains("host." + capability)).toList();
@@ -156,7 +139,7 @@ public final class CanonicalCompiler {
             String dealUiSource,
             String packSource,
             String packSpecifier) {
-        var deal = DealCompilerWorkspace.inspect(
+        var deal = AmendWorkspace.inspect(
                 dealSource, "/generated/app.deal", DealUiDealSource.ADAPTER);
         UiModel.PackModule pack;
         try {
@@ -164,7 +147,7 @@ public final class CanonicalCompiler {
         } catch (UiDiagnostic failure) {
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
-                    new deal.compiler.CompilerProtocol.SourceRange(
+                    new deal.amend.CompilerProtocol.SourceRange(
                             failure.file().toString(), failure.line(), failure.column(), failure.line(), failure.column()),
                     new SemanticId("dealui:pack:platform"), "valid component pack", "invalid pack",
                     List.of(), List.of(), "inspectComponentPack");
@@ -318,8 +301,8 @@ public final class CanonicalCompiler {
     public static ChangeResult applyDealChange(
             String source,
             String baseDigest,
-            List<? extends DealCompilerWorkspace.Operation> operations) {
-        return DealCompilerWorkspace.apply(
+            List<? extends AmendWorkspace.Operation> operations) {
+        return AmendWorkspace.apply(
                 source, "/generated/app.deal", baseDigest, operations, DealUiDealSource.ADAPTER);
     }
 
@@ -328,7 +311,7 @@ public final class CanonicalCompiler {
             String baseDigest,
             List<SemanticId> anchors,
             List<String> requestedOperations) {
-        return DealCompilerWorkspace.inspectChange(
+        return AmendWorkspace.inspectChange(
                 source, "/generated/app.deal", baseDigest, anchors, requestedOperations,
                 rejectingResolver(), DealUiDealSource.ADAPTER);
     }
@@ -337,8 +320,8 @@ public final class CanonicalCompiler {
             String source,
             ChangeSetPrecondition precondition,
             ChangeInspection inspection,
-            List<? extends DealCompilerWorkspace.Operation> operations) {
-        return DealCompilerWorkspace.stageChange(
+            List<? extends AmendWorkspace.Operation> operations) {
+        return AmendWorkspace.stageChange(
                 source, "/generated/app.deal", precondition, inspection, operations,
                 rejectingResolver(), DealUiDealSource.ADAPTER,
                 CanonicalCompiler::dealUiContractDiagnostics);
@@ -348,32 +331,32 @@ public final class CanonicalCompiler {
             String source,
             RepairWorkspaceSnapshot workspace,
             List<SlotPatch> patches) {
-        return DealCompilerWorkspace.patchRepairWorkspace(
+        return AmendWorkspace.patchRepairWorkspace(
                 source, "/generated/app.deal", workspace, patches,
                 rejectingResolver(), DealUiDealSource.ADAPTER,
                 CanonicalCompiler::dealUiContractDiagnostics);
     }
 
     public static RepairWorkspaceResult applyDealRepairTransaction(
-            String source, RepairWorkspaceSnapshot workspace, deal.compiler.RepairWorkspaceProtocol.Grant grant,
-            List<SlotPatch> patches, List<deal.compiler.RepairWorkspaceProtocol.Dependency> dependencies) {
-        return DealCompilerWorkspace.applyRepairTransaction(source, "/generated/app.deal", workspace, grant, patches,
+            String source, RepairWorkspaceSnapshot workspace, deal.amend.RepairWorkspaceProtocol.Grant grant,
+            List<SlotPatch> patches, List<deal.amend.RepairWorkspaceProtocol.Dependency> dependencies) {
+        return AmendWorkspace.applyRepairTransaction(source, "/generated/app.deal", workspace, grant, patches,
                 dependencies, rejectingResolver(), DealUiDealSource.ADAPTER, CanonicalCompiler::dealUiContractDiagnostics,
                 UiRepairDiagnostics.registry());
     }
 
-    public static deal.compiler.RepairWorkspaceProtocol.Offer inspectRepair(RepairWorkspaceSnapshot workspace) {
-        return deal.compiler.RepairWorkspaceProtocol.inspectRepair(workspace, UiRepairDiagnostics.registry());
+    public static deal.amend.RepairWorkspaceProtocol.Offer inspectRepair(RepairWorkspaceSnapshot workspace) {
+        return deal.amend.RepairWorkspaceProtocol.inspectRepair(workspace, UiRepairDiagnostics.registry());
     }
 
-    public static deal.compiler.RepairWorkspaceProtocol.Grant expandRepairScope(
+    public static deal.amend.RepairWorkspaceProtocol.Grant expandRepairScope(
             RepairWorkspaceSnapshot workspace, String digest, List<String> selections) {
-        return deal.compiler.RepairWorkspaceProtocol.expandRepairScope(workspace, digest, selections, UiRepairDiagnostics.registry());
+        return deal.amend.RepairWorkspaceProtocol.expandRepairScope(workspace, digest, selections, UiRepairDiagnostics.registry());
     }
 
     public static RepairWorkspaceResult applyDealUiRepairTransaction(
             String deal, String ui, String pack, String packSpecifier, RepairWorkspaceSnapshot workspace,
-            deal.compiler.RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches) {
+            deal.amend.RepairWorkspaceProtocol.Grant grant, List<SlotPatch> patches) {
         return UiCompilerWorkspace.applyRepairTransaction(deal, ui, pack, packSpecifier, workspace, grant, patches);
     }
 
@@ -391,14 +374,14 @@ public final class CanonicalCompiler {
     public static SemanticSlice queryDealSymbol(
             String source,
             SemanticId symbolId) {
-        return DealCompilerWorkspace.querySymbol(
+        return AmendWorkspace.querySymbol(
                 source, "/generated/app.deal", symbolId,
                 rejectingResolver(), DealUiDealSource.ADAPTER);
     }
 
     /** State-schema edits must review existing state producers, not only the initializer. */
     public static List<SemanticSlice> queryRootStateProducers(String source) {
-        var inspected = DealCompilerWorkspace.inspect(
+        var inspected = AmendWorkspace.inspect(
                 source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);
         var module = new UiChecker().parseDeal(Path.of("/generated/app.deal"), source);
         String root = inspected.appInterface().rootState();
@@ -407,21 +390,21 @@ public final class CanonicalCompiler {
             return function != null && !symbol.name().equals("initialState")
                     && function.returnType().name().equals(root)
                     && function.returnType().dimensions() == 0;
-        }).map(deal.compiler.CompilerProtocol.SymbolSnapshot::id).toList();
+        }).map(deal.amend.CompilerProtocol.SymbolSnapshot::id).toList();
         return inspected.nodes().stream()
                 .filter(node -> node.kind().equals("function-body") && owners.contains(node.ownerId()))
                 .map(node -> queryDealNode(source, node.id())).toList();
     }
 
     public static SemanticSlice queryDealModule(String source) {
-        return DealCompilerWorkspace.queryModule(
+        return AmendWorkspace.queryModule(
                 source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);
     }
 
     public static SemanticSlice queryDealNode(
             String source,
             SemanticId nodeId) {
-        return DealCompilerWorkspace.queryNode(
+        return AmendWorkspace.queryNode(
                 source, "/generated/app.deal", nodeId,
                 rejectingResolver(), DealUiDealSource.ADAPTER);
     }
@@ -429,24 +412,24 @@ public final class CanonicalCompiler {
     public static ChangeResult applyDealChangeChecked(
             String source,
             ChangeSetPrecondition precondition,
-            List<? extends DealCompilerWorkspace.Operation> operations) {
-        ChangeResult changed = DealCompilerWorkspace.applyChecked(
+            List<? extends AmendWorkspace.Operation> operations) {
+        ChangeResult changed = AmendWorkspace.applyChecked(
                 source, "/generated/app.deal", precondition, operations,
                 rejectingResolver(), DealUiDealSource.ADAPTER);
         if (!changed.accepted()) return changed;
         List<StructuredDiagnostic> contractDiagnostics = dealUiContractDiagnostics(
                 changed.source(), changed.inspection(), operations);
         if (contractDiagnostics.isEmpty()) return changed;
-        var previous = DealCompilerWorkspace.inspect(
+        var previous = AmendWorkspace.inspect(
                 source, "/generated/app.deal", rejectingResolver(), DealUiDealSource.ADAPTER);
         return new ChangeResult(
-                false, source, previous.sourceDigest(), previous, changed.impact(), contractDiagnostics);
+                false, source, previous.sourceDigest(), previous, contractDiagnostics);
     }
 
     private static List<StructuredDiagnostic> dealUiContractDiagnostics(
             String source,
-            deal.compiler.CompilerProtocol.Inspection inspection,
-            List<? extends DealCompilerWorkspace.Operation> operations) {
+            deal.amend.CompilerProtocol.Inspection inspection,
+            List<? extends AmendWorkspace.Operation> operations) {
         List<RepairScope> transactionScopes = operations.stream()
                 .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                 .distinct()
@@ -457,7 +440,7 @@ public final class CanonicalCompiler {
         } catch (UiDiagnostic failure) {
             SemanticId owner = inspection.symbols().stream()
                     .filter(symbol -> contains(symbol.range(), failure.line(), failure.column()))
-                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                    .map(deal.amend.CompilerProtocol.SymbolSnapshot::id)
                     .findFirst()
                     .orElse(operations.get(0).targetId());
             List<RepairScope> targetedScopes = operations.stream()
@@ -473,14 +456,14 @@ public final class CanonicalCompiler {
                     failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
                     failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
                     List.of(), targetedScopes.isEmpty() ? transactionScopes : targetedScopes,
-                    "query_deal_symbol", null, failure.notes()).withSourceContext(source));
+                    "query_deal_symbol", failure.notes()));
         }
         if (inspection.appInterface() == null) {
             return List.of();
         }
         Set<String> requiredActions = new LinkedHashSet<>();
         inspection.appInterface().actions().stream()
-                .map(deal.compiler.CompilerProtocol.TypeSnapshot::name)
+                .map(deal.amend.CompilerProtocol.TypeSnapshot::name)
                 .forEach(requiredActions::add);
         module.classes().values().stream()
                 .filter(UiModel.DealClass::exported)
@@ -502,13 +485,13 @@ public final class CanonicalCompiler {
                     .findFirst().orElse(null);
             SemanticId actionId = inspection.symbols().stream()
                     .filter(symbol -> symbol.name().equals(actionName))
-                    .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                    .map(deal.amend.CompilerProtocol.SymbolSnapshot::id)
                     .findFirst().orElse(null);
             SemanticId owner = candidate == null
                     ? actionId == null ? operations.get(0).targetId() : actionId
                     : inspection.symbols().stream()
                             .filter(symbol -> symbol.name().equals(candidate.name()))
-                            .map(deal.compiler.CompilerProtocol.SymbolSnapshot::id)
+                            .map(deal.amend.CompilerProtocol.SymbolSnapshot::id)
                             .findFirst().orElse(operations.get(0).targetId());
             SourceRange range = candidate == null
                     ? new SourceRange("/generated/app.deal", 1, 1, 1, 1)
@@ -519,7 +502,7 @@ public final class CanonicalCompiler {
             SourceRange functionBodyRange = inspection.nodes().stream()
                     .filter(node -> node.ownerId().equals(owner))
                     .filter(node -> node.kind().equals("function-body"))
-                    .map(deal.compiler.CompilerProtocol.NodeSnapshot::range)
+                    .map(deal.amend.CompilerProtocol.NodeSnapshot::range)
                     .findFirst().orElse(null);
             boolean markerInsideFunction = markerInsideRange(source, functionBodyRange, "// @ui-update");
             String message = markerInsideFunction
@@ -544,17 +527,17 @@ public final class CanonicalCompiler {
                     "// @ui-update immediately before export function "
                             + (candidate == null ? "handler" : candidate.name()),
                     markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
-                    related, targetedScopes, "query_deal_module").withSourceContext(source));
+                    related, targetedScopes, "query_deal_module"));
         }
         return List.copyOf(diagnostics);
     }
 
     private static boolean operationOwns(
-            DealCompilerWorkspace.Operation operation,
+            AmendWorkspace.Operation operation,
             SemanticId semanticId) {
         if (operation.targetId().equals(semanticId)) return true;
-        if (!(operation instanceof DealCompilerWorkspace.AddDeclaration value)) return false;
-        SemanticId produced = DealCompilerWorkspace.declarationSemanticId(
+        if (!(operation instanceof AmendWorkspace.AddDeclaration value)) return false;
+        SemanticId produced = AmendWorkspace.declarationSemanticId(
                 value.declaration(), "/generated/app.deal");
         return semanticId.equals(produced);
     }
@@ -576,14 +559,14 @@ public final class CanonicalCompiler {
                 .anyMatch(line -> line.trim().equals(marker));
     }
 
-    private static String operationName(DealCompilerWorkspace.Operation operation) {
+    private static String operationName(AmendWorkspace.Operation operation) {
         return switch (operation) {
-            case DealCompilerWorkspace.AddDeclaration ignored -> DealCompilerWorkspace.ADD_DECLARATION;
-            case DealCompilerWorkspace.RemoveDeclaration ignored -> DealCompilerWorkspace.REMOVE_DECLARATION;
-            case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
-            case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
-            case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
-            case DealCompilerWorkspace.SetCapabilities ignored -> DealCompilerWorkspace.SET_CAPABILITIES;
+            case AmendWorkspace.AddDeclaration ignored -> AmendWorkspace.ADD_DECLARATION;
+            case AmendWorkspace.RemoveDeclaration ignored -> AmendWorkspace.REMOVE_DECLARATION;
+            case AmendWorkspace.ReplaceDeclaration ignored -> AmendWorkspace.REPLACE_DECLARATION;
+            case AmendWorkspace.ReplaceFunctionBody ignored -> AmendWorkspace.REPLACE_FUNCTION_BODY;
+            case AmendWorkspace.ReplaceBlockBody ignored -> AmendWorkspace.REPLACE_BLOCK_BODY;
+            case AmendWorkspace.SetCapabilities ignored -> AmendWorkspace.SET_CAPABILITIES;
         };
     }
 
