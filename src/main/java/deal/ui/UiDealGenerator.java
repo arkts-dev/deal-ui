@@ -26,7 +26,11 @@ final class UiDealGenerator {
         for (String action : program.effects().keySet()) effectIds.put(action, id++);
     }
 
-    Output generate() {
+    Output generate() { return generate(false); }
+
+    Output generateSession() { return generate(true); }
+
+    private Output generate(boolean sessionExports) {
         String app = moduleName(program.dealSource());
         validateEffectPolicyTypes();
         StringBuilder out = new StringBuilder();
@@ -37,6 +41,21 @@ final class UiDealGenerator {
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
         generateActionFactories(out);
         generateRouting(out, app);
+        if (sessionExports) {
+        out.append("export function bridgeInitialState(): app.").append(program.rootStateType()).append(" { return app.initialState(); }\n");
+        for (var entry : effectIds.entrySet()) {
+            String name = entry.getKey();
+            UiModel.Handler handler = program.effects().get(name);
+            boolean async = program.deal().functions().get(handler.name()).async();
+            out.append("export ").append(async ? "async " : "").append("function bridgeEffect").append(entry.getValue())
+                .append("(state: app.").append(program.rootStateType()).append(", action: UiAction): UiAction { let value: app.")
+                .append(name).append(" | null = action.nominal").append(actionIds.get(name))
+                .append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
+                .append(handler.returnType()).append(" = ").append(async ? "await " : "").append("app.")
+                .append(handler.name()).append("(state, value); return { nominal").append(actionIds.get(handler.returnType()))
+                .append(": result }; } }\n");
+        }
+        }
         out.append("export function main(): null { return null; }\n");
         StringBuilder augmentation = new StringBuilder();
         for (UiModel.View view : program.views().values()) {
