@@ -40,6 +40,7 @@ final class UiDealGenerator {
         out.append("}\n\nexport class UiStore {\n  lifecycle: store.StoreLifecycle = {};\n  queue: UiAction[] = [];\n}\n\nexport class EnqueueResult {\n  store: UiStore = {};\n  accepted: boolean = false;\n  startDrain: boolean = false;\n}\n\nexport class DequeueResult {\n  store: UiStore = {};\n  action: UiAction = {};\n  present: boolean = false;\n}\n\nexport class Transition {\n  tree: core.ViewNode = {};\n  plan: reconcile.Plan = {};\n  store: UiStore = {};\n  effect: effects.EffectDescriptor = {};\n}\n\n");
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
         generateActionFactories(out);
+        generatePayloadTypes(out);
         generateRouting(out, app);
         if (sessionExports) {
         out.append("export function bridgeInitialState(): app.").append(program.rootStateType()).append(" { return app.initialState(); }\n");
@@ -160,6 +161,16 @@ final class UiDealGenerator {
                 out.append(pad).append("}\n");
             }
         }
+    }
+
+    /** Hosts dispatch typed payloads; the declared type comes from the checked signature. */
+    private void generatePayloadTypes(StringBuilder out) {
+        for (Map.Entry<Integer, GeneratedAction> entry : actions.entrySet()) {
+            UiModel.TypeRef payloadType = entry.getValue().payloadType();
+            String kind = payloadType == null ? "none" : simple(payloadType.name());
+            out.append("export function payloadType_").append(entry.getKey()).append("(): string { return \"").append(kind).append("\"; }\n");
+        }
+        out.append("\n");
     }
 
     private void generateActionFactories(StringBuilder out) {
