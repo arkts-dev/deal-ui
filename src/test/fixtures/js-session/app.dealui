@@ -1,0 +1,11 @@
+import * as app from "./app";
+import * as ui from "./platform.dealui-pack";
+// @ui-root
+export view Root(state: app.State): View {
+    ui.Column() {
+        ui.IntText(value: state.value)
+        ui.Button(text: "Start 1", accessibilityLabel: "Start 1", onClick: action app.Start { value: 1 })
+        ui.Button(text: "Start 2", accessibilityLabel: "Start 2", onClick: action app.Start { value: 2 })
+        ui.Button(text: "Bad", accessibilityLabel: "Bad", onClick: action app.Bad {})
+    }
+}

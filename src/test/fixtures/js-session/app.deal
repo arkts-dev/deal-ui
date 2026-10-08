@@ -1,0 +1,18 @@
+import * as work from "host/work";
+export class State { value: int = 0; }
+export class Start { value: int = 0; }
+export class Done { value: int = 0; }
+export class Bad {}
+export function initialState(): State { return {}; }
+// @ui-update
+export function start(state: State, action: Start): State { return state; }
+// @ui-effect
+export async function run(state: State, action: Start): Done {
+    let value: int = await work.run(action.value);
+    return { value: value };
+}
+// @ui-update
+export function done(state: State, action: Done): State { return { value: state.value * 10 + action.value }; }
+// @ui-update
+export function bad(state: State, action: Bad): State { throw { code: "UPDATE_FAILED", message: "Injected update failure" }; }
+export function main(): null { return null; }

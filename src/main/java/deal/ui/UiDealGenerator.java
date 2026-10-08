@@ -43,6 +43,12 @@ final class UiDealGenerator {
         generatePayloadTypes(out);
         generateRouting(out, app);
         if (sessionExports) {
+        out.append("export function bridgeSessionStatus(): SessionStatus { return {}; }\n")
+            .append("export function bridgeSessionCommitted(current: SessionStatus): SessionStatus { return sessionCommitted(current); }\n")
+            .append("export function bridgeSessionStarted(current: SessionStatus): SessionStatus { return sessionStarted(current); }\n")
+            .append("export function bridgeSessionExited(current: SessionStatus): SessionStatus { return sessionExited(current); }\n")
+            .append("export function bridgeSessionFailed(current: SessionStatus, message: string, effect: boolean): SessionStatus { return sessionFailed(current, message, effect); }\n")
+            .append("export function bridgeReplacementReady(current: SessionStatus): boolean { return sessionReplacementReady(current); }\n");
         out.append("export function bridgeInitialState(): app.").append(program.rootStateType()).append(" { return app.initialState(); }\n");
         for (var entry : effectIds.entrySet()) {
             String name = entry.getKey();
@@ -71,7 +77,7 @@ final class UiDealGenerator {
     private String flattenFramework(String generatedSource) {
         try {
             StringBuilder source = new StringBuilder("import * as app from \"./").append(moduleName(program.dealSource())).append("\";\n\n");
-            for (String module : List.of("core", "store", "actions", "effects", "interaction", "reconcile")) {
+            for (String module : List.of("core", "store", "actions", "effects", "interaction", "reconcile", "session")) {
                 String value = java.nio.file.Files.readString(frameworkRoot.resolve("ui/" + module + ".deal"));
                 value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
                 if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");

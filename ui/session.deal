@@ -1,0 +1,23 @@
+// Runtime-owned observation/accounting for one mounted root. Application state and
+// store/queue decisions remain in the generated typed entry and store module.
+export class SessionStatus {
+    inFlight: int = 0;
+    version: int = 1;
+    fault: string = "";
+}
+export function sessionCommitted(current: SessionStatus): SessionStatus {
+    return { inFlight: current.inFlight, version: current.version + 1, fault: current.fault };
+}
+export function sessionStarted(current: SessionStatus): SessionStatus {
+    return { inFlight: current.inFlight + 1, version: current.version, fault: current.fault };
+}
+export function sessionExited(current: SessionStatus): SessionStatus {
+    if (current.inFlight < 1) { throw { code: "UI3005", message: "Effect accounting underflow" }; }
+    return { inFlight: current.inFlight - 1, version: current.version, fault: current.fault };
+}
+export function sessionFailed(current: SessionStatus, message: string, effect: boolean): SessionStatus {
+    let version: int = current.version;
+    if (effect) { version = version + 1; }
+    return { inFlight: current.inFlight, version: version, fault: message };
+}
+export function sessionReplacementReady(current: SessionStatus): boolean { return current.inFlight === 0; }

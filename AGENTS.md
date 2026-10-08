@@ -95,6 +95,10 @@ These rules apply to all Deal UI applications and framework work in this workspa
 - Prefer typed tokens and component props from Deal UI packs for colors, typography, spacing, sizing, layout, states, and animation configuration.
 - Do not require application-authored CSS or native styling when the same concept should be expressible as a reusable typed Deal UI token or component property.
 
+## JavaScript session runtime
+
+Keep mounted-root drain/effect coordination in `runtime-js/session.js` and observation/accounting rules in `ui/session.deal`, exposed through compiler-issued session exports. Hosts supply module loading, Promise scheduling, transport and native publication; they must not duplicate lifecycle or replacement-readiness policy. Reuse the generated queue/store decisions, including `startDrain`, disposal and completion admission. Maintain physical effect exit accounting even when completions are discarded. Keep the JS runtime independent of Android and concrete packs.
+
 ## Verification
 
 - When proposing a new Deal UI feature, first show why the existing update, effect, effect-policy, component-event, `When`, `ForEach`, token, or capability mechanisms cannot express it.

@@ -4,6 +4,8 @@ This repository implements `../deal-ui-framework-design.md` over the unmodified 
 
 `.dealui` views and closed action dispatch are generated as ordinary DEAL and compiled with `ui/core.deal`, `ui/store.deal`, `ui/reconcile.deal`, `ui/actions.deal`, `ui/effects.deal`, and application DEAL. A generated typed Java bridge exposes only concrete entrypoints and values. Java owns parsing, compiler invocation, opaque effect threads, Swing/EDT patch application, and native event ingress; portable framework policy remains DEAL.
 
+The JavaScript session target uses `runtime-js/session.js` for mounted-root drain/effect coordination and compiler-issued exports backed by `ui/session.deal` for in-flight accounting, fault/version behavior and replacement readiness. Hosts supply module loading and an effect scheduler with invoke/completion/failure/physical-exit callbacks. Completion admission and drain reentrancy reuse the generated store/queue decisions; no Android dependency or application transitions live in this runtime.
+
 The modern museum gallery in `examples/museum/` demonstrates generated view composition, payload events, conditions, keyed lists, committed updates, and effects. The functional apps in `examples/checkout/`, `examples/search-mail/`, `examples/kanban/`, and `examples/dashboard/` run entirely against local in-memory state and exercise shared DEAL-owned navigation/forms, asynchronous request policy, virtualization/optimism, and overlay/lifecycle policy. Pack capabilities select renderer bindings and pack token values provide real spacing.
 
 ```bash
