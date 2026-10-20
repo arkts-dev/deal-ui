@@ -19,11 +19,12 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
  const session=mount();
  session.dispatch(slot(session,'Start 1'));session.dispatch(slot(session,'Start 2'));
- assert.throws(()=>session.state(),/Wait for current work/);
+ assert.throws(()=>session.state(),/Wait for current work/);assert.equal(session.checkpoint(),null);
  const req=JSON.parse(dealCapabilities.take());assert.equal(req.length,2);
  dealCapabilities.deliver([{id:req[1].id,ok:true,value:2}]);await tick();
  assert.throws(()=>session.state(),/Wait for current work/);
  dealCapabilities.deliver([{id:req[0].id,ok:true,value:1}]);await tick();
+ assert.equal(JSON.parse(session.checkpoint()).value,21,'Settled checkpoint includes effect completions');
  assert.equal(JSON.parse(session.state()).value,21,'Completions must commit in arrival order');assert.equal(snapshot(session).version,5);
  const before=snapshot(session);
  session.dispatch(slot(session,'Bad'));const rejected=snapshot(session);

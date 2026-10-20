@@ -97,7 +97,7 @@ These rules apply to all Deal UI applications and framework work in this workspa
 
 ## JavaScript session runtime
 
-Keep mounted-root drain/effect coordination in `runtime-js/session.js` and observation/accounting rules in `ui/session.deal`, exposed through compiler-issued session exports. Hosts supply module loading, Promise scheduling, transport and native publication; they must not duplicate lifecycle or replacement-readiness policy. Reuse the generated queue/store decisions, including `startDrain`, disposal and completion admission. Maintain physical effect exit accounting even when completions are discarded. Keep the JS runtime independent of Android and concrete packs.
+Keep mounted-root drain/effect coordination in `runtime-js/session.js` and observation/accounting rules in `ui/session.deal`, exposed through compiler-issued session exports. Hosts supply module loading, Promise scheduling, transport and native publication; they must not duplicate lifecycle or replacement-readiness policy. Reuse the generated queue/store decisions, including `startDrain`, disposal and completion admission. Maintain physical effect exit accounting even when completions are discarded. Optional draft checkpoints return no value until compiler-owned replacement readiness; strict state export still rejects pending work. Hosts must not serialize a pending effect as a resumable draft. Keep the JS runtime independent of Android and concrete packs.
 
 ## Verification
 

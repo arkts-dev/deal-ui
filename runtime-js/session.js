@@ -48,6 +48,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
   return Object.freeze({
     snapshot: () => JSON.stringify({tree: current.tree, version: status.version, fault: status.fault}),
     state: () => { if (!call('bridgeReplacementReady', status)) throw Error('Wait for current work before replacing the experience'); return JSON.stringify(state); },
+    checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(state) : null,
     dispatch: (slot, payload = null) => {
       if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(current.tree, slot)) throw Error('Invalid or stale action slot');
       // Payload type comes from the checked action signature, never from the caller.
