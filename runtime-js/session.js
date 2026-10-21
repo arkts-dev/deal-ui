@@ -18,7 +18,8 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
     const next = new Map();
     function visit(node) {
       return {...node, props: node.props.map(prop => {
-        const {actionBindings, ...display} = prop;
+        const {actionBindings, ...fields} = prop;
+        const display = {...fields, actionBindings: {}};
         if (prop.kind === 'action' && actionBindings && actionBindings.size) {
           if (nextBinding >= 2147483647) throw Error('Action binding identity exhausted');
           const handle = nextBinding++;
