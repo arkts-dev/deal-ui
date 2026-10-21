@@ -84,6 +84,7 @@ public final class UiFrameworkTest {
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
         dependencyStaging(root, outputs);
+        presentationValues(outputs, compiler);
         computedPropLowering(outputs, compiler);
         storageHostCompilation(outputs, compiler);
         portableBridge(root, outputs, compiler);
@@ -150,6 +151,18 @@ public final class UiFrameworkTest {
             check(bridge.stateSnapshot(changed.state()).get("chosen").equals("b!"), "JVM string event captures correct row identity");
             try { bridge.action(a, "stale"); throw new AssertionError("stale row admitted"); }
             catch (IllegalArgumentException expected) { check(expected.getMessage().contains("stale"), "removed row event rejected"); }
+        }
+    }
+
+    private static void presentationValues(Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture=outputs.resolve("presentation-values"); Files.createDirectories(fixture);
+        Files.writeString(fixture.resolve("app.deal"), "import * as values from \"ui/values\";\nexport class State { text: string = \"\"; }\nexport function initialState(): State { return { text: values.decimal(-2147483648) + \"|\" + values.clockMinutes(916) + \"|\" + values.clockMinutes(-1) + \"|\" + values.clockMinutes(1440) + \"|\" + values.decimal(0) }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { value: string = \"\"; }\nexport component Text(props: Props): View { capability \"renderer.test.text\"; }\n");
+        Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Values(state: app.State): View { ui.Text(value: state.text) }\n");
+        var result=compiler.compile(fixture.resolve("app.dealui"),outputs.resolve("presentation-values-output"),UiCompiler.Target.PORTABLE); compiler.build(result,runtimeClasses());
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiPortableBridge bridge=(UiPortableBridge)Class.forName(result.bridgeClass(),true,loader).getConstructor().newInstance();
+            check(bridge.stateSnapshot(bridge.initialState()).get("text").equals("-2147483648|15:16|||0"),"shared presentation primitives execute independently on JVM");
         }
     }
 

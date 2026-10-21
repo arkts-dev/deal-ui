@@ -139,6 +139,8 @@ public final class UiCompiler {
             Path canonical;
             if (isRelative(specifier)) {
                 canonical = resolveDealDependency(source, specifier, roots);
+            } else if (specifier.equals("ui/values")) {
+                canonical = frameworkRoot.resolve("ui/values.deal").toRealPath();
             } else if (specifier.startsWith("std/")) {
                 validateStandardDependency(source, specifier, roots);
                 continue;

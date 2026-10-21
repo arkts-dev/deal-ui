@@ -93,6 +93,10 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateActions(StringBuilder out) {
+        if (generated.actions().isEmpty()) {
+            out.append("  @Override public ActionValue action(int slot, Object payload) { throw new IllegalArgumentException(\"Unknown action slot: \" + slot); }\n");
+            return;
+        }
         out.append("  @Override public ActionValue action(int slot, Object payload) { Binding binding = bindings.get(slot); if (slot >= 1000000 && binding == null) throw new IllegalArgumentException(\"Invalid or stale action binding\"); Object values = binding == null ? new deal.codegen.jvm.JvmRuntime.Table() : binding.values(); int factory = binding == null ? slot : binding.slot(); return new ActionValue(switch (factory) {\n");
         for (var entry : generated.actions().entrySet()) {
             int slot = entry.getKey();

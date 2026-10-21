@@ -1,0 +1,30 @@
+import * as strings from "std/string";
+
+// Pure presentation helpers. Call in DEAL updates/effects, never in view expressions.
+export function decimal(value: int): string {
+    if (value === 0) { return "0"; }
+    let remaining: int = value; if (remaining > 0) { remaining = -remaining; }
+    let out: string = "";
+    while (remaining < 0) {
+        let digit: int = -(remaining % 10);
+        out = strings.substring("0123456789", digit, digit + 1) + out;
+        remaining = remaining / 10;
+    }
+    if (value < 0) { out = "-" + out; }
+    return out;
+}
+
+// Explicit local minutes; no timezone conversion or travel policy is inferred.
+export function clockMinutes(minutes: int): string {
+    if (minutes < 0 || minutes >= 1440) { return ""; }
+    let hour: int = minutes / 60; let minute: int = minutes % 60;
+    let hh: string = decimal(hour); let mm: string = decimal(minute);
+    if (hour < 10) { hh = "0" + hh; }
+    if (minute < 10) { mm = "0" + mm; }
+    return hh + ":" + mm;
+}
+
+// Shared bounds predicate; callers still own domain limits and rejection behavior.
+export function inBounds(value: int, minimum: int, maximum: int): boolean {
+    return minimum <= maximum && value >= minimum && value <= maximum;
+}

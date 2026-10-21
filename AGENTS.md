@@ -99,6 +99,10 @@ These rules apply to all Deal UI applications and framework work in this workspa
 
 Keep mounted-root drain/effect coordination in `runtime-js/session.js` and observation/accounting rules in `ui/session.deal`, exposed through compiler-issued session exports. Keep row-action captures compiler-issued and private to the session. Published handles must distinguish row instances and reject stale captures after transitions; never reconstruct row values from renderer labels. Borrow summaries must distinguish fresh outer allocations from borrowed nested references, including helper-return projections. Hosts supply module loading, Promise scheduling, transport and native publication; they must not duplicate lifecycle or replacement-readiness policy. Reuse the generated queue/store decisions, including `startDrain`, disposal and completion admission. Maintain physical effect exit accounting even when completions are discarded. Optional draft checkpoints return no value until compiler-owned replacement readiness; strict state export still rejects pending work. Hosts must not serialize a pending effect as a resumable draft. Keep the JS runtime independent of Android and concrete packs.
 
+## Shared DEAL presentation primitives
+
+Keep pure generic formatting/bounds helpers in `ui/values.deal`; compiler staging and session hosts expose the same checked module as `ui/values`. Helpers must not infer timezone, suitability, prices, domain policy or provider state. Do not add a task-template registry or an app-specific runtime helper. Exercise signed integer edges and invalid clock ranges on both actual JVM and JS execution.
+
 ## JVM compiler integration
 
 Use current compiler module exports and JVM runtime carriers, not generated record-class or static-method ABI assumptions. Load each independent generated application with its own runtime/JSON classes and module registry. Split generated JVM view composition into typed helper functions at component boundaries so ordinary views stay below Java's method bytecode limit; preserve structural/key identity and keep this backend concern out of authoring guidance.
