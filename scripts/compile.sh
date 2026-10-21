@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FS_ROOT=${DEAL_FS_ROOT:-/home/igelhaus/coding/deal/fs}
+FS_ROOT=${DEAL_FS_ROOT:-"$ROOT/../deal"}
 BUILD="$ROOT/build"
 CLASSES="$BUILD/classes"
 

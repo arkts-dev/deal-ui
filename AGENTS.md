@@ -53,7 +53,7 @@ These rules apply to all Deal UI applications and framework work in this workspa
 
 - `./docs/deal-ui-framework-design.md` is the only authorative document for Deal UI framework. No change should violate it or create duplicate functionality.
   - In particular, all specified `@ui-*` annotations must be reused as the main framework mechanism.
-- `https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.2.md` is the only authorative document for the core Deal language.
+- `https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.3.md` is the only authorative document for the core Deal language.
 
 ## Visual effects and platform events
 
@@ -98,6 +98,10 @@ These rules apply to all Deal UI applications and framework work in this workspa
 ## JavaScript session runtime
 
 Keep mounted-root drain/effect coordination in `runtime-js/session.js` and observation/accounting rules in `ui/session.deal`, exposed through compiler-issued session exports. Hosts supply module loading, Promise scheduling, transport and native publication; they must not duplicate lifecycle or replacement-readiness policy. Reuse the generated queue/store decisions, including `startDrain`, disposal and completion admission. Maintain physical effect exit accounting even when completions are discarded. Optional draft checkpoints return no value until compiler-owned replacement readiness; strict state export still rejects pending work. Hosts must not serialize a pending effect as a resumable draft. Keep the JS runtime independent of Android and concrete packs.
+
+## JVM compiler integration
+
+Use current compiler module exports and JVM runtime carriers, not generated record-class or static-method ABI assumptions. Load each independent generated application with its own runtime/JSON classes and module registry. Split generated JVM view composition into typed helper functions at component boundaries so ordinary views stay below Java's method bytecode limit; preserve structural/key identity and keep this backend concern out of authoring guidance.
 
 ## Verification
 

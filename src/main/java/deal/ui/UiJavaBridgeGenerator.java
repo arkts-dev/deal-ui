@@ -11,19 +11,17 @@ final class UiJavaBridgeGenerator {
     private final UiModel.CheckedProgram program;
     private final UiDealGenerator.Output generated;
     private final String ui;
-    private final String app;
     private final String bridge;
     private final Target target;
 
-    UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String app, String bridge) {
-        this(program, generated, ui, app, bridge, Target.SWING);
+    UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String bridge) {
+        this(program, generated, ui, bridge, Target.SWING);
     }
 
-    UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String app, String bridge, Target target) {
+    UiJavaBridgeGenerator(UiModel.CheckedProgram program, UiDealGenerator.Output generated, String ui, String bridge, Target target) {
         this.program = program;
         this.generated = generated;
         this.ui = ui;
-        this.app = app;
         this.bridge = bridge;
         this.target = target;
     }
@@ -65,22 +63,28 @@ final class UiJavaBridgeGenerator {
             }
             out.append("), new java.awt.Color(0xF3F6FB), new java.awt.Color(0x635BFF)); }\n");
         }
-        out.append("  @Override public StateValue initialState() { return new StateValue(").append(app).append(".initialState()); }\n")
-            .append("  @Override public StoreValue initialStore() { return new StoreValue(").append(ui).append(".initialStore()); }\n")
-            .append("  @Override public Transition initial(StateValue state, StoreValue store) { return transition(").append(ui).append(".initial((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), (").append(ui).append(".$C_UiStore) store.abi()), state, null); }\n")
-            .append("  @Override public Enqueue enqueue(StoreValue store, ActionValue action) { var value = ").append(ui).append(".enqueue((").append(ui).append(".$C_UiStore) store.abi(), (").append(ui).append(".$C_UiAction) action.abi()); return new Enqueue(new StoreValue(value.store), value.accepted, value.startDrain); }\n")
-            .append("  @Override public Dequeue dequeue(StoreValue store) { var value = ").append(ui).append(".dequeue((").append(ui).append(".$C_UiStore) store.abi()); return new Dequeue(new StoreValue(value.store), new ActionValue(value.action), value.present); }\n")
-            .append("  @Override public StoreValue finish(StoreValue store) { return new StoreValue(").append(ui).append(".finish((").append(ui).append(".$C_UiStore) store.abi())); }\n")
-            .append("  @Override public StoreValue reject(StoreValue store) { return new StoreValue(").append(ui).append(".reject((").append(ui).append(".$C_UiStore) store.abi())); }\n")
-            .append("  @Override public StoreValue dispose(StoreValue store) { return new StoreValue(").append(ui).append(".dispose((").append(ui).append(".$C_UiStore) store.abi())); }\n")
-            .append("  @Override public Completion complete(StoreValue store, ActionValue action) { var value = ").append(ui).append(".complete((").append(ui).append(".$C_UiStore) store.abi(), (").append(ui).append(".$C_UiAction) action.abi()); return new Completion(new StoreValue(value.store), value.accepted, value.startDrain); }\n")
-            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { var typedAction = (").append(ui).append(".$C_UiAction) action.abi(); var next = ").append(ui).append(".nextState((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), typedAction); var value = ").append(ui).append(".transitionFromCandidate(next, previous == null ? null : nodeValue(previous), (").append(ui).append(".$C_UiStore) store.abi(), typedAction); return transition(value, new StateValue(next), action); }\n");
-
+        out.append("  public ").append(bridge).append("() { ").append(ui).append(".dealMain(); }\n")
+            .append("  private Object call(String name, Object... args) { return ((deal.codegen.jvm.JvmRuntime.FunctionValue) ").append(ui).append(".exportSurface(\"ui_application\").read(name)).fn.invoke(args); }\n")
+            .append("  private static Object field(Object value, String name) { return ((deal.codegen.jvm.JvmRuntime.ClassInstance) value).read(name); }\n")
+            .append("  private static String text(Object value, String name) { return (String) field(value, name); }\n")
+            .append("  private static long integer(Object value, String name) { return ((Number) field(value, name)).longValue(); }\n")
+            .append("  private static boolean flag(Object value, String name) { return (Boolean) field(value, name); }\n")
+            .append("  private static java.util.List<Object> elements(Object value) { return ((deal.codegen.jvm.JvmRuntime.Array) value).elements; }\n")
+            .append("  private static deal.codegen.jvm.JvmRuntime.Array array(java.util.List<Object> values) { var result = new deal.codegen.jvm.JvmRuntime.Array(values.size()); result.elements.addAll(values); return result; }\n")
+            .append("  @Override public StateValue initialState() { return new StateValue(call(\"bridgeInitialState\")); }\n")
+            .append("  @Override public StoreValue initialStore() { return new StoreValue(call(\"initialStore\")); }\n")
+            .append("  @Override public Transition initial(StateValue state, StoreValue store) { return transition(call(\"initial\", state.abi(), store.abi()), state, null); }\n")
+            .append("  @Override public Enqueue enqueue(StoreValue store, ActionValue action) { var v = call(\"enqueue\", store.abi(), action.abi()); return new Enqueue(new StoreValue(field(v, \"store\")), flag(v, \"accepted\"), flag(v, \"startDrain\")); }\n")
+            .append("  @Override public Dequeue dequeue(StoreValue store) { var v = call(\"dequeue\", store.abi()); return new Dequeue(new StoreValue(field(v, \"store\")), new ActionValue(field(v, \"action\")), flag(v, \"present\")); }\n")
+            .append("  @Override public StoreValue finish(StoreValue store) { return new StoreValue(call(\"finish\", store.abi())); }\n")
+            .append("  @Override public StoreValue reject(StoreValue store) { return new StoreValue(call(\"reject\", store.abi())); }\n")
+            .append("  @Override public StoreValue dispose(StoreValue store) { return new StoreValue(call(\"dispose\", store.abi())); }\n")
+            .append("  @Override public Completion complete(StoreValue store, ActionValue action) { var v = call(\"complete\", store.abi(), action.abi()); return new Completion(new StoreValue(field(v, \"store\")), flag(v, \"accepted\"), flag(v, \"startDrain\")); }\n")
+            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { var next = new StateValue(call(\"nextState\", state.abi(), action.abi())); return transition(call(\"transitionFromCandidate\", next.abi(), previous == null ? null : nodeValue(previous), store.abi(), action.abi()), next, action); }\n");
         generateActions(out);
         generateEffects(out);
         generateEffectFailures(out);
         generateSnapshot(out);
-        out.append("  private static <T> T invalidPayload(int slot, String expected, Object payload) { throw new IllegalArgumentException(\"Action slot \" + slot + \" requires \" + expected + \" payload, got \" + (payload == null ? \"null\" : payload.getClass().getName())); }\n");
         generateConversions(out);
         out.append("}\n");
         return out.toString();
@@ -88,70 +92,49 @@ final class UiJavaBridgeGenerator {
 
     private void generateActions(StringBuilder out) {
         out.append("  @Override public ActionValue action(int slot, Object payload) { return new ActionValue(switch (slot) {\n");
-        for (Map.Entry<Integer, UiDealGenerator.GeneratedAction> entry : generated.actions().entrySet()) {
-            out.append("    case ").append(entry.getKey()).append(" -> ");
-            if (entry.getValue().payloadType() == null) out.append("payload == null ? ").append(ui).append(".action$u").append(entry.getKey()).append("() : invalidPayload(").append(entry.getKey()).append(", \"no\", payload)");
-            else out.append(ui).append(".action$u").append(entry.getKey()).append("(").append(payloadConversion(entry.getKey(), entry.getValue().payloadType())).append(")");
+        for (var entry : generated.actions().entrySet()) {
+            int slot = entry.getKey();
+            var type = entry.getValue().payloadType();
+            out.append("    case ").append(slot).append(" -> ");
+            if (type == null) out.append("payload == null ? call(\"action_").append(slot).append("\") : invalidPayload(slot, \"no\", payload)");
+            else out.append("call(\"action_").append(slot).append("\", ").append(payloadConversion(slot, type)).append(")");
             out.append(";\n");
         }
-        out.append("    default -> throw new IllegalArgumentException(\"Unknown generated action slot: \" + slot);\n  }); }\n");
+        out.append("    default -> throw new IllegalArgumentException(\"Unknown action slot: \" + slot);\n  }); }\n")
+            .append("  private static Object invalidPayload(int slot, String expected, Object payload) { throw new IllegalArgumentException(\"Action slot \" + slot + \" requires \" + expected + \" payload: \" + payload); }\n");
     }
 
     private void generateEffects(StringBuilder out) {
-        if (generated.effectIds().isEmpty()) { out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { throw new IllegalArgumentException(\"Unknown generated effect: \" + effectId); }\n"); return; }
-        out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { var value = (").append(ui).append(".$C_UiAction) action.abi(); return new ActionValue(switch (effectId) {\n");
-        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
-            int id = generated.actionIds().get(entry.getKey());
-            UiModel.Handler handler = program.effects().get(entry.getKey());
-            UiModel.DealClass action = program.deal().classes().get(entry.getKey());
-            out.append("    case ").append(entry.getValue()).append(" -> completion_").append(entry.getValue()).append("(").append(app).append(".").append(handler.name()).append("((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), new ").append(app).append(".$C_").append(entry.getKey()).append("(");
-            appendFields(out, action, field -> "value.nominal" + id + "." + field.name());
-            out.append(")));\n");
+        if (generated.effectIds().isEmpty()) {
+            out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { throw new IllegalArgumentException(\"Unknown effect: \" + effectId); }\n");
+            return;
         }
-        out.append("    default -> throw new IllegalArgumentException(\"Unknown generated effect: \" + effectId);\n  }); }\n");
-        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
-            UiModel.Handler handler = program.effects().get(entry.getKey());
-            int completionId = generated.actionIds().get(handler.returnType());
-            UiModel.DealClass completion = program.deal().classes().get(handler.returnType());
-            out.append("  private Object completion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L");
-            for (Map.Entry<String, Integer> action : generated.actionIds().entrySet().stream().sorted(Map.Entry.comparingByValue()).toList()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
-            out.append("); }\n");
-        }
+        out.append("  @Override public ActionValue runEffect(int effectId, StateValue state, ActionValue action) { Object value = switch (effectId) {\n");
+        for (var entry : generated.effectIds().entrySet()) out.append("    case ").append(entry.getValue()).append(" -> call(\"bridgeEffect").append(entry.getValue()).append("\", state.abi(), action.abi());\n");
+        out.append("    default -> throw new IllegalArgumentException(\"Unknown effect: \" + effectId);\n  };\n")
+            .append("    if (value instanceof deal.codegen.jvm.JvmRuntime.AsyncTask task) { deal.codegen.jvm.JvmRuntime.drainTasks(); value = task.future.join(); } return new ActionValue(value); }\n");
     }
 
     private void generateEffectFailures(StringBuilder out) {
         if (program.effectFailures().isEmpty()) return;
-        out.append("  @Override public ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { var value = (").append(ui).append(".$C_UiAction) action.abi(); return switch (effectId) {\n");
-        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
-            UiModel.Handler handler = program.effectFailures().get(entry.getKey());
-            if (handler == null) continue;
-            int id = generated.actionIds().get(entry.getKey());
-            out.append("    case ").append(entry.getValue()).append(" -> new ActionValue(failureCompletion_").append(entry.getValue()).append("(").append(app).append(".").append(handler.name()).append("((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), new ").append(app).append(".$C_").append(entry.getKey()).append("(");
-            appendFields(out, program.deal().classes().get(entry.getKey()), field -> "value.nominal" + id + "." + field.name());
-            out.append("), failure.getMessage() == null ? failure.getClass().getName() : failure.getMessage())));\n");
-        }
+        out.append("  @Override public ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { return switch (effectId) {\n");
+        for (var entry : generated.effectIds().entrySet()) if (program.effectFailures().containsKey(entry.getKey())) out.append("    case ").append(entry.getValue()).append(" -> new ActionValue(call(\"bridgeEffectFailure").append(entry.getValue()).append("\", state.abi(), action.abi(), failure.getMessage() == null ? failure.getClass().getName() : failure.getMessage()));\n");
         out.append("    default -> null;\n  }; }\n");
-        for (Map.Entry<String, Integer> entry : generated.effectIds().entrySet()) {
-            UiModel.Handler handler = program.effectFailures().get(entry.getKey());
-            if (handler == null) continue;
-            out.append("  private Object failureCompletion_").append(entry.getValue()).append("(").append(app).append(".$C_").append(handler.returnType()).append(" value) { return new ").append(ui).append(".$C_UiAction(-1L");
-            for (Map.Entry<String, Integer> action : generated.actionIds().entrySet().stream().sorted(Map.Entry.comparingByValue()).toList()) out.append(", ").append(action.getKey().equals(handler.returnType()) ? "value, true" : "null, false");
-            out.append("); }\n");
-        }
     }
 
     private void generateSnapshot(StringBuilder out) {
-        out.append("  @Override public java.util.Map<String, Object> stateSnapshot(StateValue state) { var value = (").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(); java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();");
-        for (UiModel.Field field : program.deal().classes().get(program.rootStateType()).fields().values()) out.append(" result.put(\"").append(field.name()).append("\", value.").append(field.name()).append(");");
+        out.append("  @Override public java.util.Map<String, Object> stateSnapshot(StateValue state) { java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();");
+        for (var field : program.deal().classes().get(program.rootStateType()).fields().values()) out.append(" result.put(\"").append(field.name()).append("\", field(state.abi(), \"").append(field.name()).append("\"));");
         out.append(" return java.util.Collections.unmodifiableMap(result); }\n");
     }
 
     private void generateConversions(StringBuilder out) {
-        out.append("  private Transition transition(").append(ui).append(".$C_Transition value, StateValue state, ActionValue effectAction) { var command = effectAction == null ? ").append(ui).append(".startCommand(\"\", 0L, \"none\") : ").append(ui).append(".effectCommand((").append(app).append(".$C_").append(program.rootStateType()).append(") state.abi(), (").append(ui).append(".$C_UiAction) effectAction.abi()); return new Transition(state, node(value.tree), patches(value.plan.patches), new StoreValue(value.store), (int) value.effect.effectId, state, effectAction, new EffectCommand(command.operation, command.key, command.delayMillis, command.cancellationMode)); }\n")
-            .append("  private Identity identity(").append(ui).append(".$C_ViewNode value) { return new Identity(value.structural, new Key(value.keyKind, value.keyInt, value.keyString)); }\n")
-            .append("  private Node node(").append(ui).append(".$C_ViewNode value) { java.util.Map<String, Prop> props = new java.util.LinkedHashMap<>(); for (Object raw : value.props.data) { var prop = (").append(ui).append(".$C_Prop) raw; Object converted = switch (prop.kind) { case \"int\" -> prop.intValue; case \"number\" -> prop.numberValue; case \"boolean\" -> prop.booleanValue; default -> prop.stringValue; }; props.put(prop.name, new Prop(prop.name, prop.kind, converted, (int) prop.actionSlot)); } java.util.List<Node> children = new java.util.ArrayList<>(); for (Object raw : value.children.data) children.add(node((").append(ui).append(".$C_ViewNode) raw)); return new Node(value.component, identity(value), props, children); }\n")
-            .append("  private ").append(ui).append(".$C_ViewNode nodeValue(Node value) { var props = new ").append(ui).append(".$Array$Prop(new Object[0]); for (Prop prop : value.props().values()) { var raw = new ").append(ui).append(".$C_Prop(prop.name(), prop.kind(), prop.value() instanceof String text ? text : \"\", prop.value() instanceof Long number ? number : 0L, prop.value() instanceof Double number ? number : 0.0, prop.value() instanceof Boolean bool && bool, prop.actionSlot()); props.data = java.util.Arrays.copyOf(props.data, props.data.length + 1); props.data[props.data.length - 1] = raw; } var children = new ").append(ui).append(".$Array$ViewNode(new Object[0]); for (Node child : value.children()) { children.data = java.util.Arrays.copyOf(children.data, children.data.length + 1); children.data[children.data.length - 1] = nodeValue(child); } return new ").append(ui).append(".$C_ViewNode(value.component(), value.identity().structural(), value.identity().key().kind(), value.identity().key().intValue(), value.identity().key().stringValue(), props, children); }\n")
-            .append("  private java.util.List<Patch> patches(").append(ui).append(".$Array$Patch values) { java.util.List<Patch> result = new java.util.ArrayList<>(); for (Object raw : values.data) { var value = (").append(ui).append(".$C_Patch) raw; var identity = new Identity(value.structural, new Key(value.keyKind, value.keyInt, value.keyString)); var parent = new Identity(value.parentStructural, new Key(value.parentKeyKind, value.parentKeyInt, value.parentKeyString)); result.add(new Patch(value.kind, identity, parent, value.rootParent, (int) value.index, node(value.node))); } return java.util.List.copyOf(result); }\n");
+        out.append("  private Transition transition(Object v, StateValue state, ActionValue action) { var command = action == null ? EffectCommand.immediate() : command(call(\"effectCommand\", state.abi(), action.abi())); return new Transition(state, node(field(v, \"tree\")), patches(field(field(v, \"plan\"), \"patches\")), new StoreValue(field(v, \"store\")), (int) integer(field(v, \"effect\"), \"effectId\"), state, action, command); }\n")
+            .append("  private EffectCommand command(Object v) { return new EffectCommand(text(v, \"operation\"), text(v, \"key\"), integer(v, \"delayMillis\"), text(v, \"cancellationMode\")); }\n")
+            .append("  private Identity identity(Object v) { return new Identity(text(v, \"structural\"), new Key(text(v, \"keyKind\"), integer(v, \"keyInt\"), text(v, \"keyString\"))); }\n")
+            .append("  private Node node(Object v) { java.util.Map<String, Prop> props = new java.util.LinkedHashMap<>(); for (Object p : elements(field(v, \"props\"))) { String kind = text(p, \"kind\"); Object value = switch(kind) { case \"int\" -> integer(p, \"intValue\"); case \"number\" -> field(p, \"numberValue\"); case \"boolean\" -> flag(p, \"booleanValue\"); default -> text(p, \"stringValue\"); }; props.put(text(p, \"name\"), new Prop(text(p, \"name\"), kind, value, (int) integer(p, \"actionSlot\"))); } java.util.List<Node> children = new java.util.ArrayList<>(); for(Object child : elements(field(v, \"children\"))) children.add(node(child)); return new Node(text(v, \"component\"), identity(v), props, children); }\n")
+            .append("  private Object nodeValue(Node v) { java.util.List<Object> props = new java.util.ArrayList<>(); for (Prop p : v.props().values()) props.add(call(\"bridgeProp\", p.name(), p.kind(), p.value() instanceof String s ? s : \"\", p.value() instanceof Long n ? n : 0L, p.value() instanceof Double n ? n : 0.0, p.value() instanceof Boolean b && b, (long) p.actionSlot())); java.util.List<Object> children = new java.util.ArrayList<>(); for(Node n : v.children()) children.add(nodeValue(n)); return call(\"bridgeNode\", v.component(), v.identity().structural(), v.identity().key().kind(), v.identity().key().intValue(), v.identity().key().stringValue(), array(props), array(children)); }\n")
+            .append("  private java.util.List<Patch> patches(Object v) { java.util.List<Patch> result = new java.util.ArrayList<>(); for(Object p : elements(v)) result.add(new Patch(text(p, \"kind\"), identity(p), new Identity(text(p, \"parentStructural\"), new Key(text(p, \"parentKeyKind\"), integer(p, \"parentKeyInt\"), text(p, \"parentKeyString\"))), flag(p, \"rootParent\"), (int) integer(p, \"index\"), node(field(p, \"node\")))); return java.util.List.copyOf(result); }\n");
     }
 
     private String factory(UiModel.Component component) {
@@ -172,23 +155,13 @@ final class UiJavaBridgeGenerator {
         String expected = type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : "");
         String invalid = "invalidPayload(" + slot + ", \"" + expected + "\", payload)";
         String conversion;
-        if (type.array()) {
-            String arrayType;
-            if (type.dimensions() > 1) arrayType = ui + ".__RefArray";
-            else arrayType = switch (simple(type.name())) {
-                case "string" -> ui + ".__StringArray";
-                case "int" -> ui + ".__IntArray";
-                case "number" -> ui + ".__NumberArray";
-                case "boolean" -> ui + ".__BooleanArray";
-                default -> app + ".$Array$" + simple(type.name());
-            };
-            conversion = "payload instanceof " + arrayType + " values ? values : " + invalid;
-        } else conversion = switch (simple(type.name())) {
+        if (type.array()) conversion = "payload instanceof deal.codegen.jvm.JvmRuntime.Array value ? value : " + invalid;
+        else conversion = switch (simple(type.name())) {
             case "string" -> "payload instanceof String text ? text : " + invalid;
             case "int" -> "payload instanceof Long number ? number : " + invalid;
             case "number" -> "payload instanceof Double number ? number : " + invalid;
             case "boolean" -> "payload instanceof Boolean bool ? bool : " + invalid;
-            default -> "payload instanceof " + app + ".$C_" + simple(type.name()) + " value ? value : " + invalid;
+            default -> "payload instanceof deal.codegen.jvm.JvmRuntime.ClassInstance value ? value : " + invalid;
         };
         return type.optional() ? "payload == null ? null : (" + conversion + ")" : conversion;
     }

@@ -62,11 +62,24 @@ public final class Main {
     }
 
     private static void run(UiCompiler.Result result) throws Exception {
-        URLClassLoader loader = new URLClassLoader(new URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, Main.class.getClassLoader());
+        URLClassLoader loader = applicationLoader(result, Main.class.getClassLoader());
         Thread.currentThread().setContextClassLoader(loader);
         Class.forName(result.uiClass(), true, loader).getMethod("main", String[].class).invoke(null, (Object) new String[0]);
     }
+    static URLClassLoader applicationLoader(UiCompiler.Result result, ClassLoader parent) throws Exception {
+        return new URLClassLoader(new URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, parent) {
+            @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (!name.startsWith("deal.codegen.jvm.JvmRuntime") && !name.startsWith("deal.codegen.jvm.JvmJson")) return super.loadClass(name, resolve);
+                synchronized (getClassLoadingLock(name)) {
+                    Class<?> loaded = findLoadedClass(name);
+                    if (loaded == null) loaded = findClass(name);
+                    if (resolve) resolveClass(loaded);
+                    return loaded;
+                }
+            }
+        };
+    }
     private static Path runtimeClasses() throws Exception { return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()); }
-    private static Path defaultFsRoot() { String configured = System.getenv("DEAL_FS_ROOT"); return configured == null || configured.isBlank() ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(configured); }
+    private static Path defaultFsRoot() { String configured = System.getenv("DEAL_FS_ROOT"); return configured == null || configured.isBlank() ? Path.of("../deal") : Path.of(configured); }
     private static void usage() { System.err.println("Usage: deal-ui <check|dump-ir|build|run> <root.dealui> [--fs-root PATH] [--renderer swing|portable]"); }
 }

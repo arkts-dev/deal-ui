@@ -16,6 +16,8 @@ final class UiDealGenerator {
     private final Map<String, Integer> effectIds = new LinkedHashMap<>();
     private int actionSlot;
     private int localId;
+    private boolean splitViews;
+    private final StringBuilder viewHelpers = new StringBuilder();
 
     UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
@@ -30,6 +32,8 @@ final class UiDealGenerator {
 
     Output generateSession() { return generate(true); }
 
+    Output generateJvm() { splitViews = true; return generate(true); }
+
     private Output generate(boolean sessionExports) {
         String app = moduleName(program.dealSource());
         validateEffectPolicyTypes();
@@ -39,6 +43,7 @@ final class UiDealGenerator {
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  nominal").append(entry.getValue()).append("?: app.").append(entry.getKey()).append(";\n");
         out.append("}\n\nexport class UiStore {\n  lifecycle: store.StoreLifecycle = {};\n  queue: UiAction[] = [];\n}\n\nexport class EnqueueResult {\n  store: UiStore = {};\n  accepted: boolean = false;\n  startDrain: boolean = false;\n}\n\nexport class DequeueResult {\n  store: UiStore = {};\n  action: UiAction = {};\n  present: boolean = false;\n}\n\nexport class Transition {\n  tree: core.ViewNode = {};\n  plan: reconcile.Plan = {};\n  store: UiStore = {};\n  effect: effects.EffectDescriptor = {};\n}\n\n");
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
+        out.append(viewHelpers);
         generateActionFactories(out);
         generatePayloadTypes(out);
         generateRouting(out, app);
@@ -49,7 +54,9 @@ final class UiDealGenerator {
             .append("export function bridgeSessionExited(current: SessionStatus): SessionStatus { return sessionExited(current); }\n")
             .append("export function bridgeSessionFailed(current: SessionStatus, message: string, effect: boolean): SessionStatus { return sessionFailed(current, message, effect); }\n")
             .append("export function bridgeReplacementReady(current: SessionStatus): boolean { return sessionReplacementReady(current); }\n");
-        out.append("export function bridgeInitialState(): app.").append(program.rootStateType()).append(" { return app.initialState(); }\n");
+        out.append("export function bridgeInitialState(): app.").append(program.rootStateType()).append(" { return app.initialState(); }\n")
+            .append("export function bridgeProp(name: string, kind: string, text: string, integer: int, numeric: number, flag: boolean, slot: int): Prop { return { name: name, kind: kind, stringValue: text, intValue: integer, numberValue: numeric, booleanValue: flag, actionSlot: slot }; }\n")
+            .append("export function bridgeNode(component: string, structural: string, keyKind: string, keyInt: int, keyString: string, props: Prop[], children: ViewNode[]): ViewNode { return { component: component, structural: structural, keyKind: keyKind, keyInt: keyInt, keyString: keyString, props: props, children: children }; }\n");
         for (var entry : effectIds.entrySet()) {
             String name = entry.getKey();
             UiModel.Handler handler = program.effects().get(name);
@@ -60,6 +67,17 @@ final class UiDealGenerator {
                 .append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
                 .append(handler.returnType()).append(" = ").append(async ? "await " : "").append("app.")
                 .append(handler.name()).append("(state, value); return { nominal").append(actionIds.get(handler.returnType()))
+                .append(": result }; } }\n");
+        }
+        for (var entry : effectIds.entrySet()) {
+            UiModel.Handler handler = program.effectFailures().get(entry.getKey());
+            if (handler == null) continue;
+            out.append("export function bridgeEffectFailure").append(entry.getValue())
+                .append("(state: app.").append(program.rootStateType()).append(", action: UiAction, message: string): UiAction { let value: app.")
+                .append(entry.getKey()).append(" | null = action.nominal").append(actionIds.get(entry.getKey()))
+                .append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
+                .append(handler.returnType()).append(" = app.").append(handler.name())
+                .append("(state, value, message); return { nominal").append(actionIds.get(handler.returnType()))
                 .append(": result }; } }\n");
         }
         }
@@ -147,8 +165,24 @@ final class UiDealGenerator {
                     }
                     out.append(pad).append(props).append("[").append(props).append(".length] = ").append(value).append(";\n");
                 }
-                out.append(pad).append("let ").append(children).append(": core.ViewNode[] = [];\n");
-                emitNodes(out, call.children(), children, structural, key, app, indent, scope);
+                if (splitViews && !call.children().isEmpty()) {
+                    String helper = "viewChildren" + local;
+                    out.append(pad).append("let ").append(children).append(": core.ViewNode[] = ").append(helper)
+                        .append("(\"").append(structural).append("\", ").append(key);
+                    StringBuilder body = new StringBuilder("function ").append(helper).append("(identityPrefix: string, parentKey: core.Key");
+                    for (var binding : scope.entrySet()) {
+                        out.append(", ").append(binding.getKey());
+                        body.append(", ").append(binding.getKey()).append(": ").append(qualifiedType(binding.getValue(), app));
+                    }
+                    out.append(");\n");
+                    body.append("): core.ViewNode[] {\n  let nodes: core.ViewNode[] = [];\n");
+                    emitNodes(body, call.children(), "nodes", "\" + identityPrefix + \"", "parentKey", app, 1, scope);
+                    body.append("  return nodes;\n}\n\n");
+                    viewHelpers.append(body);
+                } else {
+                    out.append(pad).append("let ").append(children).append(": core.ViewNode[] = [];\n");
+                    emitNodes(out, call.children(), children, structural, key, app, indent, scope);
+                }
                 out.append(pad).append(target).append("[").append(target).append(".length] = core.node(\"").append(call.name()).append("\", \"").append(structural).append("\", ").append(key).append(", ").append(props).append(", ").append(children).append(");\n");
             } else if (node instanceof UiModel.When when) {
                 out.append(pad).append("if (").append(expr(when.condition(), app)).append(") {\n");

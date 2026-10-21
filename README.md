@@ -1,8 +1,8 @@
 # DEAL UI Framework
 
-This repository implements `../deal-ui-framework-design.md` over the unmodified DEAL JVM compiler at `../fs`.
+This repository implements `docs/deal-ui-framework-design.md` over the current DEAL 1.3 compiler at `../deal`.
 
-`.dealui` views and closed action dispatch are generated as ordinary DEAL and compiled with `ui/core.deal`, `ui/store.deal`, `ui/reconcile.deal`, `ui/actions.deal`, `ui/effects.deal`, and application DEAL. A generated typed Java bridge exposes only concrete entrypoints and values. Java owns parsing, compiler invocation, opaque effect threads, Swing/EDT patch application, and native event ingress; portable framework policy remains DEAL.
+`.dealui` views and closed action dispatch are generated as ordinary DEAL and compiled with `ui/core.deal`, `ui/store.deal`, `ui/reconcile.deal`, `ui/actions.deal`, `ui/effects.deal`, and application DEAL. A generated Java bridge invokes the compiler's published module functions and converts current JVM carriers to portable nodes. Generated applications load their own JVM runtime registry; do not share that registry between independent compiled applications. Java owns parsing, compiler invocation, opaque effect threads, Swing/EDT patch application, and native event ingress; portable framework policy remains DEAL.
 
 The JavaScript session target uses `runtime-js/session.js` for mounted-root drain/effect coordination and compiler-issued exports backed by `ui/session.deal` for in-flight accounting, fault/version behavior and replacement readiness. Hosts supply module loading and an effect scheduler with invoke/completion/failure/physical-exit callbacks. Completion admission and drain reentrancy reuse the generated store/queue decisions; no Android dependency or application transitions live in this runtime.
 

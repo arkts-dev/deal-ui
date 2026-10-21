@@ -159,8 +159,8 @@ public final class UiFrameworkTest {
         Files.writeString(view, "import * as app from \"./storage\";\nimport * as ui from \"./storage.dealui-pack\";\n// @ui-root\nexport view Storage(state: app.State): View { ui.Button(text: state.value, onClick: action app.Save {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("storage-host-output"), UiCompiler.Target.PORTABLE);
         compiler.build(result, runtimeClasses());
-        String generated = Files.readString(result.generatedDirectory().resolve("ApplicationStorage.java"));
-        check(generated.contains("Class.forName(\"HostStorage\")") && generated.contains("__host$storage$save"), "typed host/storage effects compile through the portable Deal UI pipeline");
+        String generated = Files.readString(result.generatedDirectory().resolve("Ui_application.java"));
+        check(generated.contains("Class.forName(\"HostStorage\")") && generated.contains("__host$host$istorage$save"), "typed host/storage effects compile through the portable Deal UI pipeline");
         check(Files.isRegularFile(result.outputDirectory().resolve("bindings/storage.d.deal")) && Files.readString(result.outputDirectory().resolve("deal.json")).contains("\"host/storage\""), "storage declaration and external binding are staged deterministically");
     }
 
@@ -362,7 +362,7 @@ public final class UiFrameworkTest {
         check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(): UiAction"), "generated action factories preserve event payload contracts");
         check(generated.contains("function effectCommand") && generated.contains("app.completePolicy") && generated.contains("class EffectCommand"), "synchronous DEAL effect policy produces a typed command plan");
         String bridgeSource = Files.readString(result.generatedDirectory().resolve(result.bridgeClass() + ".java"));
-        check(bridgeSource.contains("new EffectCommand(command.operation, command.key, command.delayMillis, command.cancellationMode)") && bridgeSource.contains("effectFailure"), "generated bridge exposes typed scheduling and failure completion");
+        check(bridgeSource.contains("command(call(\"effectCommand\"") && bridgeSource.contains("effectFailure"), "generated bridge exposes typed scheduling and failure completion");
         try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiBridge bridge = Main.bridge(result, loader);
             UiBridge.Node tree = bridge.initial(bridge.initialState(), bridge.initialStore()).tree();
@@ -617,7 +617,7 @@ public final class UiFrameworkTest {
     private static JTextField input(Component component) { if (component instanceof JTextField value) return value; if (component instanceof Container container) for (Component child : container.getComponents()) { JTextField found = input(child); if (found != null) return found; } return null; }
     private static JComponent named(Component component, String name, String text) { if (component instanceof JLabel label && label.getName().equals(name) && label.getText().equals(text)) return label; if (component instanceof Container container) for (Component child : container.getComponents()) { JComponent found = named(child, name, text); if (found != null) return found; } return null; }
     private static Path runtimeClasses() throws Exception { return Path.of(UiBridge.class.getProtectionDomain().getCodeSource().getLocation().toURI()); }
-    private static Path fsRoot() { String value = System.getenv("DEAL_FS_ROOT"); return value == null ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(value); }
+    private static Path fsRoot() { String value = System.getenv("DEAL_FS_ROOT"); return value == null ? Path.of("../deal") : Path.of(value); }
     private static void copyTree(Path source, Path target) throws Exception { try (var files = Files.walk(source)) { for (Path file : files.toList()) { Path destination = target.resolve(source.relativize(file)); if (Files.isDirectory(file)) Files.createDirectories(destination); else Files.copy(file, destination); } } }
     private static void recreate(Path path) throws Exception { if (Files.exists(path)) try (var files = Files.walk(path)) { for (Path file : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.delete(file); } Files.createDirectories(path); }
     private static void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); passed++; }
@@ -625,7 +625,7 @@ public final class UiFrameworkTest {
     private static final class ChildFirstLoader extends URLClassLoader {
         private ChildFirstLoader(java.net.URL[] urls, ClassLoader parent) { super(urls, parent); }
         @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-            if (name.startsWith("deal.")) return super.loadClass(name, resolve);
+            if (name.startsWith("deal.") && !name.startsWith("deal.codegen.jvm.JvmRuntime") && !name.startsWith("deal.codegen.jvm.JvmJson")) return super.loadClass(name, resolve);
             synchronized (getClassLoadingLock(name)) {
                 Class<?> loaded = findLoadedClass(name);
                 if (loaded == null) try { loaded = findClass(name); } catch (ClassNotFoundException ignored) { loaded = super.loadClass(name, false); }

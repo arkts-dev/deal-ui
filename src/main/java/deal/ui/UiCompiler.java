@@ -3,7 +3,7 @@ package deal.ui;
 import deal.ast.ImportDeclaration;
 import deal.ast.StatementNode;
 import deal.ast.TokenType;
-import deal.codegen.jvm.JvmBackend;
+import deal.codegen.jvm.JvmNames;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.lexer.LexResult;
 import deal.lexer.Lexer;
@@ -50,7 +50,7 @@ public final class UiCompiler {
         Path bindings = destination.resolve("bindings");
         Files.createDirectories(bindings);
         Files.copy(storageDeclaration, bindings.resolve("storage.d.deal"));
-        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.2\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
+        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
 
         UiModel.ViewModule views = UiParser.parseViews(view, Files.readString(view));
         Map<String, UiModel.PackModule> packs = new LinkedHashMap<>();
@@ -70,7 +70,7 @@ public final class UiCompiler {
         UiChecker checker = new UiChecker();
         UiModel.DealModule dealModule = checker.parseDeal(deal, Files.readString(deal));
         UiModel.CheckedProgram checked = checker.check(view, views, deal, dealModule, packs);
-        UiDealGenerator.Output generatedDeal = new UiDealGenerator(checked, frameworkRoot).generate();
+        UiDealGenerator.Output generatedDeal = new UiDealGenerator(checked, frameworkRoot).generateJvm();
 
         Path project = destination.resolve("deal");
         Files.createDirectories(project);
@@ -82,12 +82,11 @@ public final class UiCompiler {
         Files.createDirectories(generated);
         run(List.of(javaExecutable(), "-cp", fsRoot.resolve("build").toString(), "deal.Main", "compile",
             entry.toString(), "--backend", "jvm", "--output", generated.toString(), "--dump-ir"), fsRoot, "DEAL JVM compilation");
-        String moduleClass = JvmBackend.classNameFor(stripSuffix(entry.getFileName().toString(), ".deal"));
-        String appClass = JvmBackend.classNameFor(stripSuffix(project.relativize(stagedApplication).toString().replace(java.io.File.separatorChar, '/'), ".deal"));
+        String moduleClass = JvmNames.classNameFor(stripSuffix(entry.getFileName().toString(), ".deal"));
         String bridgeClass = moduleClass + "Bridge";
         Path bridge = generated.resolve(bridgeClass + ".java");
         UiJavaBridgeGenerator.Target bridgeTarget = target == Target.PORTABLE ? UiJavaBridgeGenerator.Target.PORTABLE : UiJavaBridgeGenerator.Target.SWING;
-        Files.writeString(bridge, new UiJavaBridgeGenerator(checked, generatedDeal, moduleClass, appClass, bridgeClass, bridgeTarget).generate());
+        Files.writeString(bridge, new UiJavaBridgeGenerator(checked, generatedDeal, moduleClass, bridgeClass, bridgeTarget).generate());
         String uiClass = moduleClass + "Main";
         Path generatedUi = generated.resolve(uiClass + ".java");
         Files.writeString(generatedUi, generateMain(uiClass, bridgeClass, target));
@@ -99,10 +98,18 @@ public final class UiCompiler {
     public void build(Result result, Path runtimeClasses) throws IOException, InterruptedException {
         Path classes = result.outputDirectory().resolve("classes");
         Files.createDirectories(classes);
-        List<String> command = new ArrayList<>(List.of(javacExecutable(), "--release", "25", "-Xlint:all,-serial,-auxiliaryclass,-rawtypes", "-Werror",
-            "-cp", runtimeClasses.toAbsolutePath().normalize().toString(), "-d", classes.toString()));
+        List<String> command = new ArrayList<>(List.of(javacExecutable(), "--release", "25", "-Xlint:all,-serial,-auxiliaryclass,-rawtypes,-unchecked",
+            "-cp", runtimeClasses.toAbsolutePath().normalize() + java.io.File.pathSeparator + fsRoot.resolve("build"), "-d", classes.toString()));
         try (var files = Files.list(result.generatedDirectory())) { files.filter(file -> file.toString().endsWith(".java")).sorted().forEach(file -> command.add(file.toString())); }
         run(command, result.outputDirectory(), "generated JVM compilation");
+        Path runtimePackage = fsRoot.resolve("build/deal/codegen/jvm");
+        Path destination = classes.resolve("deal/codegen/jvm");
+        Files.createDirectories(destination);
+        try (var files = Files.list(runtimePackage)) {
+            for (Path file : files.filter(p -> p.getFileName().toString().matches("Jvm(Runtime|Json)(\\$.*)?\\.class")).toList()) {
+                Files.copy(file, destination.resolve(file.getFileName()), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
     }
 
     private String generateMain(String uiClass, String bridgeClass, Target target) {

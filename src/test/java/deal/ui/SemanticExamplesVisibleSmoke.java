@@ -37,7 +37,7 @@ public final class SemanticExamplesVisibleSmoke {
 
     private static void run(UiCompiler.Result result, String name, Path evidence) throws Exception {
         ClassLoader previous = Thread.currentThread().getContextClassLoader();
-        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, SemanticExamplesVisibleSmoke.class.getClassLoader())) {
+        try (URLClassLoader loader = Main.applicationLoader(result, SemanticExamplesVisibleSmoke.class.getClassLoader())) {
             Thread.currentThread().setContextClassLoader(loader);
             UiBridge bridge = Main.bridge(result, loader);
             UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings());
@@ -273,6 +273,6 @@ public final class SemanticExamplesVisibleSmoke {
 
     private static Path fsRoot() {
         String value = System.getenv("DEAL_FS_ROOT");
-        return value == null ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(value);
+        return value == null ? Path.of("../deal") : Path.of(value);
     }
 }

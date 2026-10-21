@@ -14,7 +14,7 @@ public final class GalleryVisibleSmoke {
         UiCompiler compiler = new UiCompiler(fsRoot());
         UiCompiler.Result result = compiler.compile(root.resolve("examples/museum/gallery.dealui"), outputs.resolve("gallery-" + System.nanoTime()));
         compiler.build(result, root.resolve("build/classes"));
-        try (URLClassLoader loader = new URLClassLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, GalleryVisibleSmoke.class.getClassLoader())) {
+        try (URLClassLoader loader = Main.applicationLoader(result, GalleryVisibleSmoke.class.getClassLoader())) {
             Thread.currentThread().setContextClassLoader(loader);
             UiBridge bridge = Main.bridge(result, loader);
             try (UiProgramRuntime runtime = new UiProgramRuntime(bridge, bridge.title(), bridge.rendererBindings())) {
@@ -32,5 +32,5 @@ public final class GalleryVisibleSmoke {
         System.out.println("Visible gallery scenario passed");
     }
 
-    private static Path fsRoot() { String value = System.getenv("DEAL_FS_ROOT"); return value == null ? Path.of("/home/igelhaus/coding/deal/fs") : Path.of(value); }
+    private static Path fsRoot() { String value = System.getenv("DEAL_FS_ROOT"); return value == null ? Path.of("../deal") : Path.of(value); }
 }
