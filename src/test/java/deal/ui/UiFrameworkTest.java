@@ -87,6 +87,7 @@ public final class UiFrameworkTest {
         computedPropLowering(outputs, compiler);
         storageHostCompilation(outputs, compiler);
         portableBridge(root, outputs, compiler);
+        rowBindings(outputs, compiler);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
     }
@@ -129,6 +130,26 @@ public final class UiFrameworkTest {
             UiPortableBridge.Prop onClick = button.props().get("onClick");
             UiPortableBridge.Transition changed = bridge.transition(initial.state(), initial.tree(), initial.store(), bridge.action(onClick.actionSlot(), null));
             check(bridge.stateSnapshot(changed.state()).get("expanded").equals(true), "portable component event enters the generated typed DEAL update");
+        }
+    }
+
+    private static void rowBindings(Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("row-bindings"); Files.createDirectories(fixture);
+        Files.writeString(fixture.resolve("app.deal"), "export class Row { id: string = \"\"; }\nexport class State { rows: Row[] = []; chosen: string = \"\"; }\nexport class Choose { id: string = \"\"; value: string = \"\"; }\nexport function initialState(): State { return { rows: [{ id: \"a\" }, { id: \"b\" }] }; }\n// @ui-update\nexport function choose(state: State, action: Choose): State { return { rows: [], chosen: action.id + action.value }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { text: string = \"\"; onChange?: Action; }\nexport component Input(props: Props): View { event onChange(payload: string); capability \"renderer.test.input\"; }\nexport class Children {}\nexport component Column(props: Children): View { children; capability \"renderer.test.column\"; }\n");
+        Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Rows(state: app.State): View { ui.Column() { ForEach(state.rows, row: app.Row, key: row.id) { ui.Input(text: row.id, onChange: action app.Choose { id: row.id, value: payload }) } } }\n");
+        UiCompiler.Result result = compiler.compile(fixture.resolve("app.dealui"), outputs.resolve("row-bindings-output"), UiCompiler.Target.PORTABLE);
+        compiler.build(result, runtimeClasses());
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiPortableBridge bridge = (UiPortableBridge) Class.forName(result.bridgeClass(), true, loader).getConstructor().newInstance();
+            var initial = bridge.initial(bridge.initialState(), bridge.initialStore());
+            int a = initial.tree().children().get(0).props().get("onChange").actionSlot();
+            int b = initial.tree().children().get(1).props().get("onChange").actionSlot();
+            check(a != b, "row instances have distinct bound event handles");
+            var changed = bridge.transition(initial.state(), initial.tree(), initial.store(), bridge.action(b, "!"));
+            check(bridge.stateSnapshot(changed.state()).get("chosen").equals("b!"), "JVM string event captures correct row identity");
+            try { bridge.action(a, "stale"); throw new AssertionError("stale row admitted"); }
+            catch (IllegalArgumentException expected) { check(expected.getMessage().contains("stale"), "removed row event rejected"); }
         }
     }
 
@@ -359,7 +380,7 @@ public final class UiFrameworkTest {
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("typed-output"));
         compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
-        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(): UiAction"), "generated action factories preserve event payload contracts");
+        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(bindings: table): UiAction"), "generated action factories preserve event payload contracts");
         check(generated.contains("function effectCommand") && generated.contains("app.completePolicy") && generated.contains("class EffectCommand"), "synchronous DEAL effect policy produces a typed command plan");
         String bridgeSource = Files.readString(result.generatedDirectory().resolve(result.bridgeClass() + ".java"));
         check(bridgeSource.contains("command(call(\"effectCommand\"") && bridgeSource.contains("effectFailure"), "generated bridge exposes typed scheduling and failure completion");
@@ -415,6 +436,15 @@ public final class UiFrameworkTest {
             "function titleOf(item: Item): string { return item.title; }\n" +
             "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let title: string = titleOf(state.items[0]); return { title: title, count: state.count, expanded: true, items: state.items }; }");
         expectValid(root, source(root), readOnlyHelper, pack(root), "read-only helpers may consume borrowed values");
+        String copy = "function copy(s: GalleryState): GalleryState { return { title: s.title, count: s.count, expanded: s.expanded, items: s.items }; }\n";
+        String fresh = original.replace("// @ui-update\n" + originalUpdate, copy + "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let result: GalleryState = copy(state); result.expanded = true; return result; }");
+        expectValid(root, source(root), fresh, pack(root), "fresh helper outer scalar is writable");
+        expect("UI2050", source(root), fresh.replace("result.expanded = true;", "result.items[0].title = \"changed\";"));
+        expect("UI2050", source(root), fresh.replace(copy, "function copy(s: GalleryState): GalleryState { return s; }\n"));
+        expect("UI2050", source(root), fresh.replace(copy, "function copy(s: GalleryState): GalleryState { if (s.expanded) { return s; } return { title: s.title, count: s.count, expanded: false, items: s.items }; }\n"));
+        String extracted = fresh.replace(copy, "function copy(s: GalleryState): GalleryState { return { title: s.title, count: s.count, expanded: false, items: s.items }; }\nfunction items(s: GalleryState): Item[] { return s.items; }\n");
+        expect("UI2050", source(root), extracted.replace("result.expanded = true;", "let borrowed: Item[] = items(result); borrowed[0].title = \"changed\";"));
+        expect("UI1016", source(root).replace("state.title", "app.label(state)"), original);
     }
 
     private static void previewReachabilityMode(Path root) throws Exception {

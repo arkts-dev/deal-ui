@@ -55,13 +55,14 @@ final class UiBorrowedValueChecker {
         }
     }
 
-    private record Origin(Set<Integer> direct, Set<Integer> nested) {
+    private record Origin(Set<Integer> direct, Set<Integer> nested, Set<Integer> projected) {
+        Origin(Set<Integer> direct, Set<Integer> nested) { this(direct, nested, Set.of()); }
         private static final Origin NONE = new Origin(Set.of(), Set.of());
         static Origin borrowed(int parameter) { return new Origin(Set.of(parameter), Set.of(parameter)); }
         Set<Integer> all() { Set<Integer> result = new LinkedHashSet<>(direct); result.addAll(nested); return result; }
-        Origin merge(Origin other) { return new Origin(union(direct, other.direct), union(nested, other.nested)); }
-        Origin member(boolean reference) { return reference ? new Origin(all(), all()) : NONE; }
-        Origin element(boolean reference) { return reference ? new Origin(direct.isEmpty() ? nested : direct, nested) : NONE; }
+        Origin merge(Origin other) { return new Origin(union(direct, other.direct), union(nested, other.nested), union(projected, other.projected)); }
+        Origin member(boolean reference) { return reference ? new Origin(all(), all(), all()) : NONE; }
+        Origin element(boolean reference) { return reference ? new Origin(direct.isEmpty() ? nested : direct, nested, all()) : NONE; }
         private static Set<Integer> union(Set<Integer> left, Set<Integer> right) {
             Set<Integer> result = new LinkedHashSet<>(left);
             result.addAll(right);
@@ -70,8 +71,8 @@ final class UiBorrowedValueChecker {
     }
 
     private record Violation(String code, String message, Span span) {}
-    private record Summary(Map<Integer, Violation> parameters) {
-        static Summary empty() { return new Summary(Map.of()); }
+    private record Summary(Map<Integer, Violation> parameters, Origin returned) {
+        static Summary empty() { return new Summary(Map.of(), Origin.NONE); }
     }
 
     private final Path file;
@@ -94,7 +95,7 @@ final class UiBorrowedValueChecker {
             for (FunctionDeclaration function : functions.values()) {
                 Summary next = analyze(function, summaries);
                 Summary previous = summaries.get(function.name());
-                if (!previous.parameters().keySet().equals(next.parameters().keySet())) {
+                if (!previous.parameters().keySet().equals(next.parameters().keySet()) || !previous.returned().equals(next.returned())) {
                     summaries.put(function.name(), next);
                     changed = true;
                 }
@@ -123,14 +124,20 @@ final class UiBorrowedValueChecker {
                 result.put(index, new Violation("UI2051", "value escapes to an external function", function.span()));
             }
         }
-        return new Summary(Map.copyOf(result));
+        Origin returned = Origin.NONE;
+        if (shape(function.returnType()).reference(classes)) {
+            for (int index = 0; index < function.params().size(); index++) {
+                if (shape(function.params().get(index).type()).reference(classes)) returned = returned.merge(Origin.borrowed(index));
+            }
+        }
+        return new Summary(Map.copyOf(result), returned);
     }
 
     private Summary analyze(FunctionDeclaration function, Map<String, Summary> summaries) {
         if (function.isExternal()) return initialSummary(function);
         Analyzer analyzer = new Analyzer(function, summaries);
         analyzer.block(function.body());
-        return new Summary(Map.copyOf(analyzer.violations));
+        return new Summary(Map.copyOf(analyzer.violations), analyzer.returned);
     }
 
     private final class Analyzer {
@@ -138,6 +145,7 @@ final class UiBorrowedValueChecker {
         private final Map<String, Origin> origins = new LinkedHashMap<>();
         private final Map<String, Shape> shapes = new LinkedHashMap<>();
         private final Map<Integer, Violation> violations = new LinkedHashMap<>();
+        private Origin returned = Origin.NONE;
 
         Analyzer(FunctionDeclaration function, Map<String, Summary> summaries) {
             this.summaries = summaries;
@@ -154,6 +162,7 @@ final class UiBorrowedValueChecker {
             origins.putAll(source.origins);
             shapes.putAll(source.shapes);
             violations.putAll(source.violations);
+            returned = source.returned;
         }
 
         void block(Block block) {
@@ -168,7 +177,7 @@ final class UiBorrowedValueChecker {
             } else if (statement instanceof ExpressionStatement expression) {
                 expression(expression.expr());
             } else if (statement instanceof ReturnStatement returned) {
-                returned.expr().ifPresent(this::expression);
+                returned.expr().ifPresent(value -> { expression(value); this.returned = this.returned.merge(origin(value)); });
             } else if (statement instanceof IfStatement conditional) {
                 expression(conditional.condition());
                 Analyzer yes = new Analyzer(this);
@@ -271,6 +280,12 @@ final class UiBorrowedValueChecker {
             }
             mutate(assignment.target(), assignment.span(), "writes through a borrowed value");
             expression(assignment.target());
+            ExpressionNode root = assignment.target();
+            while (root instanceof MemberAccessExpr || root instanceof IndexExpr) root = root instanceof MemberAccessExpr member ? member.object() : ((IndexExpr) root).array();
+            if (root instanceof IdentifierExpr identifier) {
+                Origin old = origins.getOrDefault(identifier.name(), Origin.NONE);
+                origins.put(identifier.name(), new Origin(old.direct(), Origin.union(old.nested(), origin(assignment.value()).all())));
+            }
         }
 
         private void mutate(ExpressionNode target, Span span, String message) {
@@ -321,9 +336,24 @@ final class UiBorrowedValueChecker {
             if (expression instanceof BinaryExpr binary) return origin(binary.left()).merge(origin(binary.right()));
             if (expression instanceof UnaryExpr unary) return origin(unary.expr());
             if (expression instanceof CallExpr call) {
+                if (!resultShape.reference(classes)) return Origin.NONE;
+                String called = calledFunction(call.callee());
+                Summary summary = called == null ? null : summaries.get(called);
                 Origin result = Origin.NONE;
-                for (ExpressionNode argument : call.args()) result = result.merge(origin(argument));
-                return resultShape.reference(classes) ? result : Origin.NONE;
+                if (summary == null) {
+                    for (ExpressionNode argument : call.args()) result = result.merge(origin(argument));
+                    return result;
+                }
+                for (int index : summary.returned().direct()) {
+                    if (index < call.args().size()) {
+                        Origin argument = origin(call.args().get(index));
+                        result = result.merge(summary.returned().projected().contains(index) ? argument.member(true) : argument);
+                    }
+                }
+                for (int index : summary.returned().nested()) {
+                    if (index < call.args().size()) result = new Origin(result.direct(), Origin.union(result.nested(), origin(call.args().get(index)).all()));
+                }
+                return result;
             }
             if (expression instanceof AwaitExpression awaited) return origin(awaited.callee());
             return Origin.NONE;
@@ -335,6 +365,11 @@ final class UiBorrowedValueChecker {
             if (expression instanceof IndexExpr index) {
                 Shape array = expressionShape(index.array());
                 return array.dimensions() > 0 ? new Shape(array.name(), array.dimensions() - 1, array.unknown()) : unknown();
+            }
+            if (expression instanceof CallExpr call) {
+                String called = calledFunction(call.callee());
+                FunctionDeclaration function = called == null ? null : functions.get(called);
+                return function == null ? unknown() : shape(function.returnType());
             }
             if (expression instanceof ArrayLiteralExpr array) {
                 Shape element = array.elements().isEmpty() ? unknown() : expressionShape(array.elements().get(0));
@@ -349,6 +384,7 @@ final class UiBorrowedValueChecker {
         }
 
         private void merge(Analyzer branch) {
+            returned = returned.merge(branch.returned);
             branch.violations.forEach(violations::putIfAbsent);
             branch.origins.forEach((name, value) -> origins.merge(name, value, Origin::merge));
             branch.shapes.forEach(shapes::putIfAbsent);

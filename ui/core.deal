@@ -12,6 +12,7 @@ export class Prop {
   numberValue: number = 0.0;
   booleanValue: boolean = false;
   actionSlot: int = -1;
+  actionBindings: table = {};
 }
 
 export class ViewNode {
@@ -33,6 +34,7 @@ export function numberProp(name: string, value: number): Prop { return { name: n
 export function booleanProp(name: string, value: boolean): Prop { return { name: name, kind: "boolean", booleanValue: value }; }
 export function tokenProp(name: string, value: string): Prop { return { name: name, kind: "token", stringValue: value }; }
 export function actionProp(name: string, slot: int): Prop { return { name: name, kind: "action", actionSlot: slot }; }
+export function boundActionProp(name: string, slot: int, bindings: table): Prop { return { name: name, kind: "action", actionSlot: slot, actionBindings: bindings }; }
 
 export function node(component: string, structural: string, key: Key, props: Prop[], children: ViewNode[]): ViewNode {
   return {

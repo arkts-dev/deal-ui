@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 final class UiDealGenerator {
-    record GeneratedAction(UiModel.Action action, UiModel.TypeRef payloadType) {}
+    record GeneratedAction(UiModel.Action action, UiModel.TypeRef payloadType, Map<String, UiModel.TypeRef> captures) {}
     record Output(String source, String appAugmentation, Map<Integer, GeneratedAction> actions, Map<String, Integer> actionIds, Map<String, Integer> effectIds) {}
 
     private final UiModel.CheckedProgram program;
@@ -149,8 +149,13 @@ final class UiDealGenerator {
                     if (argument.getValue() instanceof UiModel.Action action) {
                         int slot = actionSlot++;
                         UiModel.Event event = event(program.components().get(call.name()), argument.getKey());
-                        actions.put(slot, new GeneratedAction(action, event.payload()));
-                        value = "core.actionProp(\"" + argument.getKey() + "\", " + slot + ")";
+                        Map<String, UiModel.TypeRef> captures = new LinkedHashMap<>();
+                        for (var binding : scope.entrySet()) {
+                            if (action.fields().values().stream().anyMatch(e -> references(e, binding.getKey()))) captures.put(binding.getKey(), binding.getValue());
+                        }
+                        actions.put(slot, new GeneratedAction(action, event.payload(), Map.copyOf(captures)));
+                        String data = captures.keySet().stream().map(name -> name + ": " + name).collect(java.util.stream.Collectors.joining(", "));
+                        value = "core.boundActionProp(\"" + argument.getKey() + "\", " + slot + ", {" + data + "})";
                     } else {
                         UiModel.TypeRef type = expressionType(argument.getValue(), scope);
                         String factory = switch (simple(type.name())) {
@@ -218,9 +223,14 @@ final class UiDealGenerator {
             UiModel.Action action = entry.getValue().action();
             int id = actionIds.get(simple(action.name()));
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
-            out.append("export function action_").append(entry.getKey()).append("(");
-            if (payloadType != null) out.append("payload: ").append(dealType(payloadType));
-            out.append("): UiAction {\n  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
+            out.append("export function action_").append(entry.getKey()).append("(bindings: table");
+            if (payloadType != null) out.append(", payload: ").append(dealType(payloadType));
+            out.append("): UiAction {\n");
+            for (var capture : entry.getValue().captures().entrySet()) {
+                out.append("  let ").append(capture.getKey()).append(": ").append(qualifiedType(capture.getValue(), moduleName(program.dealSource())))
+                    .append(" = bindings.").append(capture.getKey()).append(";\n");
+            }
+            out.append("  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
             boolean first = true;
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {
@@ -361,6 +371,14 @@ final class UiDealGenerator {
         if (expression instanceof UiModel.Unary unary) return unary.operator() + "(" + payloadExpr(unary.operand()) + ")";
         if (expression instanceof UiModel.Binary binary) return "(" + payloadExpr(binary.left()) + " " + binary.operator() + " " + payloadExpr(binary.right()) + ")";
         return expr(expression, moduleName(program.dealSource()));
+    }
+
+    private boolean references(UiModel.Expr expression, String root) {
+        if (expression instanceof UiModel.PathExpr path) return path.parts().get(0).equals(root);
+        if (expression instanceof UiModel.Unary unary) return references(unary.operand(), root);
+        if (expression instanceof UiModel.Binary binary) return references(binary.left(), root) || references(binary.right(), root);
+        if (expression instanceof UiModel.Has has) return references(has.path(), root);
+        return false;
     }
 
     private boolean containsPayload(UiModel.Expr expression) {

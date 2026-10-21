@@ -296,7 +296,9 @@ public final class UiParser {
         if (at(K.STRING)) return new UiModel.Literal(string(), "string", span(start));
         if (at(K.INT)) return new UiModel.Literal(Long.parseLong(take().text()), "int", span(start));
         if (at(K.NUMBER)) return new UiModel.Literal(Double.parseDouble(take().text()), "number", span(start));
-        return path();
+        UiModel.PathExpr value = path();
+        if (at("(")) fail("UI1016", "Function calls are not supported in view expressions. Compute this value in DEAL and bind a state/row field.", peek());
+        return value;
     }
 
     private UiModel.Expr packDefault() {

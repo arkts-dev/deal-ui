@@ -12,6 +12,25 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
   let current = call('initial', state, store);
   store = current.store;
   let status = call('bridgeSessionStatus');
+  let nextBinding = 1000000;
+  let bindings = new Map();
+  function publishedTree() {
+    const next = new Map();
+    function visit(node) {
+      return {...node, props: node.props.map(prop => {
+        const {actionBindings, ...display} = prop;
+        if (prop.kind === 'action' && actionBindings && actionBindings.size) {
+          if (nextBinding >= 2147483647) throw Error('Action binding identity exhausted');
+          const handle = nextBinding++;
+          next.set(handle, {slot: prop.actionSlot, values: actionBindings});
+          return {...display, actionSlot: handle};
+        }
+        return display;
+      }), children: node.children.map(visit)};
+    }
+    const tree = visit(current.tree); bindings = next; return tree;
+  }
+  let displayTree = publishedTree();
   function visibleSlot(node, slot) {
     return node.props.some(prop => prop.kind === 'action' && prop.actionSlot === slot) || node.children.some(child => visibleSlot(child, slot));
   }
@@ -30,6 +49,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
           const candidate = call('nextState', state, next.action);
           const transition = call('transitionFromCandidate', candidate, current.tree, store, next.action);
           state = candidate; current = transition; store = transition.store;
+          displayTree = publishedTree();
           status = call('bridgeSessionCommitted', status);
           if (transition.effect.effectId >= 0) {
             const snapshot = state, action = next.action;
@@ -46,19 +66,22 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
     } finally { store = call('finish', store); }
   }
   return Object.freeze({
-    snapshot: () => JSON.stringify({tree: current.tree, version: status.version, fault: status.fault}),
+    snapshot: () => JSON.stringify({tree: displayTree, version: status.version, fault: status.fault}),
     state: () => { if (!call('bridgeReplacementReady', status)) throw Error('Wait for current work before replacing the experience'); return JSON.stringify(state); },
     checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(state) : null,
     dispatch: (slot, payload = null) => {
-      if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(current.tree, slot)) throw Error('Invalid or stale action slot');
+      if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(displayTree, slot)) throw Error('Invalid or stale action slot');
       // Payload type comes from the checked action signature, never from the caller.
-      const declared = call('payloadType_' + slot);
+      const binding = bindings.get(slot);
+      const factory = binding ? binding.slot : slot;
+      const values = binding ? binding.values : new Map();
+      const declared = call('payloadType_' + factory);
       let value = payload;
       if (declared === 'int') { if (!/^-?\d+$/.test(String(payload))) throw Error('Expected an integer payload'); value = parseInt(payload, 10); }
       else if (declared === 'boolean') { if (payload !== 'true' && payload !== 'false') throw Error('Expected a boolean payload'); value = payload === 'true'; }
       else if (declared === 'string') { if (typeof payload !== 'string') throw Error('Expected a string payload'); }
       else if (payload !== null) throw Error('This action takes no payload');
-      enqueue(payload === null && declared === 'none' ? call('action_' + slot) : call('action_' + slot, value));
+      enqueue(payload === null && declared === 'none' ? call('action_' + factory, values) : call('action_' + factory, values, value));
       return '';
     },
     dispose: () => { store = call('dispose', store); return ''; }

@@ -65,6 +65,8 @@ final class UiJavaBridgeGenerator {
         }
         out.append("  public ").append(bridge).append("() { ").append(ui).append(".dealMain(); }\n")
             .append("  private Object call(String name, Object... args) { return ((deal.codegen.jvm.JvmRuntime.FunctionValue) ").append(ui).append(".exportSurface(\"ui_application\").read(name)).fn.invoke(args); }\n")
+            .append("  private record Binding(int slot, Object values) {}\n")
+            .append("  private int nextBinding = 1000000; private final java.util.Map<Integer, Binding> bindings = new java.util.HashMap<>(); private final java.util.IdentityHashMap<Object, Integer> handles = new java.util.IdentityHashMap<>(); private Object previousTree;\n")
             .append("  private static Object field(Object value, String name) { return ((deal.codegen.jvm.JvmRuntime.ClassInstance) value).read(name); }\n")
             .append("  private static String text(Object value, String name) { return (String) field(value, name); }\n")
             .append("  private static long integer(Object value, String name) { return ((Number) field(value, name)).longValue(); }\n")
@@ -80,7 +82,7 @@ final class UiJavaBridgeGenerator {
             .append("  @Override public StoreValue reject(StoreValue store) { return new StoreValue(call(\"reject\", store.abi())); }\n")
             .append("  @Override public StoreValue dispose(StoreValue store) { return new StoreValue(call(\"dispose\", store.abi())); }\n")
             .append("  @Override public Completion complete(StoreValue store, ActionValue action) { var v = call(\"complete\", store.abi(), action.abi()); return new Completion(new StoreValue(field(v, \"store\")), flag(v, \"accepted\"), flag(v, \"startDrain\")); }\n")
-            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { var next = new StateValue(call(\"nextState\", state.abi(), action.abi())); return transition(call(\"transitionFromCandidate\", next.abi(), previous == null ? null : nodeValue(previous), store.abi(), action.abi()), next, action); }\n");
+            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { var next = new StateValue(call(\"nextState\", state.abi(), action.abi())); return transition(call(\"transitionFromCandidate\", next.abi(), previous == null ? null : previousTree, store.abi(), action.abi()), next, action); }\n");
         generateActions(out);
         generateEffects(out);
         generateEffectFailures(out);
@@ -91,13 +93,13 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateActions(StringBuilder out) {
-        out.append("  @Override public ActionValue action(int slot, Object payload) { return new ActionValue(switch (slot) {\n");
+        out.append("  @Override public ActionValue action(int slot, Object payload) { Binding binding = bindings.get(slot); if (slot >= 1000000 && binding == null) throw new IllegalArgumentException(\"Invalid or stale action binding\"); Object values = binding == null ? new deal.codegen.jvm.JvmRuntime.Table() : binding.values(); int factory = binding == null ? slot : binding.slot(); return new ActionValue(switch (factory) {\n");
         for (var entry : generated.actions().entrySet()) {
             int slot = entry.getKey();
             var type = entry.getValue().payloadType();
             out.append("    case ").append(slot).append(" -> ");
-            if (type == null) out.append("payload == null ? call(\"action_").append(slot).append("\") : invalidPayload(slot, \"no\", payload)");
-            else out.append("call(\"action_").append(slot).append("\", ").append(payloadConversion(slot, type)).append(")");
+            if (type == null) out.append("payload == null ? call(\"action_").append(slot).append("\", values) : invalidPayload(slot, \"no\", payload)");
+            else out.append("call(\"action_").append(slot).append("\", values, ").append(payloadConversion(slot, type)).append(")");
             out.append(";\n");
         }
         out.append("    default -> throw new IllegalArgumentException(\"Unknown action slot: \" + slot);\n  }); }\n")
@@ -129,10 +131,11 @@ final class UiJavaBridgeGenerator {
     }
 
     private void generateConversions(StringBuilder out) {
-        out.append("  private Transition transition(Object v, StateValue state, ActionValue action) { var command = action == null ? EffectCommand.immediate() : command(call(\"effectCommand\", state.abi(), action.abi())); return new Transition(state, node(field(v, \"tree\")), patches(field(field(v, \"plan\"), \"patches\")), new StoreValue(field(v, \"store\")), (int) integer(field(v, \"effect\"), \"effectId\"), state, action, command); }\n")
+        out.append("  private int actionHandle(Object p) { int slot = (int) integer(p, \"actionSlot\"); if (!text(p, \"kind\").equals(\"action\")) return slot; Object values = field(p, \"actionBindings\"); if (((deal.codegen.jvm.JvmRuntime.Table) values).entries.isEmpty()) return slot; Integer old = handles.get(p); if (old != null) return old; if (nextBinding == Integer.MAX_VALUE) throw new IllegalStateException(\"Action identity exhausted\"); int handle = nextBinding++; handles.put(p, handle); bindings.put(handle, new Binding(slot, values)); return handle; }\n");
+        out.append("  private Transition transition(Object v, StateValue state, ActionValue action) { bindings.clear(); handles.clear(); previousTree = field(v, \"tree\"); Node tree = node(previousTree); var active = new java.util.HashMap<>(bindings); var command = action == null ? EffectCommand.immediate() : command(call(\"effectCommand\", state.abi(), action.abi())); var patches = patches(field(field(v, \"plan\"), \"patches\")); bindings.keySet().retainAll(active.keySet()); return new Transition(state, tree, patches, new StoreValue(field(v, \"store\")), (int) integer(field(v, \"effect\"), \"effectId\"), state, action, command); }\n")
             .append("  private EffectCommand command(Object v) { return new EffectCommand(text(v, \"operation\"), text(v, \"key\"), integer(v, \"delayMillis\"), text(v, \"cancellationMode\")); }\n")
             .append("  private Identity identity(Object v) { return new Identity(text(v, \"structural\"), new Key(text(v, \"keyKind\"), integer(v, \"keyInt\"), text(v, \"keyString\"))); }\n")
-            .append("  private Node node(Object v) { java.util.Map<String, Prop> props = new java.util.LinkedHashMap<>(); for (Object p : elements(field(v, \"props\"))) { String kind = text(p, \"kind\"); Object value = switch(kind) { case \"int\" -> integer(p, \"intValue\"); case \"number\" -> field(p, \"numberValue\"); case \"boolean\" -> flag(p, \"booleanValue\"); default -> text(p, \"stringValue\"); }; props.put(text(p, \"name\"), new Prop(text(p, \"name\"), kind, value, (int) integer(p, \"actionSlot\"))); } java.util.List<Node> children = new java.util.ArrayList<>(); for(Object child : elements(field(v, \"children\"))) children.add(node(child)); return new Node(text(v, \"component\"), identity(v), props, children); }\n")
+            .append("  private Node node(Object v) { java.util.Map<String, Prop> props = new java.util.LinkedHashMap<>(); for (Object p : elements(field(v, \"props\"))) { String kind = text(p, \"kind\"); Object value = switch(kind) { case \"int\" -> integer(p, \"intValue\"); case \"number\" -> field(p, \"numberValue\"); case \"boolean\" -> flag(p, \"booleanValue\"); default -> text(p, \"stringValue\"); }; props.put(text(p, \"name\"), new Prop(text(p, \"name\"), kind, value, actionHandle(p))); } java.util.List<Node> children = new java.util.ArrayList<>(); for(Object child : elements(field(v, \"children\"))) children.add(node(child)); return new Node(text(v, \"component\"), identity(v), props, children); }\n")
             .append("  private Object nodeValue(Node v) { java.util.List<Object> props = new java.util.ArrayList<>(); for (Prop p : v.props().values()) props.add(call(\"bridgeProp\", p.name(), p.kind(), p.value() instanceof String s ? s : \"\", p.value() instanceof Long n ? n : 0L, p.value() instanceof Double n ? n : 0.0, p.value() instanceof Boolean b && b, (long) p.actionSlot())); java.util.List<Object> children = new java.util.ArrayList<>(); for(Node n : v.children()) children.add(nodeValue(n)); return call(\"bridgeNode\", v.component(), v.identity().structural(), v.identity().key().kind(), v.identity().key().intValue(), v.identity().key().stringValue(), array(props), array(children)); }\n")
             .append("  private java.util.List<Patch> patches(Object v) { java.util.List<Patch> result = new java.util.ArrayList<>(); for(Object p : elements(v)) result.add(new Patch(text(p, \"kind\"), identity(p), new Identity(text(p, \"parentStructural\"), new Key(text(p, \"parentKeyKind\"), integer(p, \"parentKeyInt\"), text(p, \"parentKeyString\"))), flag(p, \"rootParent\"), (int) integer(p, \"index\"), node(field(p, \"node\")))); return java.util.List.copyOf(result); }\n");
     }
