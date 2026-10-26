@@ -1,17 +1,17 @@
 export class StoreLifecycle {
-  disposed: boolean = false;
-  draining: boolean = false;
-  revision: int = 0;
+  disposed: boolean;
+  draining: boolean;
+  revision: number;
 }
 
 export class QueueDecision {
-  accepted: boolean = false;
-  startDrain: boolean = false;
+  accepted: boolean;
+  startDrain: boolean;
 }
 
 export function enqueueDecision(current: StoreLifecycle): QueueDecision {
   if (current.disposed) {
-    return {};
+    return {accepted: false, startDrain: false};
   }
   return { accepted: true, startDrain: !current.draining };
 }

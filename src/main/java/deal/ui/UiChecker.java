@@ -287,11 +287,11 @@ public final class UiChecker {
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
-                if (!key.name().equals("int") && !key.name().equals("string")) {
+                if (!key.name().equals("number") && !key.name().equals("string")) {
                     throw new UiDiagnostic(
-                            "UI2015", "ForEach key must be a stable int or string item field",
+                            "UI2015", "ForEach key must be a stable number or string item field",
                             each.key().span().file(), each.key().span().line(), each.key().span().column(),
-                            "stable int|string item field", key.name());
+                            "stable number|string item field", key.name());
                 }
                 if (!each.key().parts().get(0).equals(each.item().name())) error("UI2016", "ForEach key must be item-rooted", each.key().span());
                 result.add(new UiModel.RenderForEach(each.source(), each.item(), each.key(),
@@ -353,7 +353,7 @@ public final class UiChecker {
         if (expression instanceof UiModel.Unary unary) {
             UiModel.TypeRef operand = type(unary.operand(), scope, deal, packClasses, tokens, aliases, actions, event);
             requireType(operand, unary.operator().equals("!") ? "boolean" : operand.name(), unary.span());
-            if (unary.operator().equals("-") && !operand.name().equals("int") && !operand.name().equals("number")) error("UI2019", "Unary - requires numeric operand", unary.span());
+            if (unary.operator().equals("-") && !operand.name().equals("number")) error("UI2019", "Unary - requires numeric operand", unary.span());
             return operand;
         }
         UiModel.Binary binary = (UiModel.Binary) expression;
@@ -365,7 +365,7 @@ public final class UiChecker {
                 if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
                 yield primitive("boolean");
             }
-            case "+", "-", "*", "/", "%" -> {
+            case "+", "-", "*", "/" -> {
                 if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
                 yield left;
             }

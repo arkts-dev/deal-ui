@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 public final class UiParser {
-    private enum K { ID, STRING, INT, NUMBER, SYMBOL, EOF }
+    private enum K { ID, STRING, NUMBER, SYMBOL, EOF }
     private record T(K kind, String text, int line, int column, int endLine, int endColumn) {}
 
     private final Path file;
@@ -252,7 +252,7 @@ public final class UiParser {
             case "===", "!==" -> 3;
             case "<", "<=", ">", ">=" -> 4;
             case "+", "-" -> 5;
-            case "*", "/", "%" -> 6;
+            case "*", "/" -> 6;
             default -> 0;
         };
     }
@@ -294,7 +294,6 @@ public final class UiParser {
         if (match("null")) return new UiModel.Literal(null, "null", span(start));
         if (match("true") || match("false")) return new UiModel.Literal(previous().text().equals("true"), "boolean", span(start));
         if (at(K.STRING)) return new UiModel.Literal(string(), "string", span(start));
-        if (at(K.INT)) return new UiModel.Literal(Long.parseLong(take().text()), "int", span(start));
         if (at(K.NUMBER)) return new UiModel.Literal(Double.parseDouble(take().text()), "number", span(start));
         UiModel.PathExpr value = path();
         if (at("(")) fail("UI1016", "Function calls are not supported in view expressions. Compute this value in DEAL and bind a state/row field.", peek());
@@ -305,7 +304,6 @@ public final class UiParser {
         T start = peek();
         if (match("-")) {
             T number = take();
-            if (number.kind() == K.INT) return new UiModel.Literal(-Long.parseLong(number.text()), "int", span(start));
             if (number.kind() == K.NUMBER) return new UiModel.Literal(-Double.parseDouble(number.text()), "number", span(start));
             fail("UI1006", "Expected numeric pack default", number);
         }
@@ -418,7 +416,7 @@ public final class UiParser {
                 int start = i++;
                 column++;
                 while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
-                K kind = K.INT;
+                K kind = K.NUMBER;
                 if (i < source.length() && source.charAt(i) == '.') { kind = K.NUMBER; i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
                 result.add(new T(kind, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
@@ -442,7 +440,7 @@ public final class UiParser {
                 String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
                 result.add(new T(K.SYMBOL, op, startLine, startColumn, line, startColumn + op.length() - 1)); i += op.length(); column += op.length(); continue;
             }
-            if ("{}()[]:,.?;=+-*/%!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
+            if ("{}()[]:,.?;=+-*/!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
             throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
         result.add(new T(K.EOF, "", line, column, line, column));

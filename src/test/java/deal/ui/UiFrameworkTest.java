@@ -53,7 +53,7 @@ public final class UiFrameworkTest {
                 button(second, "Increment").doClick();
                 button(second, "Increment").doClick();
                 runtime.awaitIdle();
-                check(((Long) runtime.stateSnapshot().get("count")) >= 1L, "overlapping post-commit effects return through the DEAL queue");
+                check(((Double) runtime.stateSnapshot().get("count")) >= 1L, "overlapping post-commit effects return through the DEAL queue");
                 check(runtime.renderer().lastApplyOnEdt(), "patches apply on EDT");
                 long disposed = runtime.renderer().disposedComponents();
                 button(runtime.renderer().componentForTesting(runtime.tree()), "Toggle details").doClick();
@@ -79,7 +79,7 @@ public final class UiFrameworkTest {
         borrowedHandlerContracts(root);
         typedChildrenContracts(root);
         compilePolicyOnlyCancellation(root, outputs, compiler);
-        expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string = \"start\"; key: string = \"test\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return { operation: \"start\" }; }\n");
+        expect("UI2040", source(root), deal(root) + "\nexport class EffectCommand { operation: string ; key: string ; delayMillis: number ; cancellationMode: string ; }\n// @ui-effect-policy\nexport function orphanPolicy(state: GalleryState, action: ToggleDetails): EffectCommand { return { operation: \"start\" ,key: \"test\", delayMillis: 0, cancellationMode: \"replace\"}; }\n");
         expectPack("UI2026", pack(root).replace("spacing?: Space;", "spacing: Space = missing.token;"));
         expect("UI2013", source(root).replace("spacing: ui.spaceMd", "spacing: null"));
         typedPayloadContracts(root, outputs, compiler);
@@ -89,6 +89,7 @@ public final class UiFrameworkTest {
         storageHostCompilation(outputs, compiler);
         portableBridge(root, outputs, compiler);
         rowBindings(outputs, compiler);
+        fractionalKeys(outputs, compiler);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
     }
@@ -99,7 +100,7 @@ public final class UiFrameworkTest {
         Path logic = fixture.resolve("policy-only.deal");
         Path pack = fixture.resolve("policy-only.dealui-pack");
         Path view = fixture.resolve("policy-only.dealui");
-        Files.writeString(logic, "export class State { status: string = \"idle\"; }\nexport class Cancel {}\nexport class EffectCommand { operation: string = \"none\"; key: string = \"work\"; delayMillis: int = 0; cancellationMode: string = \"none\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function cancel(state: State, action: Cancel): State { return { status: \"cancelled\" }; }\n// @ui-effect-policy\nexport function cancelPolicy(state: State, action: Cancel): EffectCommand { return { operation: \"cancel\", cancellationMode: \"interrupt\" }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(logic, "export class State { status: string ; }\nexport class Cancel {}\nexport class EffectCommand { operation: string ; key: string ; delayMillis: number ; cancellationMode: string ; }\nexport function initialState(): State { return {status: \"idle\"}; }\n// @ui-update\nexport function cancel(state: State, action: Cancel): State { return { status: \"cancelled\" }; }\n// @ui-effect-policy\nexport function cancelPolicy(state: State, action: Cancel): EffectCommand { return { operation: \"cancel\", cancellationMode: \"interrupt\" ,key: \"work\", delayMillis: 0}; }\nexport function main(): null { return null; }\n");
         Files.writeString(pack, "export class Props { text: string = \"\"; onClick?: Action; }\nexport component Button(props: Props): View { event onClick; capability \"renderer.swing.button\"; }\n");
         Files.writeString(view, "import * as app from \"./policy-only\";\nimport * as ui from \"./policy-only.dealui-pack\";\n// @ui-root\nexport view PolicyOnly(state: app.State): View { ui.Button(text: \"Cancel\", onClick: action app.Cancel {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("policy-only-output"));
@@ -136,7 +137,7 @@ public final class UiFrameworkTest {
 
     private static void rowBindings(Path outputs, UiCompiler compiler) throws Exception {
         Path fixture = outputs.resolve("row-bindings"); Files.createDirectories(fixture);
-        Files.writeString(fixture.resolve("app.deal"), "export class Row { id: string = \"\"; }\nexport class State { rows: Row[] = []; chosen: string = \"\"; }\nexport class Choose { id: string = \"\"; value: string = \"\"; }\nexport function initialState(): State { return { rows: [{ id: \"a\" }, { id: \"b\" }] }; }\n// @ui-update\nexport function choose(state: State, action: Choose): State { return { rows: [], chosen: action.id + action.value }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("app.deal"), "export class Row { id: string ; }\nexport class State { rows: Row[] ; chosen: string ; }\nexport class Choose { id: string ; value: string ; }\nexport function initialState(): State { return { rows: [{ id: \"a\" }, { id: \"b\" }] ,chosen: \"\"}; }\n// @ui-update\nexport function choose(state: State, action: Choose): State { return { rows: [], chosen: action.id + action.value }; }\nexport function main(): null { return null; }\n");
         Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { text: string = \"\"; onChange?: Action; }\nexport component Input(props: Props): View { event onChange(payload: string); capability \"renderer.test.input\"; }\nexport class Children {}\nexport component Column(props: Children): View { children; capability \"renderer.test.column\"; }\n");
         Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Rows(state: app.State): View { ui.Column() { ForEach(state.rows, row: app.Row, key: row.id) { ui.Input(text: row.id, onChange: action app.Choose { id: row.id, value: payload }) } } }\n");
         UiCompiler.Result result = compiler.compile(fixture.resolve("app.dealui"), outputs.resolve("row-bindings-output"), UiCompiler.Target.PORTABLE);
@@ -154,15 +155,29 @@ public final class UiFrameworkTest {
         }
     }
 
+    private static void fractionalKeys(Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("fractional-keys"); Files.createDirectories(fixture);
+        Files.writeString(fixture.resolve("app.deal"), "export class Row { id: number; }\nexport class State { rows: Row[]; }\nexport function initialState(): State { return {rows: [{id: 1.25}, {id: 1.75}]}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { value: number = 0; }\nexport component Text(props: Props): View { capability \"renderer.test.text\"; }\nexport class Children {}\nexport component Column(props: Children): View { children; capability \"renderer.test.column\"; }\n");
+        Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Rows(state: app.State): View { ui.Column() { ForEach(state.rows, row: app.Row, key: row.id) { ui.Text(value: row.id) } } }\n");
+        var result = compiler.compile(fixture.resolve("app.dealui"), outputs.resolve("fractional-keys-output"), UiCompiler.Target.PORTABLE);
+        compiler.build(result, runtimeClasses());
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiPortableBridge bridge = (UiPortableBridge) Class.forName(result.bridgeClass(), true, loader).getConstructor().newInstance();
+            var tree = bridge.initial(bridge.initialState(), bridge.initialStore()).tree();
+            check(tree.children().get(0).identity().key().numberValue() == 1.25 && tree.children().get(1).identity().key().numberValue() == 1.75, "fractional number keys preserve distinct portable identities");
+        }
+    }
+
     private static void presentationValues(Path outputs, UiCompiler compiler) throws Exception {
         Path fixture=outputs.resolve("presentation-values"); Files.createDirectories(fixture);
-        Files.writeString(fixture.resolve("app.deal"), "import * as values from \"ui/values\";\nexport class State { text: string = \"\"; }\nexport function initialState(): State { return { text: values.decimal(-2147483648) + \"|\" + values.clockMinutes(916) + \"|\" + values.clockMinutes(-1) + \"|\" + values.clockMinutes(1440) + \"|\" + values.decimal(0) }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("app.deal"), "import * as values from \"ui/values\";\nexport class State { text: string ; }\nexport function initialState(): State { let rejected: string = \"\"; try { values.decimal(1.5); } catch(e) { rejected = e.code; } return { text: values.decimal(-2147483648) + \"|\" + values.clockMinutes(916) + \"|\" + values.clockMinutes(-1) + \"|\" + values.clockMinutes(1440) + \"|\" + values.decimal(0) + \"|\" + rejected + \"|\" + values.clockMinutes(916.5) }; }\nexport function main(): null { return null; }\n");
         Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { value: string = \"\"; }\nexport component Text(props: Props): View { capability \"renderer.test.text\"; }\n");
         Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Values(state: app.State): View { ui.Text(value: state.text) }\n");
         var result=compiler.compile(fixture.resolve("app.dealui"),outputs.resolve("presentation-values-output"),UiCompiler.Target.PORTABLE); compiler.build(result,runtimeClasses());
         try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiPortableBridge bridge=(UiPortableBridge)Class.forName(result.bridgeClass(),true,loader).getConstructor().newInstance();
-            check(bridge.stateSnapshot(bridge.initialState()).get("text").equals("-2147483648|15:16|||0"),"shared presentation primitives execute independently on JVM");
+            check(bridge.stateSnapshot(bridge.initialState()).get("text").equals("-2147483648|15:16|||0|INVALID_INTEGER|"),"shared presentation primitives execute independently on JVM");
         }
     }
 
@@ -172,14 +187,14 @@ public final class UiFrameworkTest {
         Path logic = fixture.resolve("computed.deal");
         Path pack = fixture.resolve("computed.dealui-pack");
         Path view = fixture.resolve("computed.dealui");
-        Files.writeString(logic, "export class State { value: int = 2; active: boolean = true; }\nexport class Update {}\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function update(state: State, action: Update): State { return state; }\nexport function main(): null { return null; }\n");
-        Files.writeString(pack, "export class Props { column: int = 0; visible: boolean = false; scale: number = 1.0; onClick?: Action; }\nexport component Sprite(props: Props): View { event onClick; capability \"renderer.scene.sprite\"; }\n");
+        Files.writeString(logic, "export class State { value: number ; active: boolean ; }\nexport class Update {}\nexport function initialState(): State { return {value: 2, active: true}; }\n// @ui-update\nexport function update(state: State, action: Update): State { return state; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { column: number = 0; visible: boolean = false; scale: number = 1.0; onClick?: Action; }\nexport component Sprite(props: Props): View { event onClick; capability \"renderer.scene.sprite\"; }\n");
         Files.writeString(view, "import * as app from \"./computed\";\nimport * as ui from \"./computed.dealui-pack\";\n// @ui-root\nexport view Computed(state: app.State): View { ui.Sprite(column: state.value - 1, visible: state.active && state.value > 0, scale: 1.0, onClick: action app.Update {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("computed-props-output"), UiCompiler.Target.PORTABLE);
         compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
-        check(generated.contains("intProp(\"column\", (state.value - 1))"), "computed integer props lower with their checked type");
-        check(generated.contains("booleanProp(\"visible\", (state.active && (state.value > 0)))"), "computed boolean props lower with their checked type");
+        check(generated.contains("numberProp(\"column\", (state.value - 1.0))"), "computed integer props lower with their checked type");
+        check(generated.contains("booleanProp(\"visible\", (state.active && (state.value > 0.0)))"), "computed boolean props lower with their checked type");
     }
 
     private static void storageHostCompilation(Path outputs, UiCompiler compiler) throws Exception {
@@ -188,7 +203,7 @@ public final class UiFrameworkTest {
         Path logic = fixture.resolve("storage.deal");
         Path pack = fixture.resolve("storage.dealui-pack");
         Path view = fixture.resolve("storage.dealui");
-        Files.writeString(logic, "import * as storage from \"host/storage\";\nexport class State { value: string = \"ready\"; }\nexport class Save {}\nexport class Saved { value: string = \"\"; }\nexport class EffectCommand { operation: string = \"start\"; key: string = \"save\"; delayMillis: int = 0; cancellationMode: string = \"replace\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function request(state: State, action: Save): State { return state; }\n// @ui-effect\nexport async function persist(state: State, action: Save): Saved { let value: string = await storage.save(\"key\", state.value); return { value: value }; }\n// @ui-update\nexport function complete(state: State, action: Saved): State { return { value: action.value }; }\nexport function main(): null { return null; }\n");
+        Files.writeString(logic, "import * as storage from \"host/storage\";\nexport class State { value: string ; }\nexport class Save {}\nexport class Saved { value: string ; }\nexport class EffectCommand { operation: string ; key: string ; delayMillis: number ; cancellationMode: string ; }\nexport function initialState(): State { return {value: \"ready\"}; }\n// @ui-update\nexport function request(state: State, action: Save): State { return state; }\n// @ui-effect\nexport async function persist(state: State, action: Save): Saved { let value: string = await storage.save(\"key\", state.value); return { value: value }; }\n// @ui-update\nexport function complete(state: State, action: Saved): State { return { value: action.value }; }\nexport function main(): null { return null; }\n");
         Files.writeString(pack, "export class Props { text: string = \"\"; onClick?: Action; }\nexport component Button(props: Props): View { event onClick; capability \"renderer.swing.button\"; }\n");
         Files.writeString(view, "import * as app from \"./storage\";\nimport * as ui from \"./storage.dealui-pack\";\n// @ui-root\nexport view Storage(state: app.State): View { ui.Button(text: state.value, onClick: action app.Save {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("storage-host-output"), UiCompiler.Target.PORTABLE);
@@ -221,13 +236,13 @@ public final class UiFrameworkTest {
                         check(runtime.renderer().requestedFocusIdForTesting().equals("open-settings"), "dashboard root applies DEAL focus intent");
                         runtime.dispatch(action(runtime.tree(), "Open settings", bridge, null));
                         runtime.awaitIdle();
-                        check(runtime.stateSnapshot().get("subscribedScope").equals(1L), "dashboard overlay opens scoped subscription and focus lifecycle");
+                        check(runtime.stateSnapshot().get("subscribedScope").equals(1.0), "dashboard overlay opens scoped subscription and focus lifecycle");
                         check(runtime.renderer().modalVisibleForTesting() && !runtime.renderer().underlyingEnabledForTesting(), "dashboard modal uses a blocking Swing layer");
                         check(runtime.renderer().escapeBoundForTesting(), "dashboard modal installs a real Escape InputMap action");
                         JComponent modal = runtime.renderer().modalForTesting();
                         check(modal.getAccessibleContext().getAccessibleRole().equals(javax.accessibility.AccessibleRole.DIALOG) && modal.getAccessibleContext().getAccessibleName().equals("Settings") && modal.getAccessibleContext().getAccessibleDescription().equals("Dashboard settings dialog"), "dashboard modal exposes dialog accessibility metadata");
                         check(runtime.renderer().requestedFocusIdForTesting().equals("settings-name") && runtime.renderer().scopeTimerRunningForTesting(), "dashboard modal applies focus and owns its scoped timer");
-                        long activeScope = (Long) runtime.stateSnapshot().get("scopeRevision");
+                        double activeScope = (Double) runtime.stateSnapshot().get("scopeRevision");
                         runtime.dispatch(action(runtime.tree(), "onScopeTick", bridge, activeScope + 1));
                         runtime.awaitActions();
                         check(runtime.stateSnapshot().get("announcement").equals("Settings dialog opened"), "dashboard rejects stale scoped completion while open");
@@ -289,25 +304,25 @@ public final class UiFrameworkTest {
     private static void exerciseSearchMail(UiProgramRuntime runtime, UiBridge bridge) throws Exception {
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
         runtime.awaitActions();
-        long firstGeneration = (Long) runtime.stateSnapshot().get("activeGeneration");
-        check(runtime.stateSnapshot().get("status").equals("debouncing") && runtime.stateSnapshot().get("searchesStarted").equals(0L) && texts(runtime.tree()).contains("Waiting to search"), "search exposes debounce before loading or search execution");
+        double firstGeneration = (Double) runtime.stateSnapshot().get("activeGeneration");
+        check(runtime.stateSnapshot().get("status").equals("debouncing") && runtime.stateSnapshot().get("searchesStarted").equals(0.0) && texts(runtime.tree()).contains("Waiting to search"), "search exposes debounce before loading or search execution");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "renderer"));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("generation").equals(firstGeneration + 1) && runtime.stateSnapshot().get("activeGeneration").equals(-1L) && runtime.stateSnapshot().get("searchesStarted").equals(1L), "search replacement suppresses stale debounce and completes only the active generation");
+        check(runtime.stateSnapshot().get("generation").equals(firstGeneration + 1) && runtime.stateSnapshot().get("activeGeneration").equals(-1.0) && runtime.stateSnapshot().get("searchesStarted").equals(1.0), "search replacement suppresses stale debounce and completes only the active generation");
         check(runtime.stateSnapshot().get("result").equals("1 message matches renderer") && texts(runtime.tree()).containsAll(List.of("Renderer release", "release@deal.dev")) && !texts(runtime.tree()).contains("Portable policy review"), "search matches actual mailbox records");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "  ReNdErEr  "));
         runtime.awaitIdle();
         check(runtime.stateSnapshot().get("query").equals("renderer") && runtime.stateSnapshot().get("result").equals("1 message matches renderer"), "search normalizes surrounding whitespace and case");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "policy"));
         runtime.awaitActions();
-        long beforeCancel = (Long) runtime.stateSnapshot().get("searchesStarted");
+        double beforeCancel = (Double) runtime.stateSnapshot().get("searchesStarted");
         runtime.dispatch(action(runtime.tree(), "Cancel", bridge, null));
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("status").equals("cancelled") && runtime.stateSnapshot().get("activeGeneration").equals(-1L) && runtime.stateSnapshot().get("searchesStarted").equals(beforeCancel), "policy-only Cancel retires keyed debounce before its effect body executes");
+        check(runtime.stateSnapshot().get("status").equals("cancelled") && runtime.stateSnapshot().get("activeGeneration").equals(-1.0) && runtime.stateSnapshot().get("searchesStarted").equals(beforeCancel), "policy-only Cancel retires keyed debounce before its effect body executes");
         runtime.dispatch(action(runtime.tree(), "onSubmit", bridge, "fail"));
         runtime.awaitIdle();
         check(runtime.stateSnapshot().get("status").equals("error") && runtime.stateSnapshot().get("errorMessage").equals("Local search failed for 'fail'") && texts(runtime.tree()).contains("Local search failed for 'fail'"), "throwing search effect reaches typed error UI");
-        long failedGeneration = (Long) runtime.stateSnapshot().get("generation");
+        double failedGeneration = (Double) runtime.stateSnapshot().get("generation");
         runtime.dispatch(action(runtime.tree(), "Retry", bridge, null));
         runtime.awaitIdle();
         check(runtime.stateSnapshot().get("status").equals("ready") && runtime.stateSnapshot().get("generation").equals(failedGeneration + 1) && runtime.stateSnapshot().get("result").equals("No messages match fail"), "Retry starts a fresh generation with defined successful local retry behavior");
@@ -320,32 +335,32 @@ public final class UiFrameworkTest {
         JComponent retained = runtime.renderer().componentForTesting(nodeWithFocus(runtime.tree(), "card-2"));
         runtime.dispatch(action(runtime.tree(), "Select Review renderer", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("selectedId").equals(2L) && runtime.stateSnapshot().get("focusRevision").equals(1L) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && texts(runtime.tree()).contains("Selected"), "kanban selects a non-first keyed card and focuses its control");
+        check(runtime.stateSnapshot().get("selectedId").equals(2.0) && runtime.stateSnapshot().get("focusRevision").equals(1.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && texts(runtime.tree()).contains("Selected"), "kanban selects a non-first keyed card and focuses its control");
         check(runtime.renderer().componentForTesting(nodeWithFocus(runtime.tree(), "card-2")) == retained, "kanban selection retains keyed native card-control identity");
         runtime.dispatch(action(runtime.tree(), "Move Review renderer to done", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(1L) && runtime.stateSnapshot().get("focusRevision").equals(2L), "kanban begins an optimistic revision for the selected non-first card");
+        check(runtime.stateSnapshot().get("revision").equals(1.0) && runtime.stateSnapshot().get("pendingRevision").equals(1.0) && runtime.stateSnapshot().get("focusRevision").equals(2.0), "kanban begins an optimistic revision for the selected non-first card");
         check(cardColumn(runtime.tree(), "Review renderer").equals("done") && runtime.renderer().requestedFocusIdForTesting().equals("card-2-done"), "kanban renders and focuses the selected destination action optimistically");
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("focusRevision").equals(3L) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && cardColumn(runtime.tree(), "Review renderer").equals("done"), "kanban commits and returns focus to the selected card");
+        check(runtime.stateSnapshot().get("pendingRevision").equals(0.0) && runtime.stateSnapshot().get("focusRevision").equals(3.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-2") && cardColumn(runtime.tree(), "Review renderer").equals("done"), "kanban commits and returns focus to the selected card");
         runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && runtime.stateSnapshot().get("focusRevision").equals(4L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3") && texts(runtime.tree()).containsAll(List.of("Verify rollback", "Publish completion")), "kanban advances to and focuses the next complete window");
+        check(runtime.stateSnapshot().get("pageOffset").equals(2.0) && runtime.stateSnapshot().get("focusRevision").equals(4.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-3") && texts(runtime.tree()).containsAll(List.of("Verify rollback", "Publish completion")), "kanban advances to and focuses the next complete window");
         runtime.dispatch(action(runtime.tree(), "Select Verify rollback", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("selectedId").equals(3L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban selects a card from a later window");
+        check(runtime.stateSnapshot().get("selectedId").equals(3.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban selects a card from a later window");
         runtime.dispatch(action(runtime.tree(), "Try denied archive move for Verify rollback", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pendingRevision").equals(2L) && cardColumn(runtime.tree(), "Verify rollback").equals("archive") && runtime.renderer().requestedFocusIdForTesting().equals("card-3-archive"), "kanban exposes a denied optimistic move for a later card");
+        check(runtime.stateSnapshot().get("pendingRevision").equals(2.0) && cardColumn(runtime.tree(), "Verify rollback").equals("archive") && runtime.renderer().requestedFocusIdForTesting().equals("card-3-archive"), "kanban exposes a denied optimistic move for a later card");
         runtime.awaitIdle();
-        check(runtime.stateSnapshot().get("revision").equals(1L) && runtime.stateSnapshot().get("pendingRevision").equals(0L) && runtime.stateSnapshot().get("rollbackRevision").equals(1L) && runtime.stateSnapshot().get("focusRevision").equals(7L), "kanban rolls back denied destination completion and advances focus revision");
+        check(runtime.stateSnapshot().get("revision").equals(1.0) && runtime.stateSnapshot().get("pendingRevision").equals(0.0) && runtime.stateSnapshot().get("rollbackRevision").equals(1.0) && runtime.stateSnapshot().get("focusRevision").equals(7.0), "kanban rolls back denied destination completion and advances focus revision");
         check(cardColumn(runtime.tree(), "Verify rollback").equals("todo") && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban rollback restores the later card and its focus");
         runtime.dispatch(action(runtime.tree(), "Next page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(2L) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban clamps and focuses within the next boundary");
+        check(runtime.stateSnapshot().get("pageOffset").equals(2.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-3"), "kanban clamps and focuses within the next boundary");
         runtime.dispatch(action(runtime.tree(), "Previous page", bridge, null));
         runtime.awaitActions();
-        check(runtime.stateSnapshot().get("pageOffset").equals(0L) && runtime.renderer().requestedFocusIdForTesting().equals("card-1"), "kanban returns focus to an ID present in the first window");
+        check(runtime.stateSnapshot().get("pageOffset").equals(0.0) && runtime.renderer().requestedFocusIdForTesting().equals("card-1"), "kanban returns focus to an ID present in the first window");
     }
 
     private static String cardColumn(UiBridge.Node node, String title) {
@@ -387,13 +402,13 @@ public final class UiFrameworkTest {
         Path logic = fixture.resolve("typed.deal");
         Path pack = fixture.resolve("typed.dealui-pack");
         Path view = fixture.resolve("typed.dealui");
-        Files.writeString(logic, "export class State { text: string = \"\"; count: int = 0; amount: number = 0.0; flag: boolean = false; }\nexport class SetText { value: string = \"\"; }\nexport class SetCount { value: int = 0; }\nexport class SetAmount { value: number = 0.0; }\nexport class SetFlag { value: boolean = false; }\nexport class Clear {}\nexport class Completed {}\nexport class EffectCommand { operation: string = \"start\"; key: string = \"typed\"; delayMillis: int = 5; cancellationMode: string = \"replace\"; }\nexport function initialState(): State { return {}; }\n// @ui-update\nexport function setText(state: State, action: SetText): State { return { text: action.value, count: state.count, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setCount(state: State, action: SetCount): State { return { text: state.text, count: action.value, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setAmount(state: State, action: SetAmount): State { return { text: state.text, count: state.count, amount: action.value, flag: state.flag }; }\n// @ui-update\nexport function setFlag(state: State, action: SetFlag): State { return { text: state.text, count: state.count, amount: state.amount, flag: action.value }; }\n// @ui-update\nexport function clear(state: State, action: Clear): State { return {}; }\n// @ui-effect-policy\nexport function completePolicy(state: State, action: Clear): EffectCommand { return {}; }\n// @ui-effect\nexport async function complete(state: State, action: Clear): Completed { return {}; }\n// @ui-effect-failure\nexport function completeFailure(state: State, action: Clear, message: string): Completed { return {}; }\n// @ui-update\nexport function completed(state: State, action: Completed): State { return state; }\nexport function main(): null { return null; }\n");
-        Files.writeString(pack, "export class Props { onText?: Action; onInt?: Action; onNumber?: Action; onBool?: Action; onClear?: Action; }\nexport component Host(props: Props): View { event onText(payload: string); event onInt(payload: int); event onNumber(payload: number); event onBool(payload: boolean); event onClear; capability \"renderer.swing.card\"; }\n");
+        Files.writeString(logic, "export class State { text: string ; count: number ; amount: number ; flag: boolean ; }\nexport class SetText { value: string ; }\nexport class SetCount { value: number ; }\nexport class SetAmount { value: number ; }\nexport class SetFlag { value: boolean ; }\nexport class Clear {}\nexport class Completed {}\nexport class EffectCommand { operation: string ; key: string ; delayMillis: number ; cancellationMode: string ; }\nexport function initialState(): State { return {text: \"\", count: 0, amount: 0.0, flag: false}; }\n// @ui-update\nexport function setText(state: State, action: SetText): State { return { text: action.value, count: state.count, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setCount(state: State, action: SetCount): State { return { text: state.text, count: action.value, amount: state.amount, flag: state.flag }; }\n// @ui-update\nexport function setAmount(state: State, action: SetAmount): State { return { text: state.text, count: state.count, amount: action.value, flag: state.flag }; }\n// @ui-update\nexport function setFlag(state: State, action: SetFlag): State { return { text: state.text, count: state.count, amount: state.amount, flag: action.value }; }\n// @ui-update\nexport function clear(state: State, action: Clear): State { return {text: \"\", count: 0, amount: 0.0, flag: false}; }\n// @ui-effect-policy\nexport function completePolicy(state: State, action: Clear): EffectCommand { return {operation: \"start\", key: \"typed\", delayMillis: 5, cancellationMode: \"replace\"}; }\n// @ui-effect\nexport async function complete(state: State, action: Clear): Completed { return {}; }\n// @ui-effect-failure\nexport function completeFailure(state: State, action: Clear, message: string): Completed { return {}; }\n// @ui-update\nexport function completed(state: State, action: Completed): State { return state; }\nexport function main(): null { return null; }\n");
+        Files.writeString(pack, "export class Props { onText?: Action; onInt?: Action; onNumber?: Action; onBool?: Action; onClear?: Action; }\nexport component Host(props: Props): View { event onText(payload: string); event onInt(payload: number); event onNumber(payload: number); event onBool(payload: boolean); event onClear; capability \"renderer.swing.card\"; }\n");
         Files.writeString(view, "import * as app from \"./typed\";\nimport * as ui from \"./typed.dealui-pack\";\n// @ui-root\nexport view Typed(state: app.State): View { ui.Host(onText: action app.SetText { value: payload }, onInt: action app.SetCount { value: payload }, onNumber: action app.SetAmount { value: payload }, onBool: action app.SetFlag { value: payload }, onClear: action app.Clear {}) }\n");
         UiCompiler.Result result = compiler.compile(view, outputs.resolve("typed-output"));
         compiler.build(result, runtimeClasses());
         String generated = Files.readString(result.outputDirectory().resolve("deal/ui_application.deal"));
-        check(generated.contains("payload: string") && generated.contains("payload: int") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(bindings: table): UiAction"), "generated action factories preserve event payload contracts");
+        check(generated.contains("payload: string") && generated.contains("payload: number") && generated.contains("payload: number") && generated.contains("payload: boolean") && generated.contains("function action_4(bindings: table): UiAction"), "generated action factories preserve event payload contracts");
         check(generated.contains("function effectCommand") && generated.contains("app.completePolicy") && generated.contains("class EffectCommand"), "synchronous DEAL effect policy produces a typed command plan");
         String bridgeSource = Files.readString(result.generatedDirectory().resolve(result.bridgeClass() + ".java"));
         check(bridgeSource.contains("command(call(\"effectCommand\"") && bridgeSource.contains("effectFailure"), "generated bridge exposes typed scheduling and failure completion");
@@ -405,9 +420,9 @@ public final class UiFrameworkTest {
             int numberSlot = tree.props().get("onNumber").actionSlot();
             int boolSlot = tree.props().get("onBool").actionSlot();
             int clearSlot = tree.props().get("onClear").actionSlot();
-            check(bridge.action(textSlot, "text") != null && bridge.action(intSlot, 1L) != null && bridge.action(numberSlot, 1.5) != null && bridge.action(boolSlot, true) != null && bridge.action(clearSlot, null) != null, "generated bridge accepts exact typed payloads");
+            check(bridge.action(textSlot, "text") != null && bridge.action(intSlot, 1.0) != null && bridge.action(numberSlot, 1.5) != null && bridge.action(boolSlot, true) != null && bridge.action(clearSlot, null) != null, "generated bridge accepts exact typed payloads");
             expectPayloadFailure(() -> bridge.action(textSlot, 1L), "string");
-            expectPayloadFailure(() -> bridge.action(intSlot, "1"), "int");
+            expectPayloadFailure(() -> bridge.action(intSlot, "1"), "number");
             expectPayloadFailure(() -> bridge.action(numberSlot, 1L), "number");
             expectPayloadFailure(() -> bridge.action(boolSlot, "true"), "boolean");
             expectPayloadFailure(() -> bridge.action(clearSlot, ""), "no");
@@ -439,10 +454,10 @@ public final class UiFrameworkTest {
         expectValid(root, source(root), freshLocal, pack(root), "fresh local mutation is allowed in UI handlers");
         for (String loop : List.of(
                 "while (i < 2) { item.title = \"changed\"; item = state.items[0]; i = i + 1; }",
-                "for (let j: int = 0; j < 2; j = j + 1) { item.title = \"changed\"; item = state.items[0]; }")) {
+                "for (let j: number of [0, 1]) { item.title = \"changed\"; item = state.items[0]; }")) {
             expect("UI2050", source(root), original.replace(originalUpdate,
                     "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { "
-                    + "let item: Item = { id: 7, title: \"fresh\" }; let i: int = 0; " + loop + " return state; }"));
+                    + "let item: Item = { id: 7, title: \"fresh\" }; let i: number = 0; " + loop + " return state; }"));
         }
 
         String readOnlyHelper = original.replace("// @ui-update\n" + originalUpdate,
@@ -479,14 +494,14 @@ public final class UiFrameworkTest {
     }
 
     private static void typedChildrenContracts(Path root) throws Exception {
-        String logic = "export class Item { id: int = 0; title: string = \"\"; }\n" +
-            "export class State { items: Item[] = []; active: boolean = true; }\n" +
-            "export class Select { id: int = 0; }\n" +
+        String logic = "export class Item { id: number ; title: string ; }\n" +
+            "export class State { items: Item[] ; active: boolean ; }\n" +
+            "export class Select { id: number ; }\n" +
             "export function initialState(): State { return {}; }\n" +
             "// @ui-update\nexport function select(state: State, action: Select): State { return state; }\n" +
             "export function main(): null { return null; }\n";
         String uiPack = "export class Empty {}\n" +
-            "export class ItemProps { text: string = \"\"; onClick?: Action; }\n" +
+            "export class ItemProps { text: string ; onClick?: Action; }\n" +
             "export component NavigationBar(props: Empty): View { children required NavigationItem; capability \"renderer.navigation\"; }\n" +
             "export component NavigationItem(props: ItemProps): View { event onClick; capability \"renderer.navigation.item\"; }\n" +
             "export component Text(props: ItemProps): View { capability \"renderer.text\"; }\n";
@@ -497,7 +512,7 @@ public final class UiFrameworkTest {
         expect("UI2047", valid, logic, uiPack.replace("children required NavigationItem", "children required MissingItem"));
 
         String graphicsPack = "export class Empty {}\n" +
-            "export class ShapeProps { text: string = \"\"; onClick?: Action; }\n" +
+            "export class ShapeProps { text: string ; onClick?: Action; }\n" +
             "export component Canvas(props: Empty): View { children required Rectangle | Circle; }\n" +
             "export component Rectangle(props: ShapeProps): View { parent required Canvas; event onClick; }\n" +
             "export component Circle(props: ShapeProps): View { parent required Canvas; }\n" +
@@ -540,10 +555,10 @@ public final class UiFrameworkTest {
         copyTree(root.resolve("ui"), framework.resolve("ui"));
         Files.createDirectories(framework.resolve("ui/nested"));
         Files.createDirectories(application.resolve("feature"));
-        Files.writeString(framework.resolve("ui/shared.deal"), "export class Shared { value: int = 1; }\n");
-        Files.writeString(framework.resolve("ui/nested/policy.deal"), "import * as common from  \"../shared\" ;\nexport function value(): int { let item: common.Shared = {}; return item.value; }\n");
-        Files.writeString(application.resolve("feature/helper.deal"), "import * as sharedAlias from \"../../framework/ui/shared\";\nimport * as policyAlias from \"../../framework/ui/nested/policy.deal\";\nexport function helper(): int { return policyAlias.value() + 1; }\n");
-        String logic = "import * as helperAlias from \"./feature/helper\" ;\nimport * as duplicateAlias from \"../framework/ui/./shared\";\nimport * as strings from \"std/string\";\n// from \"../framework/ui/shared\"\nexport class State { value: int = 0; }\nexport function untouched(): string { return strings.trim(\"from \\\"../framework/ui/shared\\\"\"); }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n";
+        Files.writeString(framework.resolve("ui/shared.deal"), "export class Shared { value: number ; }\n");
+        Files.writeString(framework.resolve("ui/nested/policy.deal"), "import * as common from  \"../shared\" ;\nexport function value(): number { let item: common.Shared = {value: 1}; return item.value; }\n");
+        Files.writeString(application.resolve("feature/helper.deal"), "import * as sharedAlias from \"../../framework/ui/shared\";\nimport * as policyAlias from \"../../framework/ui/nested/policy.deal\";\nexport function helper(): number { return policyAlias.value() + 1; }\n");
+        String logic = "import * as helperAlias from \"./feature/helper\" ;\nimport * as duplicateAlias from \"../framework/ui/./shared\";\nimport * as strings from \"std/string\";\n// from \"../framework/ui/shared\"\nexport class State { value: number ; }\nexport function untouched(): string { return strings.trim(\"from \\\"../framework/ui/shared\\\"\"); }\nexport function initialState(): State { return {value: 0}; }\nexport function main(): null { return null; }\n";
         Files.writeString(application.resolve("app.deal"), logic);
         Files.writeString(application.resolve("pack.dealui-pack"), "export class TextProps { value: string = \"\"; }\nexport component Text(props: TextProps): View { capability \"renderer.swing.text\"; }\n");
         Files.writeString(application.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view App(state: app.State): View { ui.Text(value: \"ok\") }\n");
@@ -563,21 +578,21 @@ public final class UiFrameworkTest {
         UiCompiler.Result repeated = compiler.compile(application.resolve("app.dealui"), outputs.resolve("dependencies-output-repeat"));
         check(stagedSnapshot(staged).equals(stagedSnapshot(repeated.outputDirectory().resolve("deal"))), "staged output paths and contents are stable across output directories");
         Path outside = outputs.resolve("outside.deal");
-        Files.writeString(outside, "export function value(): int { return 1; }\n");
+        Files.writeString(outside, "export function value(): number { return 1; }\n");
         Path escape = application.resolve("escape.deal");
-        Files.writeString(escape, "import * as outside from \"../../outside\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(escape, "import * as outside from \"../../outside\";\nexport class State { value: number ; }\nexport function initialState(): State { return {value: 0}; }\nexport function main(): null { return null; }\n");
         Files.writeString(application.resolve("escape.dealui"), "import * as app from \"./escape\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Escape(state: app.State): View { ui.Text(value: \"escape\") }\n");
         expectDependencyEscape(compiler, application.resolve("escape.dealui"), outputs.resolve("escape-output"), "'../../outside' imported by application/escape.deal");
         Path link = application.resolve("linked.deal");
         try {
             Files.createSymbolicLink(link, outside);
             Path symlink = application.resolve("symlink.deal");
-            Files.writeString(symlink, "import * as linked from \"./linked\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+            Files.writeString(symlink, "import * as linked from \"./linked\";\nexport class State { value: number ; }\nexport function initialState(): State { return {value: 0}; }\nexport function main(): null { return null; }\n");
             Files.writeString(application.resolve("symlink.dealui"), "import * as app from \"./symlink\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Symlink(state: app.State): View { ui.Text(value: \"symlink\") }\n");
             expectDependencyEscape(compiler, application.resolve("symlink.dealui"), outputs.resolve("symlink-output"), "'./linked' imported by application/symlink.deal");
         } catch (UnsupportedOperationException | java.nio.file.FileSystemException ignored) {}
         Path missing = application.resolve("missing.deal");
-        Files.writeString(missing, "import * as absent from \"./absent\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(missing, "import * as absent from \"./absent\";\nexport class State { value: number ; }\nexport function initialState(): State { return {value: 0}; }\nexport function main(): null { return null; }\n");
         Files.writeString(application.resolve("missing.dealui"), "import * as app from \"./missing\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Missing(state: app.State): View { ui.Text(value: \"missing\") }\n");
         try { compiler.compile(application.resolve("missing.dealui"), outputs.resolve("missing-output")); throw new AssertionError("Expected missing dependency failure"); }
         catch (java.io.IOException failure) { check(failure.getMessage().contains("Missing relative DEAL dependency './absent'") && failure.getMessage().contains("missing.deal"), "missing dependencies report importer and specifier"); }
@@ -595,7 +610,7 @@ public final class UiFrameworkTest {
     private static void expectInvalidImport(UiCompiler compiler, Path application, Path outputs, String specifier, String expected) throws Exception {
         String name = "invalid-import-" + Integer.toUnsignedString(specifier.hashCode());
         Path logic = application.resolve(name + ".deal");
-        Files.writeString(logic, "import * as dependency from \"" + specifier + "\";\nexport class State { value: int = 0; }\nexport function initialState(): State { return {}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(logic, "import * as dependency from \"" + specifier + "\";\nexport class State { value: number ; }\nexport function initialState(): State { return {value: 0}; }\nexport function main(): null { return null; }\n");
         Path view = application.resolve(name + ".dealui");
         Files.writeString(view, "import * as app from \"./" + name + "\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Invalid(state: app.State): View { ui.Text(value: \"invalid\") }\n");
         try { compiler.compile(view, outputs.resolve(name)); throw new AssertionError("Expected invalid import failure"); }
@@ -646,7 +661,7 @@ public final class UiFrameworkTest {
     private static String deal(Path root) throws Exception { return Files.readString(root.resolve("examples/museum/gallery.deal")); }
     private static String pack(Path root) throws Exception { return Files.readString(root.resolve("examples/museum/platform-ui.dealui-pack")); }
     private static List<String> texts(UiBridge.Node node) { List<String> values = new ArrayList<>(); collect(node, values); return values; }
-    private static void collect(UiBridge.Node node, List<String> values) { UiBridge.Prop prop = node.props().get("value"); if (prop != null) values.add(String.valueOf(prop.value())); node.children().forEach(child -> collect(child, values)); }
+    private static void collect(UiBridge.Node node, List<String> values) { UiBridge.Prop prop = node.props().get("value"); if (prop != null) values.add(prop.value() instanceof Number n ? java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString() : String.valueOf(prop.value())); node.children().forEach(child -> collect(child, values)); }
     private static UiPortableBridge.Node nodeWithText(UiPortableBridge.Node node, String text) {
         UiPortableBridge.Prop value = node.props().get("text");
         if (value != null && value.value().equals(text)) return node;

@@ -1,19 +1,19 @@
 import * as interaction from "../../ui/interaction";
 
-export class DashboardState { overlayOpen: boolean = false; scopeRevision: int = 0; restoreFocus: string = ""; focusIntent: string = "open-settings"; focusRevision: int = 0; subscribedScope: int = 0; command: string = ""; announcement: string = "Dashboard ready"; }
+export class DashboardState { overlayOpen: boolean; scopeRevision: number; restoreFocus: string; focusIntent: string; focusRevision: number; subscribedScope: number; command: string; announcement: string; }
 export class OpenModal {}
 export class CloseModal {}
 export class EscapeCommand {}
-export class SubscriptionTick { scope: int = 0; }
+export class SubscriptionTick { scope: number; }
 
-export function initialState(): DashboardState { return {}; }
+export function initialState(): DashboardState { return {overlayOpen: false, scopeRevision: 0, restoreFocus: "", focusIntent: "open-settings", focusRevision: 0, subscribedScope: 0, command: "", announcement: "Dashboard ready"}; }
 
 function closed(state: DashboardState, command: string): DashboardState {
-  return { scopeRevision: state.scopeRevision + 1, restoreFocus: state.restoreFocus, focusIntent: state.restoreFocus, focusRevision: state.focusRevision + 1, subscribedScope: -1, command: command, announcement: "Settings dialog closed" };
+  return { scopeRevision: state.scopeRevision + 1, restoreFocus: state.restoreFocus, focusIntent: state.restoreFocus, focusRevision: state.focusRevision + 1, subscribedScope: -1, command: command, announcement: "Settings dialog closed" ,overlayOpen: false};
 }
 
 // @ui-update
-export function openModal(state: DashboardState, action: OpenModal): DashboardState { return { overlayOpen: true, scopeRevision: state.scopeRevision + 1, restoreFocus: "open-settings", focusIntent: "settings-name", focusRevision: state.focusRevision + 1, subscribedScope: state.scopeRevision + 1, announcement: "Settings dialog opened" }; }
+export function openModal(state: DashboardState, action: OpenModal): DashboardState { return { overlayOpen: true, scopeRevision: state.scopeRevision + 1, restoreFocus: "open-settings", focusIntent: "settings-name", focusRevision: state.focusRevision + 1, subscribedScope: state.scopeRevision + 1, announcement: "Settings dialog opened" ,command: ""}; }
 // @ui-update
 export function closeModal(state: DashboardState, action: CloseModal): DashboardState { return closed(state, state.command); }
 // @ui-update

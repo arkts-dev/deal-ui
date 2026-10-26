@@ -192,7 +192,7 @@ public final class CanonicalCompiler {
                 arguments.add(field.name() + ": " + defaultExpression(field.type()));
             }
         }
-        String deal = "export class AppState { title: string = \"\"; }\n"
+        String deal = "export class AppState { title: string ; }\n"
                 + "export function initialState(): AppState { return {title: \"\"}; }\n";
         String dealUi = "import * as app from \"./app.deal\";\n"
                 + "import * as ui from \"" + packSpecifier + "\";\n"
@@ -278,7 +278,6 @@ public final class CanonicalCompiler {
         return switch (type.name()) {
             case "string" -> "\"\"";
             case "boolean" -> "false";
-            case "int" -> "0";
             case "number" -> "0.0";
             default -> throw new IllegalArgumentException(
                     "Required bootstrap property has no scalar default: " + typeText(type));

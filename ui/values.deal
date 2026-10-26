@@ -1,23 +1,26 @@
 import * as strings from "std/string";
+import * as math from "std/math";
 
 // Pure presentation helpers. Call in DEAL updates/effects, never in view expressions.
-export function decimal(value: int): string {
+export function decimal(value: number): string {
+    if (value - value !== 0 || math.floor(value) !== value) { throw {code: "INVALID_INTEGER", message: "Expected an integral value"}; }
     if (value === 0) { return "0"; }
-    let remaining: int = value; if (remaining > 0) { remaining = -remaining; }
+    let remaining: number = value; if (remaining > 0) { remaining = -remaining; }
     let out: string = "";
     while (remaining < 0) {
-        let digit: int = -(remaining % 10);
+        let next: number = math.ceil(remaining / 10);
+        let digit: number = -(remaining - next * 10);
         out = strings.substring("0123456789", digit, digit + 1) + out;
-        remaining = remaining / 10;
+        remaining = next;
     }
     if (value < 0) { out = "-" + out; }
     return out;
 }
 
 // Explicit local minutes; no timezone conversion or travel policy is inferred.
-export function clockMinutes(minutes: int): string {
-    if (minutes < 0 || minutes >= 1440) { return ""; }
-    let hour: int = minutes / 60; let minute: int = minutes % 60;
+export function clockMinutes(minutes: number): string {
+    if (math.floor(minutes) !== minutes || minutes < 0 || minutes >= 1440) { return ""; }
+    let hour: number = math.floor(minutes / 60); let minute: number = minutes - hour * 60;
     let hh: string = decimal(hour); let mm: string = decimal(minute);
     if (hour < 10) { hh = "0" + hh; }
     if (minute < 10) { mm = "0" + mm; }
@@ -25,6 +28,6 @@ export function clockMinutes(minutes: int): string {
 }
 
 // Shared bounds predicate; callers still own domain limits and rejection behavior.
-export function inBounds(value: int, minimum: int, maximum: int): boolean {
+export function inBounds(value: number, minimum: number, maximum: number): boolean {
     return minimum <= maximum && value >= minimum && value <= maximum;
 }

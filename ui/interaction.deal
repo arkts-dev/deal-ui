@@ -1,3 +1,3 @@
-export function completionActive(activeRevision: int, completionRevision: int, active: boolean): boolean {
+export function completionActive(activeRevision: number, completionRevision: number, active: boolean): boolean {
   return active && activeRevision === completionRevision;
 }

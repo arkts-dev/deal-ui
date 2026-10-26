@@ -1,15 +1,15 @@
 export class Route {
-  actionId: int = -1;
-  updateId: int = -1;
-  effectId: int = -1;
-  completionActionId: int = -1;
+  actionId: number;
+  updateId: number;
+  effectId: number;
+  completionActionId: number;
 }
 
 export function noRoute(): Route {
-  return {};
+  return {actionId: -1, updateId: -1, effectId: -1, completionActionId: -1};
 }
 
-export function route(actionId: int, updateId: int, effectId: int, completionActionId: int): Route {
+export function route(actionId: number, updateId: number, effectId: number, completionActionId: number): Route {
   return {
     actionId: actionId,
     updateId: updateId,

@@ -315,7 +315,7 @@ public final class SwingUiRuntime implements AutoCloseable {
         if (action == null || action.actionSlot() < 0 || scope == null || !(scope.value() instanceof Number number)) return null;
         Object intervalValue = valueOr(modalNode, "scopeInterval", 1000L);
         int interval = intervalValue instanceof Number value ? Math.max(1, value.intValue()) : 1000;
-        long revision = number.longValue();
+        double revision = number.doubleValue();
         Timer timer = new Timer(interval, event -> dispatch.accept(bridge.action(action.actionSlot(), revision)));
         timer.setInitialDelay(interval);
         timer.setRepeats(true);
@@ -439,7 +439,7 @@ public final class SwingUiRuntime implements AutoCloseable {
                 panel.getAccessibleContext().setAccessibleDescription(String.valueOf(valueOr(node, "accessibilityDescription", "")));
             }
         } else if (component instanceof JLabel label) {
-            label.setText(String.valueOf(value(node, "value")));
+            label.setText(display(value(node, "value")));
             label.setForeground(new Color(0x172033));
             String text = label.getText();
             float size = value(node, "value") instanceof Number ? 40f : text.equals(text.toUpperCase(java.util.Locale.ROOT)) && text.length() < 24 ? 13f : text.length() < 28 ? 28f : 17f;
@@ -486,6 +486,8 @@ public final class SwingUiRuntime implements AutoCloseable {
 
     private static Object value(UiBridge.Node node, String name) { UiBridge.Prop prop = node.props().get(name); return prop == null ? "" : prop.value(); }
     private static Object valueOr(UiBridge.Node node, String name, Object fallback) { UiBridge.Prop prop = node.props().get(name); return prop == null ? fallback : prop.value(); }
+    private static String display(Object value) { if (value instanceof Number n && Double.isFinite(n.doubleValue())) return java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString(); return String.valueOf(value); }
+
     private JButton find(Component component, String text) { if (component instanceof JButton button && button.getText().equals(text)) return button; if (component instanceof Container container) for (Component child : container.getComponents()) { JButton result = find(child, text); if (result != null) return result; } return null; }
     private void captureNow(Path destination) {
         if (frame == null || !frame.isDisplayable()) throw new IllegalStateException("UI is not shown");

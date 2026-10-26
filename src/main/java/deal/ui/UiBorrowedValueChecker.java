@@ -12,9 +12,7 @@ import deal.ast.DeleteStatement;
 import deal.ast.Either;
 import deal.ast.ExpressionNode;
 import deal.ast.ExpressionStatement;
-import deal.ast.ForInit;
 import deal.ast.ForOfStatement;
-import deal.ast.ForStatement;
 import deal.ast.FunctionDeclaration;
 import deal.ast.FunctionExpr;
 import deal.ast.FunctionType;
@@ -201,18 +199,6 @@ final class UiBorrowedValueChecker {
                 body.shapes.put(loop.varName(), itemShape);
                 body.origins.put(loop.varName(), origin(loop.iterable()).element(itemShape.reference(classes)));
                 body.loopFixedPoint(iteration -> iteration.block(loop.body()));
-                merge(body);
-            } else if (statement instanceof ForStatement loop) {
-                Analyzer body = new Analyzer(this);
-                loop.init().ifPresent(init -> {
-                    if (init instanceof ForInit.VarDecl variable) body.statement(variable.decl());
-                    else body.assignment(((ForInit.AssignExpr) init).expr());
-                });
-                body.loopFixedPoint(iteration -> {
-                    loop.condition().ifPresent(iteration::expression);
-                    iteration.block(loop.body());
-                    loop.update().ifPresent(iteration::expression);
-                });
                 merge(body);
             } else if (statement instanceof DeleteStatement deleted) {
                 mutate(deleted.target(), deleted.span(), "deletes through a borrowed value");
@@ -417,7 +403,6 @@ final class UiBorrowedValueChecker {
     private Shape literalShape(LiteralExpr literal) {
         String value = literal.value().getClass().getSimpleName();
         if (value.contains("Boolean")) return new Shape("boolean", 0, false);
-        if (value.contains("Int")) return new Shape("int", 0, false);
         if (value.contains("Number")) return new Shape("number", 0, false);
         if (value.contains("String")) return new Shape("string", 0, false);
         return new Shape("null", 0, false);

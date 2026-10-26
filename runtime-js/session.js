@@ -78,7 +78,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
       const values = binding ? binding.values : new Map();
       const declared = call('payloadType_' + factory);
       let value = payload;
-      if (declared === 'int') { if (!/^-?\d+$/.test(String(payload))) throw Error('Expected an integer payload'); value = parseInt(payload, 10); }
+      if (declared === 'number') { if (typeof payload !== 'string' || payload.trim() === '' || !Number.isFinite(Number(payload))) throw Error('Expected a finite numeric payload'); value = Number(payload); }
       else if (declared === 'boolean') { if (payload !== 'true' && payload !== 'false') throw Error('Expected a boolean payload'); value = payload === 'true'; }
       else if (declared === 'string') { if (typeof payload !== 'string') throw Error('Expected a string payload'); }
       else if (payload !== null) throw Error('This action takes no payload');

@@ -1,5 +1,5 @@
 export class Space {
-  value: int = 0;
+  value: number = 0;
 }
 
 export class TextProps {
@@ -7,7 +7,7 @@ export class TextProps {
 }
 
 export class IntTextProps {
-  value: int = 0;
+  value: number = 0;
 }
 
 export class InputProps {

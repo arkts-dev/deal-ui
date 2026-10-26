@@ -1,26 +1,26 @@
 export class EffectDescriptor {
-  effectId: int = -1;
-  actionSlot: int = -1;
-  committedRevision: int = 0;
+  effectId: number;
+  actionSlot: number;
+  committedRevision: number;
 }
 
 export class EffectCommand {
-  operation: string = "none";
-  key: string = "";
-  delayMillis: int = 0;
-  cancellationMode: string = "none";
+  operation: string;
+  key: string;
+  delayMillis: number;
+  cancellationMode: string;
 }
 
 export class CompletionDescriptor {
-  accepted: boolean = false;
-  actionSlot: int = -1;
+  accepted: boolean;
+  actionSlot: number;
 }
 
 export function none(): EffectDescriptor {
-  return {};
+  return {effectId: -1, actionSlot: -1, committedRevision: 0};
 }
 
-export function start(effectId: int, actionSlot: int, committedRevision: int): EffectDescriptor {
+export function start(effectId: number, actionSlot: number, committedRevision: number): EffectDescriptor {
   return {
     effectId: effectId,
     actionSlot: actionSlot,
@@ -29,17 +29,17 @@ export function start(effectId: int, actionSlot: int, committedRevision: int): E
 }
 
 export function noCommand(): EffectCommand {
-  return {};
+  return {operation: "none", key: "", delayMillis: 0, cancellationMode: "none"};
 }
 
-export function startCommand(key: string, delayMillis: int, cancellationMode: string): EffectCommand {
+export function startCommand(key: string, delayMillis: number, cancellationMode: string): EffectCommand {
   return { operation: "start", key: key, delayMillis: delayMillis, cancellationMode: cancellationMode };
 }
 
 export function cancelCommand(key: string, cancellationMode: string): EffectCommand {
-  return { operation: "cancel", key: key, cancellationMode: cancellationMode };
+  return { operation: "cancel", key: key, cancellationMode: cancellationMode ,delayMillis: 0};
 }
 
-export function completion(disposed: boolean, actionSlot: int): CompletionDescriptor {
+export function completion(disposed: boolean, actionSlot: number): CompletionDescriptor {
   return { accepted: !disposed, actionSlot: actionSlot };
 }

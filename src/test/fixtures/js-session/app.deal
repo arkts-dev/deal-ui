@@ -1,14 +1,14 @@
 import * as work from "host/work";
-export class State { value: int = 0; }
-export class Start { value: int = 0; }
-export class Done { value: int = 0; }
+export class State { value: number; }
+export class Start { value: number; }
+export class Done { value: number; }
 export class Bad {}
-export function initialState(): State { return {}; }
+export function initialState(): State { return {value: 0}; }
 // @ui-update
 export function start(state: State, action: Start): State { return state; }
 // @ui-effect
 export async function run(state: State, action: Start): Done {
-    let value: int = await work.run(action.value);
+    let value: number = await work.run(action.value);
     return { value: value };
 }
 // @ui-update

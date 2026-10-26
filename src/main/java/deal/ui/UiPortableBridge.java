@@ -9,7 +9,7 @@ public interface UiPortableBridge {
     record StateValue(Object abi) implements AbiValue { public StateValue { java.util.Objects.requireNonNull(abi); } }
     record StoreValue(Object abi) implements AbiValue { public StoreValue { java.util.Objects.requireNonNull(abi); } }
     record ActionValue(Object abi) implements AbiValue { public ActionValue { java.util.Objects.requireNonNull(abi); } }
-    record Key(String kind, long intValue, String stringValue) {}
+    record Key(String kind, double numberValue, String stringValue) {}
     record Identity(String structural, Key key) {}
     record Prop(String name, String kind, Object value, int actionSlot) {}
     record Node(String component, Identity identity, Map<String, Prop> props, List<Node> children) {

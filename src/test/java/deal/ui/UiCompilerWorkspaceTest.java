@@ -17,7 +17,7 @@ public final class UiCompilerWorkspaceTest {
             export component Button(props: ButtonProps): View { event onClick; accessibility text; }
             """;
     private static final String DEAL = """
-            export class AppState { title: string = "Ready"; count: int = 0; }
+            export class AppState { title: string ; count: number ; }
             export class IncrementAction {}
             export function initialState(): AppState { return {title: "Ready", count: 0}; }
             // @ui-update
@@ -87,7 +87,7 @@ public final class UiCompilerWorkspaceTest {
     private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {
         String tokenPack = PACK.replace("export class ColumnProps {", "export class ColumnProps { spacing?: Space;")
                 .replace("children optional; event onClick;", "children optional; event onClick; token spacing;")
-                + "\nexport class Space { value: int; }\nexport token spaceMd: Space = { value: 16 };\n";
+                + "\nexport class Space { value: number; }\nexport token spaceMd: Space = { value: 16 };\n";
         var tokenDiagnostic = CanonicalCompiler.inspectCanonicalApp(DEAL,
                 UI.replace("ui.Column(onClick:", "ui.Column(spacing: \"spaceMd\", onClick:"), tokenPack, "./ui.pack")
                 .diagnostics().stream().filter(d -> d.code().equals("UI2013")).findFirst().orElseThrow();
@@ -119,7 +119,7 @@ public final class UiCompilerWorkspaceTest {
 
     private static void stateProducerQueriesUseTypedBodies() {
         String source = DEAL + "\nfunction cloneState(state: AppState): AppState { return state; }\n"
-                + "function unrelated(): int { return 3; }\n";
+                + "function unrelated(): number { return 3; }\n";
         var producers = CanonicalCompiler.queryRootStateProducers(source);
         check(producers.size() == 2, "state producers include helpers but exclude initializer and scalar functions");
         check(producers.stream().allMatch(slice -> slice.allowedOperations().stream()
@@ -130,8 +130,8 @@ public final class UiCompilerWorkspaceTest {
 
     private static void eventContractsIncludeNestedPayloadTypes() {
         String pack = PACK + """
-                export class Position { x: int = 0; y: int = 0; }
-                export class Gesture { position: Position; phase: int = 0; }
+                export class Position { x: number ; y: number ; }
+                export class Gesture { position: Position; phase: number ; }
                 export class GestureProps { onChange?: Action; }
                 export component GestureArea(props: GestureProps): View { event onChange(payload: Gesture); }
                 """;
@@ -140,7 +140,7 @@ public final class UiCompilerWorkspaceTest {
                 .filter(component -> component.name().equals("GestureArea")).findFirst().orElseThrow().events().get(0);
         check(event.bindingRoot().equals("payload"), "event root is compiler-owned");
         check(event.payloadTypes().size() == 2, "nested payload records must be included");
-        check(event.payloadTypes().get(1).fields().get(0).type().equals("int"), "payload field types survive metadata");
+        check(event.payloadTypes().get(1).fields().get(0).type().equals("number"), "payload field types survive metadata");
     }
 
     private static void editSurfaceContainsOnlyCompilerOwnedVisualContext() {
@@ -203,8 +203,8 @@ public final class UiCompilerWorkspaceTest {
     }
 
     private static void editSurfaceCarriesForEachLexicalTypes() {
-        String deal = "export class Item { id: int = 0; title: string = \"\"; }\n"
-                + "export class AppState { items: Item[] = []; }\n"
+        String deal = "export class Item { id: number ; title: string ; }\n"
+                + "export class AppState { items: Item[] ; }\n"
                 + "export function initialState(): AppState { return {items: []}; }";
         String ui = """
                 import * as app from "./app.deal";
@@ -373,7 +373,7 @@ public final class UiCompilerWorkspaceTest {
                 .findFirst().orElseThrow();
         check(diagnostic.expected().equals("string"),
                 "binary mismatch must publish the left operand type");
-        check(diagnostic.actual().equals("int"),
+        check(diagnostic.actual().equals("number"),
                 "binary mismatch must publish the right operand type");
         check(diagnostic.message().contains("no implicit coercion"),
                 "binary mismatch must explain the Deal UI coercion invariant");
@@ -421,7 +421,7 @@ public final class UiCompilerWorkspaceTest {
     private static void canonicalFacadeBlocksCrossArtifactMismatch() {
         var accepted = CanonicalCompiler.compileCanonicalApp(DEAL, UI, PACK, "./ui.pack");
         check(accepted.valid(), "canonical pair must compile: " + accepted.diagnostics());
-        String incompatible = DEAL.replace("title: string = \"Ready\";", "label: string = \"Ready\";")
+        String incompatible = DEAL.replace("title: string ;", "label: string;")
                 .replace("title: \"Ready\"", "label: \"Ready\"")
                 .replace("title: state.title", "label: state.label");
         var rejected = CanonicalCompiler.compileCanonicalApp(incompatible, UI, PACK, "./ui.pack");
@@ -437,7 +437,7 @@ public final class UiCompilerWorkspaceTest {
     }
 
     private static void ancestorSubtreeCanRepairDescendantInterfaceErrors() {
-        String incompatible = DEAL.replace("title: string = \"Ready\";", "label: string = \"Ready\";")
+        String incompatible = DEAL.replace("title: string ;", "label: string;")
                 .replace("title: \"Ready\"", "label: \"Ready\"")
                 .replace("title: state.title", "label: state.label");
         var inspection = UiCompilerWorkspace.inspect(incompatible, UI, PACK, "./ui.pack");
@@ -465,7 +465,7 @@ public final class UiCompilerWorkspaceTest {
 
     private static void canonicalDealChangeRequiresAnnotatedUpdateHandlers() {
         String bootstrap = """
-                export class AppState { title: string = ""; }
+                export class AppState { title: string ; }
                 export function initialState(): AppState { return {title: ""}; }
                 """;
         var inspected = deal.amend.AmendWorkspace.inspect(
@@ -482,7 +482,7 @@ public final class UiCompilerWorkspaceTest {
                 body.id().value(), bodySlice.allowedOperations().get(0).targetFingerprint());
         List<deal.amend.AmendWorkspace.Operation> missingDirective = List.of(
                 new deal.amend.AmendWorkspace.ReplaceDeclaration(
-                        state.id(), "export class AppState { count: int = 0; }"),
+                        state.id(), "export class AppState { count: number ; }"),
                 new deal.amend.AmendWorkspace.ReplaceFunctionBody(
                         body.id(), "return {count: 0};"),
                 new deal.amend.AmendWorkspace.AddDeclaration(
@@ -543,7 +543,7 @@ public final class UiCompilerWorkspaceTest {
 
     private static void frameworkDiagnosticsUseCompilerOwnedRepairSlots() {
         String bootstrap = """
-                export class AppState { title: string = ""; }
+                export class AppState { title: string ; }
                 export function initialState(): AppState { return {title: ""}; }
                 """;
         var inspected = deal.amend.AmendWorkspace.inspect(
@@ -587,7 +587,7 @@ public final class UiCompilerWorkspaceTest {
 
     private static void borrowedMutationDiagnosticOwnsHandlerSlot() {
         String bootstrap = """
-                export class AppState { count: int = 0; }
+                export class AppState { count: number ; }
                 export function initialState(): AppState { return {count: 0}; }
                 """;
         var inspected = deal.amend.AmendWorkspace.inspect(
@@ -735,7 +735,7 @@ public final class UiCompilerWorkspaceTest {
                 export class ClockProps { onTick: Action; }
                 export component Column(props: ColumnProps): View { children optional; }
                 export component FrameClock(props: ClockProps): View {
-                  event onTick(payload: int); capability "host.clock.frame";
+                  event onTick(payload: number); capability "host.clock.frame";
                 }
                 """;
         String deal = "// generated-capability: clock.frame\n" + DEAL;
@@ -791,7 +791,7 @@ public final class UiCompilerWorkspaceTest {
 
         String typedDeal = deal.replace(
                 "export class IncrementAction {}",
-                "export class IncrementAction { deltaMillis: int; }");
+                "export class IncrementAction { deltaMillis: number; }");
         String ignoredPayload = bound.replace(
                 "action app.IncrementAction {}",
                 "action app.IncrementAction { deltaMillis: 16 }");
@@ -808,17 +808,17 @@ public final class UiCompilerWorkspaceTest {
                 pack version "host-check";
                 export class ClockProps { onTick: Action; }
                 export component Clock(props: ClockProps): View {
-                  event onTick(payload: int); capability "host.clock.minute";
+                  event onTick(payload: number); capability "host.clock.minute";
                 }
                 """;
         var manifest = CanonicalCompiler.inspectComponentPack(pack);
         String source = "// generated-capability: clock.minute\n" + DEAL
-                .replace("export class IncrementAction {}", "export class IncrementAction { text: string = \"\"; }");
+                .replace("export class IncrementAction {}", "export class IncrementAction { text: string ; }");
         var blocked = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(source), manifest);
         check(blocked.size() == 1 && blocked.getFirst().supported() && !blocked.getFirst().ready()
                 && !blocked.getFirst().missingEvents().isEmpty(), "missing payload type must block readiness");
         var ready = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(
-                source.replace("text: string = \"\"", "value: int = 0")), manifest);
+                source.replace("text: string ;", "value: number;")), manifest);
         check(ready.getFirst().ready(), "compatible integer payload must unblock readiness");
         var unsupported = CanonicalCompiler.inspectHostRequirements(CanonicalCompiler.extractAppInterface(
                 "// generated-capability: storage.private\n" + DEAL), manifest);

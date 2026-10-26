@@ -1,28 +1,28 @@
 import * as core from "./core";
 
 export class Patch {
-  kind: string = "retain";
-  structural: string = "";
-  keyKind: string = "none";
-  keyInt: int = 0;
-  keyString: string = "";
-  parentStructural: string = "";
-  parentKeyKind: string = "none";
-  parentKeyInt: int = 0;
-  parentKeyString: string = "";
-  rootParent: boolean = false;
-  index: int = 0;
-  node: core.ViewNode = {};
+  kind: string;
+  structural: string;
+  keyKind: string;
+  keyNumber: number;
+  keyString: string;
+  parentStructural: string;
+  parentKeyKind: string;
+  parentKeyNumber: number;
+  parentKeyString: string;
+  rootParent: boolean;
+  index: number;
+  node: core.ViewNode;
 }
 
-export class Plan { patches: Patch[] = []; }
+export class Plan { patches: Patch[] ; }
 
 export function identityEquals(left: core.ViewNode, right: core.ViewNode): boolean {
   if (left.structural !== right.structural || left.keyKind !== right.keyKind) {
     return false;
   }
-  if (left.keyKind === "int") {
-    return left.keyInt === right.keyInt;
+  if (left.keyKind === "number") {
+    return left.keyNumber === right.keyNumber;
   }
   if (left.keyKind === "string") {
     return left.keyString === right.keyString;
@@ -30,16 +30,16 @@ export function identityEquals(left: core.ViewNode, right: core.ViewNode): boole
   return true;
 }
 
-function append(patches: Patch[], kind: string, node: core.ViewNode, parent: core.ViewNode, rootParent: boolean, index: int): null {
+function append(patches: Patch[], kind: string, node: core.ViewNode, parent: core.ViewNode, rootParent: boolean, index: number): null {
   patches[patches.length] = {
     kind: kind,
     structural: node.structural,
     keyKind: node.keyKind,
-    keyInt: node.keyInt,
+    keyNumber: node.keyNumber,
     keyString: node.keyString,
     parentStructural: parent.structural,
     parentKeyKind: parent.keyKind,
-    parentKeyInt: parent.keyInt,
+    parentKeyNumber: parent.keyNumber,
     parentKeyString: parent.keyString,
     rootParent: rootParent,
     index: index,
@@ -49,9 +49,9 @@ function append(patches: Patch[], kind: string, node: core.ViewNode, parent: cor
 }
 
 function validateUnique(nodes: core.ViewNode[]): null {
-  let leftIndex: int = 0;
+  let leftIndex: number = 0;
   for (let left: core.ViewNode of nodes) {
-    let rightIndex: int = 0;
+    let rightIndex: number = 0;
     for (let right: core.ViewNode of nodes) {
       if (leftIndex < rightIndex && identityEquals(left, right)) {
         throw { code: "UI3003", message: "Duplicate sibling identity" };
@@ -77,7 +77,7 @@ function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], par
       append(patches, "dispose", old, parent, false, 0);
     }
   }
-  let index: int = 0;
+  let index: number = 0;
   for (let node: core.ViewNode of next) {
     let retained: boolean = false;
     for (let old: core.ViewNode of previous) {
@@ -98,7 +98,7 @@ function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], par
 export function plan(previous: core.ViewNode | null, next: core.ViewNode): Plan {
   validateUnique(next.children);
   let patches: Patch[] = [];
-  let root: core.ViewNode = {};
+  let root: core.ViewNode = core.node("", "", core.noKey(), [], []);
   if (previous === null) {
     append(patches, "create", next, root, true, 0);
     return { patches: patches };

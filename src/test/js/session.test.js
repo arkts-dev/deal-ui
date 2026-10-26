@@ -10,7 +10,7 @@ walk(base);
 vm.runInThisContext(fs.readFileSync(path.join(host,'sandbox.js'),'utf8'));
 vm.runInThisContext(fs.readFileSync(path.join(root,'runtime-js/session.js'),'utf8'));
 vm.runInThisContext(fs.readFileSync(path.join(host,'ui-session.js'),'utf8'));
-configureDealCapabilities([{module:'host/work',functions:[{name:'run',parameters:[{name:'value',type:{kind:'int'}}],result:{kind:'int'}}]}]);
+configureDealCapabilities([{module:'host/work',functions:[{name:'run',parameters:[{name:'value',type:{kind:'number'}}],result:{kind:'number'}}]}]);
 const entryId='experience_entry.js';
 function mount(){mountDealUi(factories,entryId);return dealUi;}
 function snapshot(session){return JSON.parse(session.snapshot());}

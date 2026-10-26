@@ -50,7 +50,7 @@ public final class UiCompiler {
         Path bindings = destination.resolve("bindings");
         Files.createDirectories(bindings);
         Files.copy(storageDeclaration, bindings.resolve("storage.d.deal"));
-        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
+        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
 
         UiModel.ViewModule views = UiParser.parseViews(view, Files.readString(view));
         Map<String, UiModel.PackModule> packs = new LinkedHashMap<>();

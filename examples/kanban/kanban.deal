@@ -1,29 +1,29 @@
 import * as interaction from "../../ui/interaction";
 
-export class Card { id: int = 0; title: string = ""; column: string = "todo"; focusId: string = ""; todoFocusId: string = ""; doingFocusId: string = ""; doneFocusId: string = ""; archiveFocusId: string = ""; }
-class WindowPolicy { offset: int = 0; limit: int = 2; total: int = 0; }
-class OptimisticPolicy { revision: int = 0; pendingRevision: int = 0; rollbackRevision: int = 0; }
+export class Card { id: number; title: string; column: string; focusId: string; todoFocusId: string; doingFocusId: string; doneFocusId: string; archiveFocusId: string; }
+class WindowPolicy { offset: number; limit: number; total: number; }
+class OptimisticPolicy { revision: number; pendingRevision: number; rollbackRevision: number; }
 export class BoardState {
-  cards: Card[] = [];
-  priorCards: Card[] = [];
-  visibleCards: Card[] = [];
-  selectedId: int = 0;
-  focusIntent: string = "card-1";
-  focusRevision: int = 0;
-  pageOffset: int = 0;
-  pageLimit: int = 2;
-  total: int = 0;
-  revision: int = 0;
-  pendingRevision: int = 0;
-  rollbackRevision: int = 0;
-  message: string = "Choose a valid or denied move";
+  cards: Card[] ;
+  priorCards: Card[] ;
+  visibleCards: Card[] ;
+  selectedId: number;
+  focusIntent: string;
+  focusRevision: number;
+  pageOffset: number;
+  pageLimit: number;
+  total: number;
+  revision: number;
+  pendingRevision: number;
+  rollbackRevision: number;
+  message: string;
 }
-export class Select { id: int = 0; }
-export class Move { id: int = 0; destination: string = "doing"; }
+export class Select { id: number; }
+export class Move { id: number; destination: string; }
 export class NextPage {}
 export class PreviousPage {}
-export class MoveCompleted { revision: int = 0; accepted: boolean = false; message: string = ""; }
-export class EffectCommand { operation: string = "start"; key: string = "kanban-move"; delayMillis: int = 180; cancellationMode: string = "replace"; }
+export class MoveCompleted { revision: number; accepted: boolean; message: string; }
+export class EffectCommand { operation: string; key: string; delayMillis: number; cancellationMode: string; }
 
 function copyCards(cards: Card[]): Card[] {
   let result: Card[] = [];
@@ -31,7 +31,7 @@ function copyCards(cards: Card[]): Card[] {
   return result;
 }
 
-function moveCard(cards: Card[], id: int, destination: string): Card[] {
+function moveCard(cards: Card[], id: number, destination: string): Card[] {
   let result: Card[] = [];
   for (let card: Card of cards) {
     if (card.id === id) { result[result.length] = { id: card.id, title: card.title, column: destination, focusId: card.focusId, todoFocusId: card.todoFocusId, doingFocusId: card.doingFocusId, doneFocusId: card.doneFocusId, archiveFocusId: card.archiveFocusId }; }
@@ -40,37 +40,37 @@ function moveCard(cards: Card[], id: int, destination: string): Card[] {
   return result;
 }
 
-function hasCard(cards: Card[], id: int): boolean {
+function hasCard(cards: Card[], id: number): boolean {
   for (let card: Card of cards) { if (card.id === id) { return true; } }
   return false;
 }
 
 function destinationValid(destination: string): boolean { return destination === "todo" || destination === "doing" || destination === "done"; }
 
-function clampWindow(offset: int, limit: int, total: int): WindowPolicy {
-  let safeLimit: int = limit;
+function clampWindow(offset: number, limit: number, total: number): WindowPolicy {
+  let safeLimit: number = limit;
   if (safeLimit < 1) { safeLimit = 1; }
-  let maximum: int = total - safeLimit;
+  let maximum: number = total - safeLimit;
   if (maximum < 0) { maximum = 0; }
-  let safeOffset: int = offset;
+  let safeOffset: number = offset;
   if (safeOffset < 0) { safeOffset = 0; }
   if (safeOffset > maximum) { safeOffset = maximum; }
   return { offset: safeOffset, limit: safeLimit, total: total };
 }
 
-function beginOptimistic(revision: int): OptimisticPolicy {
-  let next: int = revision + 1;
+function beginOptimistic(revision: number): OptimisticPolicy {
+  let next: number = revision + 1;
   return { revision: next, pendingRevision: next, rollbackRevision: revision };
 }
 
-function finishOptimistic(current: OptimisticPolicy, revision: int): OptimisticPolicy {
+function finishOptimistic(current: OptimisticPolicy, revision: number): OptimisticPolicy {
   if (!interaction.completionActive(current.pendingRevision, revision, current.pendingRevision !== 0)) { return current; }
-  return { revision: current.revision };
+  return { revision: current.revision ,pendingRevision: 0, rollbackRevision: 0};
 }
 
 function visibleWindow(cards: Card[], window: WindowPolicy): Card[] {
   let result: Card[] = [];
-  let index: int = 0;
+  let index: number = 0;
   for (let card: Card of cards) {
     if (index >= window.offset && index < window.offset + window.limit) { result[result.length] = card; }
     index = index + 1;
@@ -78,12 +78,12 @@ function visibleWindow(cards: Card[], window: WindowPolicy): Card[] {
   return result;
 }
 
-function cardFocus(cards: Card[], id: int): string {
+function cardFocus(cards: Card[], id: number): string {
   for (let card: Card of cards) { if (card.id === id) { return card.focusId; } }
   return "";
 }
 
-function destinationFocus(cards: Card[], id: int, destination: string): string {
+function destinationFocus(cards: Card[], id: number, destination: string): string {
   for (let card: Card of cards) {
     if (card.id === id) {
       if (destination === "todo") { return card.todoFocusId; }
@@ -101,7 +101,7 @@ function windowFocus(cards: Card[], window: WindowPolicy): string {
   return "previous-page";
 }
 
-function stateWithWindow(cards: Card[], priorCards: Card[], window: WindowPolicy, revision: int, pendingRevision: int, rollbackRevision: int, selectedId: int, focusIntent: string, focusRevision: int, message: string): BoardState {
+function stateWithWindow(cards: Card[], priorCards: Card[], window: WindowPolicy, revision: number, pendingRevision: number, rollbackRevision: number, selectedId: number, focusIntent: string, focusRevision: number, message: string): BoardState {
   return { cards: cards, priorCards: priorCards, visibleCards: visibleWindow(cards, window), selectedId: selectedId, focusIntent: focusIntent, focusRevision: focusRevision + 1, pageOffset: window.offset, pageLimit: window.limit, total: window.total, revision: revision, pendingRevision: pendingRevision, rollbackRevision: rollbackRevision, message: message };
 }
 
@@ -112,7 +112,7 @@ export function initialState(): BoardState {
   let fourth: Card = { id: 4, title: "Publish completion", column: "done", focusId: "card-4", todoFocusId: "card-4-todo", doingFocusId: "card-4-doing", doneFocusId: "card-4-done", archiveFocusId: "card-4-archive" };
   let cards: Card[] = [first, second, third, fourth];
   let window: WindowPolicy = clampWindow(0, 2, cards.length);
-  return { cards: cards, visibleCards: visibleWindow(cards, window), focusIntent: first.focusId, pageOffset: window.offset, pageLimit: window.limit, total: window.total };
+  return { cards: cards, visibleCards: visibleWindow(cards, window), focusIntent: first.focusId, pageOffset: window.offset, pageLimit: window.limit, total: window.total ,priorCards: [], selectedId: 0, focusRevision: 0, revision: 0, pendingRevision: 0, rollbackRevision: 0, message: "Choose a valid or denied move"};
 }
 
 // @ui-update
@@ -139,18 +139,18 @@ export function move(state: BoardState, action: Move): BoardState {
 }
 
 // @ui-effect-policy
-export function movePolicy(state: BoardState, action: Move): EffectCommand { return {}; }
+export function movePolicy(state: BoardState, action: Move): EffectCommand { return {operation: "start", key: "kanban-move", delayMillis: 180, cancellationMode: "replace"}; }
 
 // @ui-effect
 export async function validateMove(state: BoardState, action: Move): MoveCompleted {
-  if (!hasCard(state.priorCards, action.id)) { return { revision: state.pendingRevision, message: "Card no longer exists" }; }
-  if (!destinationValid(action.destination)) { return { revision: state.pendingRevision, message: "Destination 'archive' is not part of this board" }; }
+  if (!hasCard(state.priorCards, action.id)) { return { revision: state.pendingRevision, message: "Card no longer exists" ,accepted: false}; }
+  if (!destinationValid(action.destination)) { return { revision: state.pendingRevision, message: "Destination 'archive' is not part of this board" ,accepted: false}; }
   return { revision: state.pendingRevision, accepted: true, message: "Move accepted" };
 }
 
 // @ui-effect-failure
 export function moveFailure(state: BoardState, action: Move, message: string): MoveCompleted {
-  return { revision: state.pendingRevision, message: "Move validation failed: " + message };
+  return { revision: state.pendingRevision, message: "Move validation failed: " + message ,accepted: false};
 }
 
 // @ui-update

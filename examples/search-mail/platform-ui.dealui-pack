@@ -1,4 +1,4 @@
-export class Space { value: int = 0; }
+export class Space { value: number = 0; }
 export class TextProps { value: string = ""; }
 export class InputProps { value: string = ""; onSubmit?: Action; accessibilityLabel?: string; }
 export class ButtonProps { text: string = ""; onClick?: Action; accessibilityLabel?: string; }

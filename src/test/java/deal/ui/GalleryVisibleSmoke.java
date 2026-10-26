@@ -25,7 +25,7 @@ public final class GalleryVisibleSmoke {
                 runtime.renderer().capture(evidence.resolve("gallery-expanded.png"));
                 runtime.click("Increment");
                 runtime.awaitIdle();
-                if (!runtime.stateSnapshot().get("count").equals(1L)) throw new IllegalStateException("Effect completion was not committed");
+                if (!runtime.stateSnapshot().get("count").equals(1.0)) throw new IllegalStateException("Effect completion was not committed");
                 runtime.renderer().capture(evidence.resolve("gallery-incremented.png"));
             }
         }

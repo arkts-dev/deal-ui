@@ -1,13 +1,13 @@
 export class Item {
-  id: int = 0;
-  title: string = "";
+  id: number;
+  title: string;
 }
 
 export class GalleryState {
-  title: string = "Gallery";
-  count: int = 0;
-  expanded: boolean = false;
-  items: Item[] = [];
+  title: string;
+  count: number;
+  expanded: boolean;
+  items: Item[] ;
 }
 
 export function initialState(): GalleryState {
@@ -22,7 +22,7 @@ export function initialState(): GalleryState {
 }
 
 export class SetTitle {
-  value: string = "";
+  value: string;
 }
 
 export class ToggleDetails {}
@@ -30,7 +30,7 @@ export class ToggleDetails {}
 export class IncrementRequested {}
 
 export class IncrementCompleted {
-  value: int = 0;
+  value: number;
 }
 
 // @ui-update

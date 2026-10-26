@@ -53,7 +53,7 @@ These rules apply to all Deal UI applications and framework work in this workspa
 
 - `./docs/deal-ui-framework-design.md` is the only authorative document for Deal UI framework. No change should violate it or create duplicate functionality.
   - In particular, all specified `@ui-*` annotations must be reused as the main framework mechanism.
-- `https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.3.md` is the only authorative document for the core Deal language.
+- `https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.4.md` is the only authorative document for the core Deal language.
 
 ## Visual effects and platform events
 
@@ -66,7 +66,7 @@ These rules apply to all Deal UI applications and framework work in this workspa
 ## Repetition and generated content
 
 - Use the existing `ForEach(source, item: Type, key: item.id)` construct. Do not add a competing `For` construct.
-- Preserve its deliberate restrictions: the source is a path to an exact `T[]`, the item type is explicit, and the item-rooted key is a unique `int` or `string`.
+- Preserve its deliberate restrictions: the source is a path to an exact `T[]`, the item type is explicit, and the item-rooted key is a unique `number` or `string`.
 - Perform filtering, sorting, visibility selection, procedural level generation, and other collection transformations in Deal. The `.dealui` view renders the prepared state.
 - Keep view declarations pure and declarative. Do not add mutation, arbitrary statements, renderer object access, or general-purpose imperative scripting to `.dealui`; avoid evolving it into QML.
 - Before expanding `ForEach`, document the concrete missing use case and test the current keyed reconciliation behavior and performance.
@@ -101,7 +101,7 @@ Keep mounted-root drain/effect coordination in `runtime-js/session.js` and obser
 
 ## Shared DEAL presentation primitives
 
-Keep pure generic formatting/bounds helpers in `ui/values.deal`; compiler staging and session hosts expose the same checked module as `ui/values`. Helpers must not infer timezone, suitability, prices, domain policy or provider state. Do not add a task-template registry or an app-specific runtime helper. Exercise signed integer edges and invalid clock ranges on both actual JVM and JS execution.
+Keep pure generic formatting/bounds helpers in `ui/values.deal`; compiler staging and session hosts expose the same checked module as `ui/values`. Helpers must not infer timezone, suitability, prices, domain policy or provider state. Do not add a task-template registry or an app-specific runtime helper. Use explicit integral validation and floor/ceil where formatting requires whole units; do not rely on removed integer division or remainder. Exercise signed whole-number edges, fractional rejection and invalid clock ranges on both actual JVM and JS execution. Preserve fractional `number` keys without native integer conversion. Generated DEAL constructs all required fields; declarative pack defaults remain distinct.
 
 ## JVM compiler integration
 

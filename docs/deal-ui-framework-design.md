@@ -6,7 +6,7 @@ Core DEAL applies.
 
 ```antlr
 DirectiveName ::=
-    'deal-version' | 'jsonable' | 'extern-c' | 'c-struct' | 'c-pointer'
+    'jsonable'
   | 'ui-root' | 'ui-update' | 'ui-effect'
 
 DealuiProgram ::= ImportDeclaration* ViewDeclaration+
@@ -39,7 +39,7 @@ UiLogicalAnd ::= UiEquality ('&&' UiEquality)*
 UiEquality ::= UiRelational (('===' | '!==') UiRelational)?
 UiRelational ::= UiAdditive (('<' | '<=' | '>' | '>=') UiAdditive)?
 UiAdditive ::= UiMultiplicative (('+' | '-') UiMultiplicative)*
-UiMultiplicative ::= UiUnary (('*' | '/' | '%') UiUnary)*
+UiMultiplicative ::= UiUnary (('*' | '/') UiUnary)*
 UiUnary ::= ('!' | '-') UiUnary | UiPrimary
 
 UiPrimary ::=
@@ -51,7 +51,6 @@ UiPrimary ::=
 UiLiteral ::=
     NullLiteral
   | BooleanLiteral
-  | IntLiteral
   | NumberLiteral
   | StringLiteral
 
@@ -85,7 +84,7 @@ UiPackClassField ::= Identifier '?'? ':' UiPackType ('=' UiPackDefault)? ';'?
 UiPackType ::= Type | 'Action'
 UiPackDefault ::=
     UiLiteral
-  | '-' (IntLiteral | NumberLiteral)
+  | '-' NumberLiteral
   | QualifiedName
   | '[' UiPackDefaultList? ']'
   | '{' UiPackDefaultFields? '}'
@@ -119,7 +118,7 @@ Quoted terminals are contextual.
 - Imports lead. One exported `@ui-root` selects state. Named calls resolve exactly.
 - Views are pure. Paths start at parameters, items, tokens, actions, or payloads; nullable traversal fails.
 - Event `ActionLiteral` binds declared `payload`.
-- Nominal actions are checked statically and dynamically. `When` takes `boolean`; `ForEach` takes `T[]` and a unique `int|string` key.
+- Nominal actions are checked statically and dynamically. `When` takes `boolean`; `ForEach` takes `T[]` and a unique `number|string` key.
 - `View` is only a view/component result; `Action` is only a forwarded view parameter or event prop. Children follow contracts. A typed child contract accepts that component through direct calls, `When`, `ForEach`, and composed views, and rejects every other child root.
 - `UiPackDefault` `QualifiedName` resolves to token.
 - `.dealui` has no array literals, indexing, assignment, or arbitrary function calls. Dynamic collection rendering uses `ForEach`; application DEAL prepares transformed or selected data.
@@ -160,27 +159,27 @@ Handlers are `sync (S,A)->S` and `async (S,A)->B`. Every reachable action has on
 import * as api from "platform/counter";
 
 export class Item {
-  id: int = 0;
-  title: string = "";
+  id: number ;
+  title: string ;
 }
 
 export class ItemSelected {
-  id: int = 0;
+  id: number ;
 }
 
 export class CounterState {
-  count: int = 0;
-  loading: boolean = false;
-  message: string = "";
-  items: Item[] = [];
+  count: number ;
+  loading: boolean ;
+  message: string ;
+  items: Item[] ;
 }
 
 export class IncrementRequested {}
 
 export class IncrementCompleted {
-  ok: boolean = false;
-  value: int = 0;
-  message: string = "";
+  ok: boolean ;
+  value: number ;
+  message: string ;
 }
 
 // @ui-update
@@ -210,7 +209,7 @@ export async function requestIncrement(
   action: IncrementRequested
 ): IncrementCompleted {
   try {
-    let value: int = await api.increment(state.count);
+    let value: number = await api.increment(state.count);
     return { ok: true, value: value, message: "" };
   } catch (e) {
     return { ok: false, value: state.count, message: e.message };
@@ -235,7 +234,9 @@ Updates return complete candidates without mutation. The state and action parame
 
 ## Components
 
-```deal
+Pack class defaults below are declarative `.dealui-pack` metadata, not DEAL class field initializers. DEAL v1.4 records require explicit construction fields; all numeric values use `number` and division is IEEE arithmetic.
+
+```dealui-pack
 export class Space {}
 export class TextStyle {}
 
@@ -245,7 +246,7 @@ export class TextProps {
 }
 
 export class IntTextProps {
-  value: int = 0;
+  value: number = 0;
   style?: TextStyle;
 }
 
