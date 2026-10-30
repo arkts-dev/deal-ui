@@ -62,9 +62,9 @@ final class UiDealGenerator {
             UiModel.Handler handler = program.effects().get(name);
             boolean async = program.deal().functions().get(handler.name()).async();
             out.append("export ").append(async ? "async " : "").append("function bridgeEffect").append(entry.getValue())
-                .append("(state: app.").append(program.rootStateType()).append(", action: UiAction): UiAction { let value: app.")
-                .append(name).append(" | null = action.nominal").append(actionIds.get(name))
-                .append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
+                .append("(state: app.").append(program.rootStateType()).append(", action: UiAction): ").append(async ? "Promise<UiAction>" : "UiAction").append(" { let value: app.")
+                .append(name).append(" | undefined = action.nominal").append(actionIds.get(name))
+                .append("; if (value === undefined) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
                 .append(handler.returnType()).append(" = ").append(async ? "await " : "").append("app.")
                 .append(handler.name()).append("(state, value); return { slot: -1, nominal").append(actionIds.get(handler.returnType()))
                 .append(": result }; } }\n");
@@ -74,8 +74,8 @@ final class UiDealGenerator {
             if (handler == null) continue;
             out.append("export function bridgeEffectFailure").append(entry.getValue())
                 .append("(state: app.").append(program.rootStateType()).append(", action: UiAction, message: string): UiAction { let value: app.")
-                .append(entry.getKey()).append(" | null = action.nominal").append(actionIds.get(entry.getKey()))
-                .append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
+                .append(entry.getKey()).append(" | undefined = action.nominal").append(actionIds.get(entry.getKey()))
+                .append("; if (value === undefined) { throw { code: \"UI3002\", message: \"Missing action\" }; } else { let result: app.")
                 .append(handler.returnType()).append(" = app.").append(handler.name())
                 .append("(state, value, message); return { slot: -1, nominal").append(actionIds.get(handler.returnType()))
                 .append(": result }; } }\n");
@@ -196,7 +196,7 @@ final class UiDealGenerator {
                 out.append(pad).append("}\n");
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
-                out.append(pad).append("for (let ").append(each.item().name()).append(": ").append(qualifiedType(each.item().type(), app)).append(" of app.uiItems").append(each.span().line()).append("(").append(each.source().parts().get(0)).append(")) {\n");
+                out.append(pad).append("for (let ").append(each.item().name()).append(" of app.uiItems").append(each.span().line()).append("(").append(each.source().parts().get(0)).append(")) {\n");
                 UiModel.TypeRef keyType = fieldType(each.item().type(), each.key());
                 String keyExpr = simple(keyType.name()).equals("number") ? "core.numberKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
@@ -222,12 +222,12 @@ final class UiDealGenerator {
             UiModel.Action action = entry.getValue().action();
             int id = actionIds.get(simple(action.name()));
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
-            out.append("export function action_").append(entry.getKey()).append("(bindings: table");
+            out.append("export function action_").append(entry.getKey()).append("(bindings: Record<string, unknown>");
             if (payloadType != null) out.append(", payload: ").append(dealType(payloadType));
             out.append("): UiAction {\n");
             for (var capture : entry.getValue().captures().entrySet()) {
                 out.append("  let ").append(capture.getKey()).append(": ").append(qualifiedType(capture.getValue(), moduleName(program.dealSource())))
-                    .append(" = bindings.").append(capture.getKey()).append(";\n");
+                    .append(" = bindings.").append(capture.getKey()).append(" as ").append(qualifiedType(capture.getValue(), moduleName(program.dealSource()))).append(";\n");
             }
             out.append("  return { slot: ").append(entry.getKey()).append(", nominal").append(id).append(": {");
             UiModel.DealClass declaration = program.deal().classes().get(simple(action.name()));
@@ -247,7 +247,7 @@ final class UiDealGenerator {
     private void generateRouting(StringBuilder out, String app) {
         out            .append("export function initialStore(): UiStore { return {lifecycle: {disposed: false, draining: false, revision: 0}, queue: []}; }\n")
             .append("export function initial(state: app.").append(program.rootStateType()).append(", current: UiStore): Transition { let tree: core.ViewNode = view_").append(program.title()).append("(\"").append(program.title()).append("\", state); return { tree: tree, plan: reconcile.plan(null, tree), store: current, effect: effects.none() }; }\n")
-            .append("export function enqueue(current: UiStore, action: UiAction): EnqueueResult { let decision: store.QueueDecision = store.enqueueDecision(current.lifecycle); if (!decision.accepted) { return { store: current, accepted: false, startDrain: false }; } let queue: UiAction[] = []; for (let queued: UiAction of current.queue) { queue[queue.length] = queued; } queue[queue.length] = action; return { store: { lifecycle: store.beginDrain(current.lifecycle), queue: queue }, accepted: true, startDrain: decision.startDrain }; }\n")
+            .append("export function enqueue(current: UiStore, action: UiAction): EnqueueResult { let decision: store.QueueDecision = store.enqueueDecision(current.lifecycle); if (!decision.accepted) { return { store: current, accepted: false, startDrain: false }; } let queue: UiAction[] = []; for (let queued of current.queue) { queue[queue.length] = queued; } queue[queue.length] = action; return { store: { lifecycle: store.beginDrain(current.lifecycle), queue: queue }, accepted: true, startDrain: decision.startDrain }; }\n")
             .append("export function dequeue(current: UiStore): DequeueResult { if (current.queue.length === 0) { return { store: current, action: {slot: -1}, present: false }; } let action: UiAction = current.queue[0]; let queue: UiAction[] = []; let i: number = 1; while (i < current.queue.length) { queue[queue.length] = current.queue[i]; i = i + 1; } return { store: { lifecycle: current.lifecycle, queue: queue }, action: action, present: true }; }\n")
             .append("export function complete(current: UiStore, action: UiAction): EnqueueResult { let descriptor: effects.CompletionDescriptor = effects.completion(current.lifecycle.disposed, action.slot); if (!descriptor.accepted) { return { store: current, accepted: false, startDrain: false }; } return enqueue(current, action); }\n")
             .append("export function finish(current: UiStore): UiStore { return { lifecycle: store.finish(current.lifecycle), queue: current.queue }; }\n")
@@ -257,18 +257,18 @@ final class UiDealGenerator {
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
             int effect = effectIds.getOrDefault(entry.getKey(), -1);
             int completion = effect < 0 ? -1 : actionIds.get(program.effects().get(entry.getKey()).returnType());
-            out.append("  let nominal").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (nominal").append(entry.getValue()).append(" !== null) { return actions.route(").append(entry.getValue()).append(", ").append(entry.getValue()).append(", ").append(effect).append(", ").append(completion).append("); }\n");
+            out.append("  let nominal").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | undefined = action.nominal").append(entry.getValue()).append("; if (nominal").append(entry.getValue()).append(" !== undefined) { return actions.route(").append(entry.getValue()).append(", ").append(entry.getValue()).append(", ").append(effect).append(", ").append(completion).append("); }\n");
         }
         out.append("  return actions.noRoute();\n}\n\n")
             .append("export function validateAction(action: UiAction): actions.Route { let matches: number = 0;\n");
-        for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  let valid").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (valid").append(entry.getValue()).append(" !== null) { matches = matches + 1; }\n");
+        for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  let valid").append(entry.getValue()).append(": app.").append(entry.getKey()).append(" | undefined = action.nominal").append(entry.getValue()).append("; if (valid").append(entry.getValue()).append(" !== undefined) { matches = matches + 1; }\n");
         out.append("  let routeValue: actions.Route = route(action); if (matches !== 1 || routeValue.actionId < 0) { throw { code: \"UI3004\", message: \"Malformed nominal action\" }; } return routeValue;\n}\n\n")
             .append("export function nextState(state: app.").append(program.rootStateType()).append(", action: UiAction): app.").append(program.rootStateType()).append(" {\n")
             .append("  let routeValue: actions.Route = validateAction(action);\n  let candidate: app.").append(program.rootStateType()).append(" = state;\n");
         boolean first = true;
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) {
             UiModel.Handler handler = program.updates().get(entry.getKey());
-            out.append(first ? "  if" : "  else if").append(" (routeValue.updateId === ").append(entry.getValue()).append(") { let value: app.").append(entry.getKey()).append(" | null = action.nominal").append(entry.getValue()).append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { candidate = app.").append(handler.name()).append("(state, value); } }\n");
+            out.append(first ? "  if" : "  else if").append(" (routeValue.updateId === ").append(entry.getValue()).append(") { let value: app.").append(entry.getKey()).append(" | undefined = action.nominal").append(entry.getValue()).append("; if (value === undefined) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { candidate = app.").append(handler.name()).append("(state, value); } }\n");
             first = false;
         }
         if (first) out.append("  throw { code: \"UI3001\", message: \"Unknown closed action\" };\n");
@@ -287,7 +287,7 @@ final class UiDealGenerator {
         first = true;
         for (Map.Entry<String, UiModel.Handler> entry : program.effectPolicies().entrySet()) {
             int id = actionIds.get(entry.getKey());
-            out.append(first ? "  if" : "  else if").append(" (routeValue.actionId === ").append(id).append(") { let value: app.").append(entry.getKey()).append(" | null = action.nominal").append(id).append("; if (value === null) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { let command: app.EffectCommand = app.").append(entry.getValue().name()).append("(state, value); return { operation: command.operation, key: command.key, delayMillis: command.delayMillis, cancellationMode: command.cancellationMode }; } }\n");
+            out.append(first ? "  if" : "  else if").append(" (routeValue.actionId === ").append(id).append(") { let value: app.").append(entry.getKey()).append(" | undefined = action.nominal").append(id).append("; if (value === undefined) { throw { code: \"UI3002\", message: \"Missing nominal action\" }; } else { let command: app.EffectCommand = app.").append(entry.getValue().name()).append("(state, value); return { operation: command.operation, key: command.key, delayMillis: command.delayMillis, cancellationMode: command.cancellationMode }; } }\n");
             first = false;
         }
         out.append("  return effects.startCommand(\"\", 0, \"none\");\n}\n\n");
@@ -354,7 +354,11 @@ final class UiDealGenerator {
             return String.valueOf(literal.value());
         }
         if (expression instanceof UiModel.PathExpr path) return String.join(".", path.parts());
-        if (expression instanceof UiModel.Has has) return "has(" + expr(has.path(), app) + ")";
+        if (expression instanceof UiModel.Has has) {
+            List<String> parts = has.path().parts();
+            return "Object.hasOwn(" + String.join(".", parts.subList(0, parts.size() - 1))
+                + ", " + quote(parts.get(parts.size() - 1)) + ")";
+        }
         if (expression instanceof UiModel.Unary unary) return unary.operator() + "(" + expr(unary.operand(), app) + ")";
         if (expression instanceof UiModel.Binary binary) return "(" + expr(binary.left(), app) + " " + binary.operator() + " " + expr(binary.right(), app) + ")";
         throw new IllegalStateException("Action expression is not a value expression");

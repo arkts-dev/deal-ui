@@ -49,7 +49,7 @@ import java.util.Set;
 final class UiBorrowedValueChecker {
     private record Shape(String name, int dimensions, boolean unknown) {
         boolean reference(Map<String, ClassDeclaration> classes) {
-            return unknown || dimensions > 0 || classes.containsKey(simple(name)) || name.equals("table") || name.equals("bytes") || name.equals("function");
+            return unknown || dimensions > 0 || classes.containsKey(simple(name)) || name.equals("Record<string, unknown>") || name.equals("unknown") || name.equals("function");
         }
     }
 
@@ -195,7 +195,10 @@ final class UiBorrowedValueChecker {
             } else if (statement instanceof ForOfStatement loop) {
                 expression(loop.iterable());
                 Analyzer body = new Analyzer(this);
-                Shape itemShape = shape(loop.varType());
+                Shape iterableShape = expressionShape(loop.iterable());
+                Shape itemShape = iterableShape.dimensions() > 0
+                    ? new Shape(iterableShape.name(), iterableShape.dimensions() - 1, iterableShape.unknown())
+                    : new Shape("string", 0, false);
                 body.shapes.put(loop.varName(), itemShape);
                 body.origins.put(loop.varName(), origin(loop.iterable()).element(itemShape.reference(classes)));
                 body.loopFixedPoint(iteration -> iteration.block(loop.body()));
@@ -227,6 +230,8 @@ final class UiBorrowedValueChecker {
                 expression(binary.right());
             } else if (expression instanceof UnaryExpr unary) {
                 expression(unary.expr());
+            } else if (expression instanceof deal.ast.AssertionExpr assertion) {
+                expression(assertion.value());
             } else if (expression instanceof CallExpr call) {
                 expression(call.callee());
                 for (ExpressionNode argument : call.args()) expression(argument);
@@ -318,6 +323,7 @@ final class UiBorrowedValueChecker {
                 for (var property : object.properties()) result = new Origin(Set.of(), result.merge(origin(property.value())).all());
                 return result;
             }
+            if (expression instanceof deal.ast.AssertionExpr assertion) return origin(assertion.value());
             if (expression instanceof AssignmentExpr assignment) return origin(assignment.value());
             if (expression instanceof BinaryExpr binary) return origin(binary.left()).merge(origin(binary.right()));
             if (expression instanceof UnaryExpr unary) return origin(unary.expr());
@@ -346,6 +352,7 @@ final class UiBorrowedValueChecker {
         }
 
         private Shape expressionShape(ExpressionNode expression) {
+            if (expression instanceof deal.ast.AssertionExpr assertion) return shape(assertion.target());
             if (expression instanceof IdentifierExpr identifier) return shapes.getOrDefault(identifier.name(), unknown());
             if (expression instanceof MemberAccessExpr member) return memberShape(expressionShape(member.object()), member.field());
             if (expression instanceof IndexExpr index) {

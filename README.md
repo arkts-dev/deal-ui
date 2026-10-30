@@ -1,16 +1,14 @@
-# DEAL UI Framework
+# DEAL UI
 
-This repository implements `docs/deal-ui-framework-design.md` over the current DEAL 1.4 compiler at `../deal`.
+Implements [framework design](docs/deal-ui-framework-design.md) on DEAL v1.5 at `../deal`: a TypeScript syntax subset with checked semantics, not unrestricted TypeScript.
 
-`.dealui` views and closed action dispatch are generated as ordinary DEAL and compiled with `ui/core.deal`, `ui/store.deal`, `ui/reconcile.deal`, `ui/actions.deal`, `ui/effects.deal`, and application DEAL. A generated Java bridge invokes the compiler's published module functions and converts current JVM carriers to portable nodes. Generated applications load their own JVM runtime registry; do not share that registry between independent compiled applications. Java owns parsing, compiler invocation, opaque effect threads, Swing/EDT patch application, and native event ingress; portable framework policy remains DEAL.
+.dealui views and closed dispatch lower to ordinary DEAL with ui/core, store, reconcile, actions and effects. Published compiler exports/runtime carriers feed typed JVM or portable bridges. Each independent app owns its JVM registry. Java supplies parsing, compilation, effect threads, native ingress and Swing/EDT patches; portable policy stays in DEAL.
 
-`ui/values.deal` supplies pure `decimal`, `clockMinutes` (valid local-minute range only), and `inBounds` helpers through the checked `ui/values` import. They reduce generated formatting boilerplate without owning timezone or domain decisions. Ordinary typed fresh-outer State helpers can preserve scalar fields while borrowed nested mutations remain forbidden.
+ui/values provides checked decimal, clockMinutes and inBounds without timezone/domain policy. Borrowed handler state/action and descendants are immutable, including assertion aliases; fresh locals and read-only helpers remain valid. Packs constrain props, children and events.
 
-The JavaScript session target uses `runtime-js/session.js` for mounted-root drain/effect coordination and compiler-issued exports backed by `ui/session.deal` for in-flight accounting, fault/version behavior and replacement readiness. Hosts supply module loading and an effect scheduler with invoke/completion/failure/physical-exit callbacks. Completion admission and drain reentrancy reuse the generated store/queue decisions; no Android dependency or application transitions live in this runtime.
+runtime-js/session.js coordinates mounted-root drain/effects using compiler-issued ui/session exports for in-flight accounting, faults, versions and replacement readiness. Hosts provide loading and scheduling, not application transitions. Settled checkpoints exclude pending work.
 
-The modern museum gallery in `examples/museum/` demonstrates generated view composition, payload events, conditions, keyed lists, committed updates, and effects. The functional apps in `examples/checkout/`, `examples/search-mail/`, `examples/kanban/`, and `examples/dashboard/` run entirely against local in-memory state and exercise shared DEAL-owned navigation/forms, asynchronous request policy, virtualization/optimism, and overlay/lifecycle policy. Pack capabilities select renderer bindings and pack token values provide real spacing.
-
-```bash
+```sh
 ./scripts/lint.sh
 ./scripts/test.sh
 ./scripts/build.sh
@@ -20,18 +18,10 @@ The modern museum gallery in `examples/museum/` demonstrates generated view comp
 ./bin/deal-ui build examples/museum/gallery.dealui --renderer portable
 ```
 
-`DEAL_FS_ROOT` may select another compiler checkout. Generated DEAL, JVM Java, typed bridge Java, UI IR, classes, and visible evidence are written under `build/` or private command output directories.
+Set DEAL_FS_ROOT to another matched compiler checkout. Outputs/evidence stay under build/ or private command directories. Examples cover gallery composition, payloads, keyed lists, forms, navigation, async policies, optimism, virtualization and overlays using local state.
 
-`--renderer portable` emits a typed `UiPortableBridge` with the same DEAL-owned store, reconciliation, action slots, updates, effects, and state snapshots, but without Swing/AWT bindings. Native renderers use `componentCapabilities()` to bind checked `.dealui-pack` capabilities to their platform components. The portable target does not permit `run`; a platform host owns lifecycle and rendering.
+Portable UiPortableBridge preserves store/reconciliation/action/effect/state semantics without Swing/AWT; checked metadata supplies root/action/component/pack identities and capabilities. Native hosts own lifecycle/rendering; portable targets cannot run standalone.
 
-Deal UI handlers receive borrowed-immutable state and action values. The checker rejects direct and aliased mutation or escape to mutating helpers while leaving core DEAL semantics unchanged. Versioned component packs may constrain children to a component type, and generated portable bridges expose checked action/component/pack metadata for native hosts.
+host/storage exposes async load/save/remove through ordinary @ui-effect ordering. Android uses private preferences; DEAL owns serialization and save/restore decisions, never native reflection.
 
-Portable applications may import the framework-owned `host/storage` declaration
-from `ui/host/storage.d.deal`. It exposes typed asynchronous `load`, `save`, and
-`remove` functions. Calls belong in ordinary `@ui-effect` bodies and therefore
-retain the existing commit/effect/completion ordering and failure mapping. The
-Android runtime supplies the reusable `HostStorage` implementation over private
-`SharedPreferences`; application state serialization remains application-owned
-Deal code (typically `@jsonable`), never Java reflection over game fields.
-
-`@ui-effect-policy` may be used without `@ui-effect` only for policy-only commands that never start work, such as explicit keyed cancellation; any policy that can return `operation: "start"` requires a matching effect body. `cancellationMode: "none"` allows all same-key invocations to overlap and admits every completion in physical completion order. `"replace"` suppresses prior completions without treating running work as exited; `"interrupt"` additionally requests interruption. `awaitIdle()` waits for queued actions, delayed effects, and physically running effect code across cancellation and failure. `close()` rejects new work, interrupts outstanding effects, disposes resources once, and preserves idle accounting until effect code exits.
+@ui-effect-policy without an effect may cancel but never start work. none admits overlapping completions; replace suppresses earlier completions while retaining physical-exit accounting; interrupt also requests interruption. awaitIdle waits for queued, delayed and physically running work. close rejects new work, interrupts, disposes once and preserves accounting until exit.

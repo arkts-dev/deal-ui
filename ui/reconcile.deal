@@ -50,9 +50,9 @@ function append(patches: Patch[], kind: string, node: core.ViewNode, parent: cor
 
 function validateUnique(nodes: core.ViewNode[]): null {
   let leftIndex: number = 0;
-  for (let left: core.ViewNode of nodes) {
+  for (let left of nodes) {
     let rightIndex: number = 0;
-    for (let right: core.ViewNode of nodes) {
+    for (let right of nodes) {
       if (leftIndex < rightIndex && identityEquals(left, right)) {
         throw { code: "UI3003", message: "Duplicate sibling identity" };
       }
@@ -66,9 +66,9 @@ function validateUnique(nodes: core.ViewNode[]): null {
 
 function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
   validateUnique(next);
-  for (let old: core.ViewNode of previous) {
+  for (let old of previous) {
     let retained: boolean = false;
-    for (let node: core.ViewNode of next) {
+    for (let node of next) {
       if (identityEquals(node, old) && node.component === old.component) {
         retained = true;
       }
@@ -78,9 +78,9 @@ function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], par
     }
   }
   let index: number = 0;
-  for (let node: core.ViewNode of next) {
+  for (let node of next) {
     let retained: boolean = false;
-    for (let old: core.ViewNode of previous) {
+    for (let old of previous) {
       if (identityEquals(old, node) && old.component === node.component) {
         retained = true;
         append(patches, "update", node, parent, false, index);

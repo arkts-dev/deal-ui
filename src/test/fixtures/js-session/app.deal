@@ -7,7 +7,7 @@ export function initialState(): State { return {value: 0}; }
 // @ui-update
 export function start(state: State, action: Start): State { return state; }
 // @ui-effect
-export async function run(state: State, action: Start): Done {
+export async function run(state: State, action: Start): Promise<Done> {
     let value: number = await work.run(action.value);
     return { value: value };
 }

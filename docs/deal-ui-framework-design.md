@@ -55,7 +55,7 @@ UiLiteral ::=
   | StringLiteral
 
 UiPath ::= Identifier ('.' Identifier)*
-HasExpr ::= 'has' '(' UiPath ')'
+HasExpr ::= 'has' '(' UiPath ')' // view presence operator; lowers to Object.hasOwn(receiver, "field")
 
 ActionLiteral ::= 'action' QualifiedName '{' ActionFieldList? '}'
 ActionFieldList ::= ActionField (',' ActionField)* ','?
@@ -207,12 +207,12 @@ export function beginIncrement(
 export async function requestIncrement(
   state: CounterState,
   action: IncrementRequested
-): IncrementCompleted {
+): Promise<IncrementCompleted> {
   try {
     let value: number = await api.increment(state.count);
     return { ok: true, value: value, message: "" };
   } catch (e) {
-    return { ok: false, value: state.count, message: e.message };
+    return { ok: false, value: state.count, message: (e as Error).message };
   }
 }
 
@@ -234,7 +234,7 @@ Updates return complete candidates without mutation. The state and action parame
 
 ## Components
 
-Pack class defaults below are declarative `.dealui-pack` metadata, not DEAL class field initializers. DEAL v1.4 records require explicit construction fields; all numeric values use `number` and division is IEEE arithmetic.
+Pack class defaults below are declarative `.dealui-pack` metadata, not DEAL class field initializers. DEAL v1.5 classes require explicit construction fields; all numeric values use `number` and division is IEEE arithmetic.
 
 ```dealui-pack
 export class Space {}

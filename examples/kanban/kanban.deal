@@ -27,13 +27,13 @@ export class EffectCommand { operation: string; key: string; delayMillis: number
 
 function copyCards(cards: Card[]): Card[] {
   let result: Card[] = [];
-  for (let card: Card of cards) { result[result.length] = { id: card.id, title: card.title, column: card.column, focusId: card.focusId, todoFocusId: card.todoFocusId, doingFocusId: card.doingFocusId, doneFocusId: card.doneFocusId, archiveFocusId: card.archiveFocusId }; }
+  for (let card of cards) { result[result.length] = { id: card.id, title: card.title, column: card.column, focusId: card.focusId, todoFocusId: card.todoFocusId, doingFocusId: card.doingFocusId, doneFocusId: card.doneFocusId, archiveFocusId: card.archiveFocusId }; }
   return result;
 }
 
 function moveCard(cards: Card[], id: number, destination: string): Card[] {
   let result: Card[] = [];
-  for (let card: Card of cards) {
+  for (let card of cards) {
     if (card.id === id) { result[result.length] = { id: card.id, title: card.title, column: destination, focusId: card.focusId, todoFocusId: card.todoFocusId, doingFocusId: card.doingFocusId, doneFocusId: card.doneFocusId, archiveFocusId: card.archiveFocusId }; }
     else { result[result.length] = { id: card.id, title: card.title, column: card.column, focusId: card.focusId, todoFocusId: card.todoFocusId, doingFocusId: card.doingFocusId, doneFocusId: card.doneFocusId, archiveFocusId: card.archiveFocusId }; }
   }
@@ -41,7 +41,7 @@ function moveCard(cards: Card[], id: number, destination: string): Card[] {
 }
 
 function hasCard(cards: Card[], id: number): boolean {
-  for (let card: Card of cards) { if (card.id === id) { return true; } }
+  for (let card of cards) { if (card.id === id) { return true; } }
   return false;
 }
 
@@ -71,7 +71,7 @@ function finishOptimistic(current: OptimisticPolicy, revision: number): Optimist
 function visibleWindow(cards: Card[], window: WindowPolicy): Card[] {
   let result: Card[] = [];
   let index: number = 0;
-  for (let card: Card of cards) {
+  for (let card of cards) {
     if (index >= window.offset && index < window.offset + window.limit) { result[result.length] = card; }
     index = index + 1;
   }
@@ -79,12 +79,12 @@ function visibleWindow(cards: Card[], window: WindowPolicy): Card[] {
 }
 
 function cardFocus(cards: Card[], id: number): string {
-  for (let card: Card of cards) { if (card.id === id) { return card.focusId; } }
+  for (let card of cards) { if (card.id === id) { return card.focusId; } }
   return "";
 }
 
 function destinationFocus(cards: Card[], id: number, destination: string): string {
-  for (let card: Card of cards) {
+  for (let card of cards) {
     if (card.id === id) {
       if (destination === "todo") { return card.todoFocusId; }
       if (destination === "doing") { return card.doingFocusId; }
@@ -97,7 +97,7 @@ function destinationFocus(cards: Card[], id: number, destination: string): strin
 
 function windowFocus(cards: Card[], window: WindowPolicy): string {
   let visible: Card[] = visibleWindow(cards, window);
-  for (let card: Card of visible) { return card.focusId; }
+  for (let card of visible) { return card.focusId; }
   return "previous-page";
 }
 
@@ -142,7 +142,7 @@ export function move(state: BoardState, action: Move): BoardState {
 export function movePolicy(state: BoardState, action: Move): EffectCommand { return {operation: "start", key: "kanban-move", delayMillis: 180, cancellationMode: "replace"}; }
 
 // @ui-effect
-export async function validateMove(state: BoardState, action: Move): MoveCompleted {
+export async function validateMove(state: BoardState, action: Move): Promise<MoveCompleted> {
   if (!hasCard(state.priorCards, action.id)) { return { revision: state.pendingRevision, message: "Card no longer exists" ,accepted: false}; }
   if (!destinationValid(action.destination)) { return { revision: state.pendingRevision, message: "Destination 'archive' is not part of this board" ,accepted: false}; }
   return { revision: state.pendingRevision, accepted: true, message: "Move accepted" };

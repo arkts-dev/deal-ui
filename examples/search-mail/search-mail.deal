@@ -72,7 +72,7 @@ function matchesQuery(record: MailRecord, query: string): boolean {
 
 function searchMailbox(mailbox: MailRecord[], query: string): MailRecord[] {
   let result: MailRecord[] = [];
-  for (let record: MailRecord of mailbox) {
+  for (let record of mailbox) {
     if (matchesQuery(record, query)) { result[result.length] = record; }
   }
   return result;
@@ -100,7 +100,7 @@ export function searchPolicy(state: SearchState, action: Search): EffectCommand 
 }
 
 // @ui-effect
-export async function debounceSearch(state: SearchState, action: Search): DebounceCompleted {
+export async function debounceSearch(state: SearchState, action: Search): Promise<DebounceCompleted> {
   return { generation: state.activeGeneration, query: state.query };
 }
 
@@ -114,7 +114,7 @@ export function startSearch(state: SearchState, action: DebounceCompleted): Sear
 export function loadPolicy(state: SearchState, action: DebounceCompleted): EffectCommand { return { operation: "start", delayMillis: 150 ,key: "mail-search", cancellationMode: "replace"}; }
 
 // @ui-effect
-export async function search(state: SearchState, action: DebounceCompleted): SearchCompleted {
+export async function search(state: SearchState, action: DebounceCompleted): Promise<SearchCompleted> {
   if (action.query === "fail") { throw { code: "SEARCH_LOCAL_FAILURE", message: "Local search failed for 'fail'" }; }
   let matches: MailRecord[] = searchMailbox(state.mailbox, action.query);
   return { generation: action.generation, matches: matches, value: resultLabel(matches, action.query) };
@@ -150,7 +150,7 @@ export function retrySearch(state: SearchState, action: Retry): SearchState { re
 export function retryPolicy(state: SearchState, action: Retry): EffectCommand { return { operation: "start" ,key: "mail-search", delayMillis: 0, cancellationMode: "replace"}; }
 
 // @ui-effect
-export async function retry(state: SearchState, action: Retry): SearchCompleted {
+export async function retry(state: SearchState, action: Retry): Promise<SearchCompleted> {
   let query: string = normalizeCase(state.query);
   let matches: MailRecord[] = searchMailbox(state.mailbox, query);
   return { generation: state.activeGeneration, matches: matches, value: resultLabel(matches, query) };

@@ -59,7 +59,7 @@ export function beginIncrement(state: GalleryState, action: IncrementRequested):
 }
 
 // @ui-effect
-export async function increment(state: GalleryState, action: IncrementRequested): IncrementCompleted {
+export async function increment(state: GalleryState, action: IncrementRequested): Promise<IncrementCompleted> {
   return { value: state.count + 1 };
 }
 

@@ -28,7 +28,7 @@ function emailMessage(value: string): string {
   let localLength: number = 0;
   let domainLength: number = 0;
   let suffixLength: number = 0;
-  for (let character: string of value) {
+  for (let character of value) {
     if (character === " ") { return "Email cannot contain spaces"; }
     if (character === "@") {
       atCount = atCount + 1;
