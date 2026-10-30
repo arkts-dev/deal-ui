@@ -18,6 +18,7 @@ function slot(session,text){return snapshot(session).tree.children.find(n=>n.pro
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
  const session=mount();
+ assert.equal(JSON.parse(session.state()).value,0,'Callback adapters retain evaluated functions, run factories once and preserve live closure bindings');
  session.dispatch(slot(session,'Start 1'));session.dispatch(slot(session,'Start 2'));
  assert.throws(()=>session.state(),/Wait for current work/);assert.equal(session.checkpoint(),null);
  const req=JSON.parse(dealCapabilities.take());assert.equal(req.length,2);
@@ -55,5 +56,5 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
  syncSession.dispatch(slot(syncSession,'Start 1'));assert.equal(snapshot(syncSession).version,3);assert.equal(snapshot(syncSession).fault,'Error: Synchronous adapter failure');assert.doesNotThrow(()=>syncSession.state());syncSession.dispose();
  assert.throws(()=>entry.bridgeSessionExited.$f(entry.bridgeSessionStatus.$f()),error=>error.code==='UI3005');
  const restored=createDealUiSession(entry,rt,{value:21},()=>{throw Error('Unexpected effect')});assert.equal(JSON.parse(restored.state()).value,21);assert.throws(()=>restored.dispatch(99999),/Invalid or stale/);restored.dispose();
- console.log('Deal UI JS lifecycle: overlap/arrival order, atomic rejection, effect failure/version, disposal/late completion, physical exit and replacement readiness');
+ console.log('Deal UI JS lifecycle: callback value capture, overlap/arrival order, atomic rejection, effect failure/version, disposal/late completion, physical exit and replacement readiness');
 })().catch(error=>{console.error(error);process.exitCode=1});

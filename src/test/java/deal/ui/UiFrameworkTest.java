@@ -85,6 +85,7 @@ public final class UiFrameworkTest {
         typedPayloadContracts(root, outputs, compiler);
         dependencyStaging(root, outputs);
         presentationValues(outputs, compiler);
+        callbackValueCapture(root, outputs, compiler);
         computedPropLowering(outputs, compiler);
         storageHostCompilation(outputs, compiler);
         portableBridge(root, outputs, compiler);
@@ -178,6 +179,21 @@ public final class UiFrameworkTest {
         try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
             UiPortableBridge bridge=(UiPortableBridge)Class.forName(result.bridgeClass(),true,loader).getConstructor().newInstance();
             check(bridge.stateSnapshot(bridge.initialState()).get("text").equals("-2147483648|15:16|||0|INVALID_INTEGER|"),"shared presentation primitives execute independently on JVM");
+        }
+    }
+
+    private static void callbackValueCapture(Path root, Path outputs, UiCompiler compiler) throws Exception {
+        Path fixture = outputs.resolve("callback-values");
+        Files.createDirectories(fixture);
+        Files.copy(root.resolve("src/test/fixtures/js-session/callbacks.deal"), fixture.resolve("callbacks.deal"));
+        Files.writeString(fixture.resolve("app.deal"), "import * as callbacks from \"./callbacks\";\nexport class State { value: number; }\nexport function initialState(): State { return {value: callbacks.verify()}; }\nexport function main(): null { return null; }\n");
+        Files.writeString(fixture.resolve("pack.dealui-pack"), "export class Props { value: number = 0; }\nexport component Number(props: Props): View { capability \"renderer.test.number\"; }\n");
+        Files.writeString(fixture.resolve("app.dealui"), "import * as app from \"./app\";\nimport * as ui from \"./pack.dealui-pack\";\n// @ui-root\nexport view Callbacks(state: app.State): View { ui.Number(value: state.value) }\n");
+        var result = compiler.compile(fixture.resolve("app.dealui"), outputs.resolve("callback-values-output"), UiCompiler.Target.PORTABLE);
+        compiler.build(result, runtimeClasses());
+        try (URLClassLoader loader = new ChildFirstLoader(new java.net.URL[]{result.outputDirectory().resolve("classes").toUri().toURL()}, UiFrameworkTest.class.getClassLoader())) {
+            UiPortableBridge bridge = (UiPortableBridge) Class.forName(result.bridgeClass(), true, loader).getConstructor().newInstance();
+            check(bridge.stateSnapshot(bridge.initialState()).get("value").equals(0.0), "callback adapters retain evaluated values without freezing closure bindings on JVM");
         }
     }
 

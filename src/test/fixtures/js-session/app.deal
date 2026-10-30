@@ -1,9 +1,10 @@
 import * as work from "host/work";
+import * as callbacks from "./callbacks";
 export class State { value: number; }
 export class Start { value: number; }
 export class Done { value: number; }
 export class Bad {}
-export function initialState(): State { return {value: 0}; }
+export function initialState(): State { return {value: callbacks.verify()}; }
 // @ui-update
 export function start(state: State, action: Start): State { return state; }
 // @ui-effect

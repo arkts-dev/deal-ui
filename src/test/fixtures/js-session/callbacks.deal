@@ -1,0 +1,33 @@
+export class Counter { calls: number; }
+function addOne(value: number): number { return value + 1; }
+function addTen(value: number): number { return value + 10; }
+function factory(counter: Counter): (value: number) => number {
+    counter.calls = counter.calls + 1;
+    return addOne;
+}
+export function verify(): number {
+    let source: (value: number) => number = addOne;
+    let retained: (value: number, ignored: string) => number = source;
+    source = addTen;
+    if (retained(2, "ignored") !== 3) {
+        throw { code: "CALLBACK_CAPTURE", message: "Adapter must retain the evaluated function" };
+    }
+    let counter: Counter = { calls: 0 };
+    let made: (value: number, ignored: string) => number = factory(counter);
+    if (counter.calls !== 1) {
+        throw { code: "CALLBACK_FACTORY", message: "Factory must run at adapter creation" };
+    }
+    let first: number = made(3, "ignored");
+    let second: number = made(4, "ignored");
+    if (first !== 4 || second !== 5 || counter.calls !== 1) {
+        throw { code: "CALLBACK_FACTORY", message: "Adapter must not rerun the factory" };
+    }
+    let offset: number = 1;
+    let closure: (value: number) => number = function(value: number): number { return value + offset; };
+    let adapted: (value: number, ignored: string) => number = closure;
+    offset = 10;
+    if (adapted(2, "ignored") !== 12) {
+        throw { code: "CALLBACK_CLOSURE", message: "Retaining a closure must preserve its captured bindings" };
+    }
+    return 0;
+}
