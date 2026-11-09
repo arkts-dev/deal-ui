@@ -32,7 +32,7 @@ Swing capabilities are reference-renderer contracts, not Android permission to i
 
 runtime-js/session.js owns mounted-root drain/effect coordination; ui/session.deal owns observation/accounting and replacement readiness through compiler-issued exports. Hosts provide loading, Promise scheduling, transport and publication—not lifecycle policy. Reuse generated startDrain/store/queue/disposal/completion decisions. Private compiler-issued captures distinguish row instances and reject stale actions; never reconstruct values from labels.
 
-Count physical effect exits even when completion is discarded. Optional checkpoints stay absent until replacement readiness; strict export rejects pending work. Never persist pending effects as resumable drafts. Keep JS runtime independent of Android/packs.
+Count physical effect exits even when completion is discarded. Optional checkpoints stay absent until replacement readiness; strict export rejects pending work. Never persist pending effects as resumable drafts. Keep JS runtime independent of Android/packs. Reconstruct serialized state through declaration-owned runtime plans into fresh checked arrays/classes before unknown ingress; never retag existing invariant arrays.
 
 Use published module exports and runtime carriers, not generated class/static ABI guesses. Each independent JVM app owns runtime/JSON classes and module registry. Split generated view functions at typed component boundaries to respect JVM method limits without changing structural/key identity or authoring guidance.
 

@@ -298,6 +298,8 @@ all decisions about when to save or restore remain in Deal.
 deal-ui build application.dealui --renderer portable
 ```
 
+Mounted JS checkpoints restore against the compiler-issued root descriptor. The DEAL runtime reconstructs fresh declared class/array carriers bottom-up, validates required fields and elements, and preserves optional presence; it never retags an existing invariant array. Hosts transport checkpoints but do not choose their schema or resume pending effects.
+
 The portable bridge does not expose renderer objects to `.dealui`, and native event ingress constructs actions only through generated action slots. Platform renderers may retain presentation state, but application state changes continue to pass through DEAL `@ui-update` handlers.
 
 Compiler hosts may request a non-runnable progressive-preview check that permits temporarily unreachable update handlers. The full DEAL source is still parsed and checked, and reachable actions are reported by `checkedMetadata()`. Runnable/final compilation always restores strict reachability; hosts must not rewrite DEAL source to approximate this mode.

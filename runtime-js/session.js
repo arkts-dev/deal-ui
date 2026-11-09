@@ -7,7 +7,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
     return fn.$f(...args);
   };
   let state = call('bridgeInitialState');
-  if (restoredState !== null) state = rt.checkType(entry.bridgeInitialState.$sig.substring(4), Object.assign(state, restoredState));
+  if (restoredState !== null) state = rt.restoreData(entry.bridgeInitialState.$sig.substring(4), Object.assign({}, state, restoredState));
   let store = call('initialStore');
   let current = call('initial', state, store);
   store = current.store;
