@@ -1,0 +1,22 @@
+export class Box { value: number; optional?: string | undefined; }
+export class State { bag: Record<string,unknown>; }
+export class Node { child?: Node; }
+export function recursive():Node { let n:Node={};n.child=n;return n; }
+export function initial(): State {
+ let nums:number[]=[];let strs:string[]=[];let nested:number[][]=[nums];
+ let box:Box={value:-0};let explicit:Box={value:1,optional:undefined};
+ let bag:Record<string,unknown>={"10":nums,"2":strs,nums:nums,strs:strs,nested:nested,box:box,alias:box,explicit:explicit,nan:0/0,pos:1/0,neg:-1/0,missing:undefined,text:"\ud800"};
+ let parsed:Record<string,unknown>=JSON.parse("{\"array\":[[],[1]]}");
+ let self:unknown[]=[];self.push(self);
+ let absent:(number | null)[]=[];let funcs:((x:number)=>number)[]=[];
+ bag.parsed=parsed;bag.selfArray=self;bag.nullable=absent;bag.functions=funcs;
+ bag.self=bag;return {bag:bag};
+}
+export function verify(state:State):void {
+ let nums=state.bag.nums as number[];let strs=state.bag.strs as string[];
+ let nested=state.bag.nested as number[][];let box=state.bag.box as Box;
+ if(nested[0]!==nums || (state.bag.alias as Box)!==box || (state.bag.self as Record<string,unknown>)!==state.bag){throw {name:"ALIAS",message:"identity"};}
+ nums.push(8);strs.push("x");if(nums[0]!==8 || strs[0]!=="x"){throw {name:"TYPE",message:"descriptor"};}
+ if(Object.hasOwn(box,"optional") || !Object.hasOwn(state.bag.explicit as Box,"optional")){throw {name:"PRESENCE",message:"optional"};}
+}
+export function main():void{return;}

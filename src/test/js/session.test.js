@@ -8,6 +8,7 @@ const factories={};
 function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))factories[path.relative(base,file).split(path.sep).join('/')]=new Function('require','module','exports','process','console',fs.readFileSync(file,'utf8'));}}
 walk(base);
 vm.runInThisContext(fs.readFileSync(path.join(host,'sandbox.js'),'utf8'));
+vm.runInThisContext(fs.readFileSync(path.join(root,'runtime-js/checkpoint.js'),'utf8'));
 vm.runInThisContext(fs.readFileSync(path.join(root,'runtime-js/session.js'),'utf8'));
 vm.runInThisContext(fs.readFileSync(path.join(host,'ui-session.js'),'utf8'));
 configureDealCapabilities([{module:'host/work',functions:[{name:'run',parameters:[{name:'value',type:{kind:'number'}}],result:{kind:'number'}}]}]);
@@ -17,7 +18,8 @@ function snapshot(session){return JSON.parse(session.snapshot());}
 function slot(session,text){return snapshot(session).tree.children.find(n=>n.props.some(p=>p.name==='text'&&p.stringValue===text)).props.find(p=>p.name==='onClick').actionSlot;}
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
- const {entry:checkpointEntry,rt:checkpointRuntime}=dealLoad(factories,entryId);
+ const {entry:checkpointEntry,rt:checkpointRuntime,checkpointSchema}=dealLoad(factories,entryId);
+ const checkpointCodec=createDealUiCheckpoint(checkpointRuntime,checkpointSchema,checkpointEntry.bridgeSchemaDigest.$f());
  const session=mount();
  assert.equal(JSON.parse(session.state()).value,0,'Callback adapters retain evaluated functions, run factories once and preserve live closure bindings');
  session.dispatch(slot(session,'Start 1'));session.dispatch(slot(session,'Start 2'));
@@ -26,7 +28,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
  dealCapabilities.deliver([{id:req[1].id,ok:true,value:2}]);await tick();
  assert.throws(()=>session.state(),/Wait for current work/);
  dealCapabilities.deliver([{id:req[0].id,ok:true,value:1}]);await tick();
- assert.equal(checkpointRuntime.decodeGraph(JSON.parse(session.checkpoint()),checkpointEntry.bridgeSchemaDigest.$f(),checkpointEntry.bridgeInitialState.$sig.substring(4)).value,21,'Settled checkpoint includes effect completions');
+ assert.equal(checkpointCodec.decode(JSON.parse(session.checkpoint()),checkpointEntry.bridgeInitialState.$sig.substring(4)).value,21,'Settled checkpoint includes effect completions');
  assert.equal(JSON.parse(session.state()).value,21,'Completions must commit in arrival order');assert.equal(snapshot(session).version,5);
  const before=snapshot(session);
  session.dispatch(slot(session,'Bad'));const rejected=snapshot(session);
@@ -49,13 +51,13 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
   }
   assert.equal(snapshot(reentrant).version,2,'Effect must start after commit');
   Promise.resolve(invoke()).then(value=>{savedCompletion=value;complete(value);assert.throws(()=>reentrant.state(),/Wait/);readinessBlocked=true;}).catch(fail).finally(exited);
- });
+ },checkpointSchema);
  reentrant.dispatch(slot(reentrant,'Start 1'));const r=JSON.parse(dealCapabilities.take())[0];dealCapabilities.deliver([{id:r.id,ok:true,value:3}]);await tick();assert(readinessBlocked);assert.equal(JSON.parse(reentrant.state()).value,3);
  reentrant.dispatch(slot(reentrant,'Start 1'));assert.equal(JSON.parse(reentrant.state()).value,33);assert.equal(snapshot(reentrant).version,5);reentrant.dispose();
  const failedEntry={...entry,bridgeEffect0:{$kind:'function',$f:()=>{throw Error('Synchronous adapter failure')}}};
- let syncSession=createDealUiSession(failedEntry,rt,null,(invoke,complete,fail,exited)=>{try{invoke();}catch(error){fail(error);}finally{exited();}});
+ let syncSession=createDealUiSession(failedEntry,rt,null,(invoke,complete,fail,exited)=>{try{invoke();}catch(error){fail(error);}finally{exited();}},checkpointSchema);
  syncSession.dispatch(slot(syncSession,'Start 1'));assert.equal(snapshot(syncSession).version,3);assert.equal(snapshot(syncSession).fault,'Error: Synchronous adapter failure');assert.doesNotThrow(()=>syncSession.state());syncSession.dispose();
  assert.throws(()=>entry.bridgeSessionExited.$f(entry.bridgeSessionStatus.$f()),error=>error.code==='UI3005');
- const restored=createDealUiSession(entry,rt,JSON.parse(session.checkpoint()),()=>{throw Error('Unexpected effect')});assert.equal(JSON.parse(restored.state()).value,21);assert.throws(()=>restored.dispatch(99999),/Invalid or stale/);restored.dispose();
+ const restored=createDealUiSession(entry,rt,JSON.parse(session.checkpoint()),()=>{throw Error('Unexpected effect')},checkpointSchema);assert.equal(JSON.parse(restored.state()).value,21);assert.throws(()=>restored.dispatch(99999),/Invalid or stale/);restored.dispose();
  console.log('Deal UI JS lifecycle: callback value capture, overlap/arrival order, atomic rejection, effect failure/version, disposal/late completion, physical exit and replacement readiness');
 })().catch(error=>{console.error(error);process.exitCode=1});

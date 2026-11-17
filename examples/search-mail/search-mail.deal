@@ -1,5 +1,4 @@
 import * as interaction from "../../ui/interaction";
-import * as strings from "std/string";
 
 export class MailRecord { id: number; sender: string; subject: string; body: string; }
 export class SearchState {
@@ -31,35 +30,7 @@ function mailboxRecords(): MailRecord[] {
 
 export function initialState(): SearchState { return { mailbox: mailboxRecords() ,matches: [], query: "", status: "idle", result: "Enter a query to search 4 messages", generation: 0, activeGeneration: -1, errorMessage: "", searchesStarted: 0}; }
 
-function normalizeCase(value: string): string {
-  let result: string = strings.trim(value);
-  result = strings.replace(result, "A", "a");
-  result = strings.replace(result, "B", "b");
-  result = strings.replace(result, "C", "c");
-  result = strings.replace(result, "D", "d");
-  result = strings.replace(result, "E", "e");
-  result = strings.replace(result, "F", "f");
-  result = strings.replace(result, "G", "g");
-  result = strings.replace(result, "H", "h");
-  result = strings.replace(result, "I", "i");
-  result = strings.replace(result, "J", "j");
-  result = strings.replace(result, "K", "k");
-  result = strings.replace(result, "L", "l");
-  result = strings.replace(result, "M", "m");
-  result = strings.replace(result, "N", "n");
-  result = strings.replace(result, "O", "o");
-  result = strings.replace(result, "P", "p");
-  result = strings.replace(result, "Q", "q");
-  result = strings.replace(result, "R", "r");
-  result = strings.replace(result, "S", "s");
-  result = strings.replace(result, "T", "t");
-  result = strings.replace(result, "U", "u");
-  result = strings.replace(result, "V", "v");
-  result = strings.replace(result, "W", "w");
-  result = strings.replace(result, "X", "x");
-  result = strings.replace(result, "Y", "y");
-  return strings.replace(result, "Z", "z");
-}
+function normalizeCase(value: string): string { return value.trim().toLowerCase(); }
 
 function beginRequest(state: SearchState, query: string, status: string): SearchState {
   let next: number = state.generation + 1;
@@ -67,23 +38,16 @@ function beginRequest(state: SearchState, query: string, status: string): Search
 }
 
 function matchesQuery(record: MailRecord, query: string): boolean {
-  return strings.contains(normalizeCase(record.sender), query) || strings.contains(normalizeCase(record.subject), query) || strings.contains(normalizeCase(record.body), query);
+  return normalizeCase(record.sender).includes(query) || normalizeCase(record.subject).includes(query) || normalizeCase(record.body).includes(query);
 }
 
 function searchMailbox(mailbox: MailRecord[], query: string): MailRecord[] {
-  let result: MailRecord[] = [];
-  for (let record of mailbox) {
-    if (matchesQuery(record, query)) { result[result.length] = record; }
-  }
-  return result;
+  return mailbox.filter((record: MailRecord): boolean => matchesQuery(record,query));
 }
 
 function resultLabel(matches: MailRecord[], query: string): string {
   if (matches.length === 0) { return "No messages match " + query; }
-  if (matches.length === 1) { return "1 message matches " + query; }
-  if (matches.length === 2) { return "2 messages match " + query; }
-  if (matches.length === 3) { return "3 messages match " + query; }
-  return "4 messages match " + query;
+  return `${matches.length} ${matches.length === 1 ? "message matches" : "messages match"} ${query}`;
 }
 
 // @ui-update
@@ -115,7 +79,7 @@ export function loadPolicy(state: SearchState, action: DebounceCompleted): Effec
 
 // @ui-effect
 export async function search(state: SearchState, action: DebounceCompleted): Promise<SearchCompleted> {
-  if (action.query === "fail") { throw { code: "SEARCH_LOCAL_FAILURE", message: "Local search failed for 'fail'" }; }
+  if (action.query === "fail") { throw { name: "SEARCH_LOCAL_FAILURE", message: "Local search failed for 'fail'" }; }
   let matches: MailRecord[] = searchMailbox(state.mailbox, action.query);
   return { generation: action.generation, matches: matches, value: resultLabel(matches, action.query) };
 }
@@ -161,4 +125,4 @@ export function retryFailure(state: SearchState, action: Retry, message: string)
   return { generation: state.activeGeneration, message: message };
 }
 
-export function main(): null { return null; }
+export function main(): void { return; }

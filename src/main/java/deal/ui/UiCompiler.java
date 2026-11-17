@@ -50,7 +50,7 @@ public final class UiCompiler {
         Path bindings = destination.resolve("bindings");
         Files.createDirectories(bindings);
         Files.copy(storageDeclaration, bindings.resolve("storage.d.deal"));
-        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
+        Files.writeString(destination.resolve("deal.json"), "{\n  \"languageVersion\": \"1.6\",\n  \"backend\": \"jvm\",\n  \"moduleRoots\": [\"deal\"],\n  \"externals\": {\n    \"host/storage\": { \"declaration\": \"bindings/storage.d.deal\" }\n  }\n}\n");
 
         UiModel.ViewModule views = UiParser.parseViews(view, Files.readString(view));
         Map<String, UiModel.PackModule> packs = new LinkedHashMap<>();
@@ -158,8 +158,8 @@ public final class UiCompiler {
                 stageDependency(canonical, project, roots, staged, "");
             }
             String rewritten = relativeSpecifier(staged.get(source), target);
-            int start = value.offsetByCodePoints(0, imported.token().startScalarOffset());
-            int end = value.offsetByCodePoints(0, imported.token().endScalarOffset());
+            int start = imported.token().startScalarOffset();
+            int end = imported.token().endScalarOffset();
             replacements.add(new Replacement(start, end, quote(rewritten)));
         }
         Path target = staged.get(source);
@@ -251,8 +251,8 @@ public final class UiCompiler {
             for (int cursor = index + 1; cursor < tokens.size(); cursor++) {
                 Token token = tokens.get(cursor);
                 if (token.type() == TokenType.STRING_LITERAL && cursor > index && tokens.get(cursor - 1).type() == TokenType.FROM) {
-                    int start = source.offsetByCodePoints(0, token.startScalarOffset());
-                    int end = source.offsetByCodePoints(0, token.endScalarOffset());
+                    int start = token.startScalarOffset();
+                    int end = token.endScalarOffset();
                     return rewrite(source, List.of(new Replacement(start, end, quote(specifier))));
                 }
                 if (token.type() == TokenType.SEMICOLON) break;

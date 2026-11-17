@@ -179,4 +179,4 @@ export function previousPage(state: BoardState, action: PreviousPage): BoardStat
   return stateWithWindow(state.cards, state.priorCards, window, state.revision, state.pendingRevision, state.rollbackRevision, state.selectedId, windowFocus(state.cards, window), state.focusRevision, state.message);
 }
 
-export function main(): null { return null; }
+export function main(): void { return; }

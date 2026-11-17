@@ -54,7 +54,7 @@ function validateUnique(nodes: core.ViewNode[]): null {
     let rightIndex: number = 0;
     for (let right of nodes) {
       if (leftIndex < rightIndex && identityEquals(left, right)) {
-        throw { code: "UI3003", message: "Duplicate sibling identity" };
+        throw { name: "UI3003", message: "Duplicate sibling identity" };
       }
       rightIndex = rightIndex + 1;
     }

@@ -10,8 +10,11 @@ TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiFrameworkTest.java
   "$ROOT"/src/test/java/deal/ui/UiRuntimeInvariantTest.java
   "$ROOT"/src/test/java/deal/ui/UiCompilerWorkspaceTest.java
+  "$ROOT"/src/test/java/deal/ui/UiCheckpointTest.java
 )
 javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -d "$TEST_CLASSES" "${TEST_SOURCES[@]}"
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiFrameworkTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRuntimeInvariantTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCompilerWorkspaceTest
+# The fixture host supplies only loading/transport; codec and lifecycle are Deal UI.
+(cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCheckpointTest "${DEAL_UI_TEST_HOST:-$ROOT/../deal-embedding/android/assets/embedding/bindings}")

@@ -234,7 +234,7 @@ Updates return complete candidates without mutation. The state and action parame
 
 ## Components
 
-Pack class defaults below are declarative `.dealui-pack` metadata, not DEAL class field initializers. DEAL v1.5 classes require explicit construction fields; all numeric values use `number` and division is IEEE arithmetic.
+Pack class defaults below are declarative `.dealui-pack` metadata, not DEAL class field initializers. DEAL v1.6 classes require explicit construction fields; all numeric values use `number` and division is IEEE arithmetic.
 
 ```dealui-pack
 export class Space {}
@@ -281,6 +281,12 @@ export component NavigationBar(props: EmptyProps): View {
 
 export token spaceMd: Space;
 ```
+
+## JavaScript checkpoints
+
+`UiCheckpointCompiler` compiles JavaScript through the canonical DEAL orchestrator and emits `checkpoint-schema.js` from that same checked IR: nominal field layouts and a closed inventory of persistent array element descriptors. `runtime-js/checkpoint.js` uses existing checked runtime mechanisms to encode/reconstruct those carriers; the DEAL runtime is unchanged. Empty arrays are identified by checked descriptors, not element guessing or private metadata. Descriptors outside the inventory and unsupported leaves reject.
+
+The session and disposable checker share this codec. Restoration allocates a fresh graph, validates identities, references, fields and types before returning it, and preserves aliases/cycles, optional absence, UTF-16 and binary64 special values. Hosts load the inventory alongside compiled modules and supply it to the session; missing inventories are not a compatibility lane. This transport does not establish authoritative-only persistence, pending-work invalidation or permission/currentness policy.
 
 ## Portable renderer bridge
 

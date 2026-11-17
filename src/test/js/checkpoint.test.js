@@ -1,0 +1,36 @@
+"use strict";
+const fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict');
+const out=path.resolve(process.argv[2]),host=path.resolve(process.argv[3]),ui=path.resolve(__dirname,'../../..');
+const factories={};function walk(dir){for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(name.endsWith('.js'))factories[path.relative(out,file).split(path.sep).join('/')]=new Function('require','module','exports','process','console',fs.readFileSync(file,'utf8'));}}walk(out);
+vm.runInThisContext(fs.readFileSync(path.join(host,'sandbox.js'),'utf8'));
+vm.runInThisContext(fs.readFileSync(path.join(ui,'runtime-js/checkpoint.js'),'utf8'));
+configureDealCapabilities([{module:'host/work',functions:[{name:'run',parameters:[{name:'value',type:{kind:'number'}}],result:{kind:'number'}}]}]);
+const a=dealLoad(factories,'experience_entry.js'),b=dealLoad(factories,'experience_entry.js');
+
+assert.equal(a.rt.encodeGraph,undefined);assert.equal(a.rt.decodeGraph,undefined);
+assert.equal(fs.readFileSync(path.join(out,'deal/runtime.js'),'utf8'),fs.readFileSync(path.join(ui,'../deal/deal/runtime.js'),'utf8'),'Emitted runtime differs from canonical source');
+const schema=a.checkpointSchema;
+const ca=createDealUiCheckpoint(a.rt,schema,'proof'),cb=createDealUiCheckpoint(b.rt,schema,'proof');
+const original=a.entry.proofInitial.$f(),wire=JSON.parse(JSON.stringify(ca.encode(original))),descriptor=a.entry.proofInitial.$sig.slice(4),restored=cb.decode(wire,descriptor);
+assert.deepEqual(cb.encode(restored),wire);
+assert.equal(ca.elementType(original.bag.get('nums')),'number');assert.equal(ca.elementType(original.bag.get('strs')),'string');
+assert.deepEqual(wire.value[3][0][1][2].slice(0,2).map(p=>p[0]),['2','10']);
+assert(Object.is(restored.bag.get('box').value,-0));assert(Number.isNaN(restored.bag.get('nan')));assert.equal(restored.bag.get('pos'),Infinity);assert.equal(restored.bag.get('neg'),-Infinity);assert.equal(restored.bag.get('text'),'\ud800');
+const recursive=b.entry.proofRecursive.$f();const recursiveCopy=cb.decode(JSON.parse(JSON.stringify(cb.encode(recursive))),b.entry.proofRecursive.$sig.slice(4));assert.equal(recursiveCopy.child,recursiveCopy);
+assert.equal(restored.bag.get('selfArray')[0],restored.bag.get('selfArray'));
+assert.equal(cb.elementType(restored.bag.get('functions')),'(number)->number');
+assert.equal(cb.elementType(restored.bag.get('parsed').get('array')),'unknown');
+b.entry.proofVerify.$f(restored);
+assert.throws(()=>b.rt.checkArray('[string]',restored.bag.get('nums')));
+assert.throws(()=>b.rt.checkArray('[number]',restored.bag.get('strs')));
+for(const err of [a.rt.errorValue('X','caught'),a.rt.jsonDecode('{"name":"X","message":"decoded"}','Error')]){const v=cb.decode(JSON.parse(JSON.stringify(ca.encode(err))),'Error');assert.equal(v.name,'X');assert.equal(v.message,err.message);}
+const before=JSON.stringify(cb.encode(restored));
+assert.throws(()=>ca.encode(a.rt.tagArray([],'[Error]')),'Descriptors outside compiled inventory must reject');
+assert.throws(()=>cb.decode({schemaDigest:'proof',value:['class',0,'toString',[]]},'unknown'));
+assert.throws(()=>cb.decode({schemaDigest:'wrong',value:['null']},'unknown'));
+assert.throws(()=>ca.encode(a.entry.proofInitial));
+assert.throws(()=>ca.encode(new Map([['hidden',a.entry.proofInitial]])));
+const badCycle=['record',0,[]];badCycle[2].push(['self',badCycle]);assert.throws(()=>cb.decode({schemaDigest:'proof',value:badCycle},'unknown'));
+for(const value of [['ref',99],['number','01'],['array',0,'@unknown/Unavailable',[]],['array',0,'number',[['string','bad']]],['class',0,'Error',[]],['record',0,[['x',['null']],['x',['null']]]]])assert.throws(()=>cb.decode({schemaDigest:'proof',value},'unknown'));
+assert.equal(JSON.stringify(cb.encode(restored)),before);
+console.log('PASS: actual compiled state across fresh runtimes: hidden empty/nested typed arrays, nominal identity, aliases/cycles, presence, binary64, UTF-16, builtin Errors, malformed rejection');

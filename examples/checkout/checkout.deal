@@ -99,4 +99,4 @@ export function cancelLeave(state: CheckoutState, action: CancelLeave): Checkout
   return copy(state, state.route, "", false);
 }
 
-export function main(): null { return null; }
+export function main(): void { return; }

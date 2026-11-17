@@ -2,7 +2,7 @@
 
 ## Authority and boundary
 
-`docs/deal-ui-framework-design.md` defines Deal UI; `../deal/docs/spec-v1.5.md` defines DEAL. Use v1.5 only: TypeScript syntax subset plus checked semantics, not unrestricted TypeScript. Reuse existing @ui-* mechanisms rather than duplicating them.
+`docs/deal-ui-framework-design.md` defines Deal UI; `../deal/docs/spec-v1.6.md` defines DEAL. Use v1.6 only: TypeScript syntax subset plus checked semantics, not unrestricted TypeScript. Reuse existing @ui-* mechanisms rather than duplicating them.
 
 Own the platform-neutral transpiler and semantic editing frontend. Never depend on Android/Compose, Studio, streaming-compiler, models, prompts or concrete app scenarios. Renderers consume checked output, not reimplemented compiler rules. Deal UI exposes deterministic inspect/edit/compile/diagnostic facts; clients own generation and repair rounds.
 
@@ -34,9 +34,11 @@ runtime-js/session.js owns mounted-root drain/effect coordination; ui/session.de
 
 Count physical effect exits even when completion is discarded. Optional checkpoints stay absent until replacement readiness; strict export rejects pending work. Never persist pending effects as resumable drafts. Keep JS runtime independent of Android/packs.
 
+Generate JS checkpoint inventories downstream from the same compiled IR via UiCheckpointCompiler. Use the Deal UI codec with existing checked runtime mechanisms; reject descriptors outside that inventory. Do not add checkpoint or reflection APIs to DEAL.
+
 Use published module exports and runtime carriers, not generated class/static ABI guesses. Each independent JVM app owns runtime/JSON classes and module registry. Split generated view functions at typed component boundaries to respect JVM method limits without changing structural/key identity or authoring guidance.
 
-ui/values.deal owns generic formatting/bounds, exposed identically by staging and sessions. It must not infer timezone, suitability, prices or provider state. Validate finite/integral inputs and use floor/ceil, never removed integer division/remainder. Test signed edges, fractions, clock ranges and fractional keys on actual JVM/JS. Construct every required field; pack defaults remain declarative metadata. Emit checked Record reads, Promise signatures, Object.hasOwn presence and undefined optionals, not obsolete syntax.
+ui/values.deal owns generic formatting/bounds, exposed identically by staging and sessions. It must not infer timezone, suitability, prices or provider state. Validate finite/integral inputs; use v1.6 numeric builtins and binary64 division/remainder, never integer-domain emulation. Test signed edges, fractions, clock ranges and fractional keys on actual JVM/JS. Construct every required field; pack defaults remain declarative metadata. Emit checked Record reads, Promise signatures, Object.hasOwn presence and undefined optionals, not obsolete syntax.
 
 ## Verification
 

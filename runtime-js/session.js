@@ -1,6 +1,6 @@
 "use strict";
 // Deal UI JS runtime. Host supplies module loading and effect scheduling only.
-globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffect) {
+globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffect, checkpointSchema) {
   const call = (name, ...args) => {
     const fn = entry[name];
     if (!fn || fn.$kind !== 'function') throw Error('Missing checked UI export: ' + name);
@@ -8,7 +8,8 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
   };
   let state = call('bridgeInitialState');
   const schemaDigest=call('bridgeSchemaDigest');
-  if (restoredState !== null) state = rt.decodeGraph(restoredState,schemaDigest,entry.bridgeInitialState.$sig.substring(4));
+  const codec = createDealUiCheckpoint(rt,checkpointSchema,schemaDigest);
+  if (restoredState !== null) state = codec.decode(restoredState,entry.bridgeInitialState.$sig.substring(4));
   let store = call('initialStore');
   let current = call('initial', state, store);
   store = current.store;
@@ -70,7 +71,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
   return Object.freeze({
     snapshot: () => JSON.stringify({tree: displayTree, version: status.version, fault: status.fault}),
     state: () => { if (!call('bridgeReplacementReady', status)) throw Error('Wait for current work before replacing the experience'); return JSON.stringify(state); },
-    checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(rt.encodeGraph(state,schemaDigest)) : null,
+    checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(codec.encode(state)) : null,
     dispatch: (slot, payload = null) => {
       if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(displayTree, slot)) throw Error('Invalid or stale action slot');
       // Payload type comes from the checked action signature, never from the caller.

@@ -1,6 +1,6 @@
 # DEAL UI
 
-Implements [framework design](docs/deal-ui-framework-design.md) on DEAL v1.5 at `../deal`: a TypeScript syntax subset with checked semantics, not unrestricted TypeScript.
+Implements [framework design](docs/deal-ui-framework-design.md) on DEAL v1.6 at `../deal`: a TypeScript syntax subset with checked semantics, not unrestricted TypeScript.
 
 .dealui views and closed dispatch lower to ordinary DEAL with ui/core, store, reconcile, actions and effects. Published compiler exports/runtime carriers feed typed JVM or portable bridges. Each independent app owns its JVM registry. Java supplies parsing, compilation, effect threads, native ingress and Swing/EDT patches; portable policy stays in DEAL.
 
