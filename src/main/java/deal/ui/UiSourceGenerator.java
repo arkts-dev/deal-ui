@@ -15,10 +15,17 @@ public final class UiSourceGenerator {
 
     public static Result generate(Path viewPath, String viewSource, Path dealPath, String dealSource,
                                   Map<String, UiModel.PackModule> packs, Path frameworkRoot) {
+        return generate(viewPath, viewSource, dealPath, dealSource, packs, frameworkRoot, Map.of());
+    }
+
+    /** Nominal event declarations are supplied by the host's frozen external inventory. */
+    public static Result generate(Path viewPath, String viewSource, Path dealPath, String dealSource,
+                                  Map<String, UiModel.PackModule> packs, Path frameworkRoot,
+                                  Map<String, String> declarations) {
         var views = UiParser.parseViews(viewPath, viewSource);
         var checker = new UiChecker();
         var checked = checker.check(viewPath, views, dealPath, checker.parseDeal(dealPath, dealSource), packs);
-        var generated = new UiDealGenerator(checked, frameworkRoot).generateSession();
+        var generated = new UiDealGenerator(checked, frameworkRoot, packs, declarations).generateSession();
         return new Result(generated.source(), generated.appAugmentation(), checked);
     }
 }

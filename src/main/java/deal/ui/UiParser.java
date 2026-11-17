@@ -416,9 +416,19 @@ public final class UiParser {
                 int start = i++;
                 column++;
                 while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
-                K kind = K.NUMBER;
-                if (i < source.length() && source.charAt(i) == '.') { kind = K.NUMBER; i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
-                result.add(new T(kind, source.substring(start, i), startLine, startColumn, line, column - 1));
+                if (i < source.length() && source.charAt(i) == '.') { i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
+                // The canonical printer emits Double spellings, including exponents.
+                // Consume the entire literal so emitted source is parseable again.
+                if (i < source.length() && (source.charAt(i) == 'e' || source.charAt(i) == 'E')) {
+                    i++; column++;
+                    if (i < source.length() && (source.charAt(i) == '+' || source.charAt(i) == '-')) { i++; column++; }
+                    int digits = i;
+                    while (i < source.length() && source.charAt(i) >= '0' && source.charAt(i) <= '9') { i++; column++; }
+                    if (i == digits) throw new UiDiagnostic("UI1006", "Expected exponent digits", Path.of("<source>"), startLine, startColumn);
+                }
+                String spelling = source.substring(start, i);
+                if (!Double.isFinite(Double.parseDouble(spelling))) throw new UiDiagnostic("UI1006", "Numeric literal must be finite", Path.of("<source>"), startLine, startColumn);
+                result.add(new T(K.NUMBER, spelling, startLine, startColumn, line, column - 1));
                 continue;
             }
             if (c == '"') {

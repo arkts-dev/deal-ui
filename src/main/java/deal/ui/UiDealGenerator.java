@@ -11,6 +11,9 @@ final class UiDealGenerator {
 
     private final UiModel.CheckedProgram program;
     private final java.nio.file.Path frameworkRoot;
+    private final Map<String, String> nominalImports = new LinkedHashMap<>();
+    private String schemaDigest;
+    private final Map<String, UiModel.DealClass> nominalClasses = new LinkedHashMap<>();
     private final Map<Integer, GeneratedAction> actions = new LinkedHashMap<>();
     private final Map<String, Integer> actionIds = new LinkedHashMap<>();
     private final Map<String, Integer> effectIds = new LinkedHashMap<>();
@@ -22,10 +25,39 @@ final class UiDealGenerator {
     UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
         this.frameworkRoot = frameworkRoot;
+        schemaDigest = digest(stateSchema(program));
         int id = 0;
         for (String action : program.updates().keySet()) actionIds.put(action, id++);
         id = 0;
         for (String action : program.effects().keySet()) effectIds.put(action, id++);
+    }
+
+    UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot,
+                    Map<String, UiModel.PackModule> packs, Map<String, String> declarations) {
+        this(program, frameworkRoot);
+        schemaDigest = digest(stateSchema(program) + new java.util.TreeMap<>(declarations) + new java.util.TreeMap<>(program.metadata().packDigests()));
+        for (var pack : packs.values()) for (var imported : pack.imports()) {
+            String declaration = declarations.get(imported.specifier());
+            if (declaration == null) throw new IllegalArgumentException("Missing nominal declaration: " + imported.specifier());
+            String previous = nominalImports.putIfAbsent(imported.alias(), imported.specifier());
+            if (previous != null && !previous.equals(imported.specifier())) throw new IllegalArgumentException("Conflicting nominal alias");
+            var parsed = new UiChecker().parseDeal(java.nio.file.Path.of("external.d.deal"), declaration);
+            for (var clazz : parsed.classes().values()) nominalClasses.put(imported.alias() + "." + clazz.name(), clazz);
+        }
+    }
+
+    private static String stateSchema(UiModel.CheckedProgram program) {
+        StringBuilder schema=new StringBuilder(program.rootStateType());
+        program.deal().classes().forEach((name,clazz)->{
+            schema.append('|').append(name);
+            clazz.fields().forEach((field,value)->schema.append('|').append(field).append(':').append(value.type()));
+        });
+        return schema.toString();
+    }
+
+    private static String digest(String text) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+        catch (java.security.NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
     }
 
     Output generate() { return generate(false); }
@@ -48,6 +80,11 @@ final class UiDealGenerator {
         generatePayloadTypes(out);
         generateRouting(out, app);
         if (sessionExports) {
+        generateCheckActions(out);
+        out.append("export function bridgeSchemaDigest(): string { return ").append(quote(schemaDigest)).append("; }\n");
+        out.append("export function bridgePayloadNumber(text: string): number { return payloadNumber(text); }\n");
+        out.append("export function bridgeFrameVisibility(visible: boolean): FrameClock { return frameVisibility(visible); }\n")
+            .append("export function bridgeFrameSample(current: FrameClock, now: number): FrameClock { return frameSample(current,now); }\n");
         out.append("export function bridgeSessionStatus(): SessionStatus { return {inFlight: 0, version: 1, fault: \"\"}; }\n")
             .append("export function bridgeSessionCommitted(current: SessionStatus): SessionStatus { return sessionCommitted(current); }\n")
             .append("export function bridgeSessionStarted(current: SessionStatus): SessionStatus { return sessionStarted(current); }\n")
@@ -95,9 +132,12 @@ final class UiDealGenerator {
     private String flattenFramework(String generatedSource) {
         try {
             StringBuilder source = new StringBuilder("import * as app from \"./").append(moduleName(program.dealSource())).append("\";\n\n");
+            source.append("import * as uiJson from \"std/json\";\n");
+            nominalImports.forEach((alias, specifier) -> source.append("import * as ").append(alias).append(" from ").append(quote(specifier)).append(";\n"));
             for (String module : List.of("core", "store", "actions", "effects", "interaction", "reconcile", "session")) {
                 String value = java.nio.file.Files.readString(frameworkRoot.resolve("ui/" + module + ".deal"));
                 value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
+                if (module.equals("session")) value = value.replace("import * as json from \"std/json\";\n", "").replace("json.parse(", "uiJson.parse(");
                 if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");
                 if (module.equals("actions")) value = value.replace("function route(", "function actionRoute(");
                 source.append(value).append("\n");
@@ -158,13 +198,16 @@ final class UiDealGenerator {
                         value = "core.boundActionProp(\"" + argument.getKey() + "\", " + slot + ", {" + data + "})";
                     } else {
                         UiModel.TypeRef type = expressionType(argument.getValue(), scope);
-                        String factory = switch (simple(type.name())) {
+                        boolean token = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts()));
+                        boolean structured = !token && (type.array() || !List.of("number", "boolean", "string").contains(simple(type.name())));
+                        String factory = structured ? "jsonProp" : switch (simple(type.name())) {
                             case "number" -> "numberProp";
                             case "boolean" -> "booleanProp";
                             case "string" -> "stringProp";
                             default -> "tokenProp";
                         };
                         String expression = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts())) ? "\"" + String.join(".", path.parts()) + "\"" : expr(argument.getValue(), app);
+                        if (structured) expression = "(uiJson.stringify(" + expression + ") as string)";
                         value = "core." + factory + "(\"" + argument.getKey() + "\", " + expression + ")";
                     }
                     out.append(pad).append(props).append("[").append(props).append(".length] = ").append(value).append(";\n");
@@ -212,9 +255,56 @@ final class UiDealGenerator {
         for (Map.Entry<Integer, GeneratedAction> entry : actions.entrySet()) {
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
             String kind = payloadType == null ? "none" : simple(payloadType.name());
+            if (payloadType != null && nominalClasses.containsKey(payloadType.name())) {
+                var clazz = nominalClasses.get(payloadType.name());
+                out.append("export function decodePayload_").append(entry.getKey()).append("(text: string): ").append(payloadType.name()).append(" { let value: Record<string, unknown> = uiJson.parse(text); return {");
+                boolean first = true;
+                for (var field : clazz.fields().values()) {
+                    if (field.type().optional() || field.type().array() || !List.of("string", "number", "boolean").contains(field.type().name()))
+                        throw new UiDiagnostic("UI2053", "Structured event requires scalar required fields", program.dealSource(), 1, 1);
+                    if (!first) out.append(", "); first = false;
+                    out.append(field.name()).append(": value.").append(field.name()).append(" as ").append(field.type().name());
+                }
+                out.append("}; }\n");
+                kind = "json";
+            }
             out.append("export function payloadType_").append(entry.getKey()).append("(): string { return \"").append(kind).append("\"; }\n");
         }
         out.append("\n");
+    }
+
+    /** Compiler-issued handler inventory and nominal synthetic actions, including effect completions. */
+    private void generateCheckActions(StringBuilder out) {
+        out.append("export function checkHandlerCount(): number { return ").append(actionIds.size()).append("; }\n");
+        for (var entry : actionIds.entrySet()) {
+            String type = entry.getKey();
+            out.append("export function checkAction_").append(entry.getValue()).append("(): UiAction { return {slot: -1, nominal")
+                .append(entry.getValue()).append(": ").append(checkSample(new UiModel.TypeRef(type, false, false), new java.util.LinkedHashSet<>())).append("}; }\n");
+        }
+    }
+
+    private String checkSample(UiModel.TypeRef type, java.util.Set<String> active) {
+        if (type.optional()) return "null";
+        if (type.array()) return "[]";
+        return switch (simple(type.name())) {
+            case "number" -> "1";
+            case "boolean" -> "true";
+            case "string" -> "\"12\"";
+            default -> {
+                if (!active.add(type.name())) throw new UiDiagnostic("UI2053", "Synthetic event has a required recursive type", program.dealSource(), 1, 1);
+                UiModel.DealClass clazz = nominalClasses.get(type.name());
+                if (clazz == null) clazz = program.deal().classes().get(simple(type.name()));
+                if (clazz == null) throw new UiDiagnostic("UI2053", "Missing event nominal declaration", program.dealSource(), 1, 1);
+                List<String> fields = new ArrayList<>();
+                for (var field : clazz.fields().values()) {
+                    String value = checkSample(field.type(), active);
+                    if (nominalImports.getOrDefault(type.name().contains(".") ? type.name().substring(0,type.name().indexOf('.')) : "", "").equals("embedding/graphics") && simple(type.name()).equals("Pointer")) value = switch (field.name()) { case "phase" -> "\"down\""; case "x", "y" -> "12"; case "id" -> "0"; default -> value; };
+                    fields.add(field.name() + ": " + value);
+                }
+                active.remove(type.name());
+                yield "{" + String.join(", ", fields) + "}";
+            }
+        };
     }
 
     private void generateActionFactories(StringBuilder out) {

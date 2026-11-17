@@ -7,7 +7,8 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
     return fn.$f(...args);
   };
   let state = call('bridgeInitialState');
-  if (restoredState !== null) state = rt.checkType(entry.bridgeInitialState.$sig.substring(4), Object.assign(state, restoredState));
+  const schemaDigest=call('bridgeSchemaDigest');
+  if (restoredState !== null) state = rt.decodeGraph(restoredState,schemaDigest,entry.bridgeInitialState.$sig.substring(4));
   let store = call('initialStore');
   let current = call('initial', state, store);
   store = current.store;
@@ -69,7 +70,7 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
   return Object.freeze({
     snapshot: () => JSON.stringify({tree: displayTree, version: status.version, fault: status.fault}),
     state: () => { if (!call('bridgeReplacementReady', status)) throw Error('Wait for current work before replacing the experience'); return JSON.stringify(state); },
-    checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(state) : null,
+    checkpoint: () => call('bridgeReplacementReady', status) ? JSON.stringify(rt.encodeGraph(state,schemaDigest)) : null,
     dispatch: (slot, payload = null) => {
       if (!Number.isInteger(slot) || slot < 0 || !visibleSlot(displayTree, slot)) throw Error('Invalid or stale action slot');
       // Payload type comes from the checked action signature, never from the caller.
@@ -78,9 +79,10 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
       const values = binding ? binding.values : new Map();
       const declared = call('payloadType_' + factory);
       let value = payload;
-      if (declared === 'number') { if (typeof payload !== 'string' || payload.trim() === '' || !Number.isFinite(Number(payload))) throw Error('Expected a finite numeric payload'); value = Number(payload); }
+      if (declared === 'number') { if (typeof payload !== 'string') throw Error('Expected a numeric payload'); value = call('bridgePayloadNumber', payload); }
       else if (declared === 'boolean') { if (payload !== 'true' && payload !== 'false') throw Error('Expected a boolean payload'); value = payload === 'true'; }
       else if (declared === 'string') { if (typeof payload !== 'string') throw Error('Expected a string payload'); }
+      else if (declared === 'json') { if (typeof payload !== 'string') throw Error('Expected structured JSON payload'); value = call('decodePayload_' + factory, payload); }
       else if (payload !== null) throw Error('This action takes no payload');
       enqueue(payload === null && declared === 'none' ? call('action_' + factory, values) : call('action_' + factory, values, value));
       return '';

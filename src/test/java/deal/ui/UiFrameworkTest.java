@@ -18,6 +18,7 @@ public final class UiFrameworkTest {
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of("").toAbsolutePath();
+        numericLiteralRoundTrip(root);
         Path outputs = root.resolve("build/test-outputs");
         recreate(outputs);
         UiCompiler compiler = new UiCompiler(fsRoot());
@@ -93,6 +94,21 @@ public final class UiFrameworkTest {
         fractionalKeys(outputs, compiler);
         compileSemanticExamples(root, outputs, compiler);
         System.out.println("Passed: " + passed);
+    }
+
+    private static void numericLiteralRoundTrip(Path root) {
+        Path file = root.resolve("numeric-literals.dealui");
+        for (String value : List.of("9.99999999E8", "1.0E8", "1e+8", "1e-8", "0.0", "1.7976931348623157E308")) {
+            String source = "export view Main(): View { ui.IntField(value: " + value + ") }";
+            UiModel.ViewModule parsed = UiParser.parseViews(file, source);
+            check(parsed.views().size() == 1, "canonical finite numeric spelling reparses: " + value);
+        }
+        for (String value : List.of("1e", "1e+", "1e-", "1e999")) {
+            try {
+                UiParser.parseViews(file, "export view Main(): View { ui.IntField(value: " + value + ") }");
+                throw new AssertionError("Invalid numeric literal admitted: " + value);
+            } catch (UiDiagnostic expected) { check(expected.code().equals("UI1006"), "numeric spelling rejects with source diagnostic: " + value); }
+        }
     }
 
     private static void compilePolicyOnlyCancellation(Path root, Path outputs, UiCompiler compiler) throws Exception {
