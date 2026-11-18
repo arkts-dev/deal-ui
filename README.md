@@ -18,7 +18,7 @@ runtime-js/session.js coordinates mounted-root drain/effects using compiler-issu
 ./bin/deal-ui build examples/museum/gallery.dealui --renderer portable
 ```
 
-Set DEAL_FS_ROOT to another matched compiler checkout. Outputs/evidence stay under build/ or private command directories. Examples cover gallery composition, payloads, keyed lists, forms, navigation, async policies, optimism, virtualization and overlays using local state.
+The CLI and build scripts default to the sibling `../deal` compiler checkout, independent of the calling directory. Set DEAL_FS_ROOT to another matched compiler checkout. Outputs/evidence stay under build/ or private command directories. Examples cover gallery composition, payloads, keyed lists, forms, navigation, async policies, optimism, virtualization and overlays using local state.
 
 Portable UiPortableBridge preserves store/reconciliation/action/effect/state semantics without Swing/AWT; checked metadata supplies root/action/component/pack identities and capabilities. Native hosts own lifecycle/rendering; portable targets cannot run standalone.
 

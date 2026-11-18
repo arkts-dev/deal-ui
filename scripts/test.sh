@@ -16,5 +16,7 @@ javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiFrameworkTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRuntimeInvariantTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCompilerWorkspaceTest
+# CLI resolves both compiler and framework resources independently of caller cwd.
+(cd "${TMPDIR:-/tmp}" && "$ROOT/bin/deal-ui" check "$ROOT/examples/museum/gallery.dealui")
 # The fixture host supplies only loading/transport; codec and lifecycle are Deal UI.
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCheckpointTest "${DEAL_UI_TEST_HOST:-$ROOT/../deal-embedding/android/assets/embedding/bindings}")
