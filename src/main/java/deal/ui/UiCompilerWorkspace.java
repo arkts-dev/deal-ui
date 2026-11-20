@@ -1183,12 +1183,21 @@ public final class UiCompilerWorkspace {
                     ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
                     null,
                     failure.notes());
-            String diagnosticSource = switch (failure.file().toString()) {
-                case "/generated/app.deal" -> dealSource;
-                case "/generated/app.dealui" -> uiSource;
-                case "/generated/platform-ui.dealui-pack" -> packSource;
-                default -> null;
-            };
+            var producer = failure.compilerDiagnostic();
+            if (producer != null) {
+                diagnostic = new StructuredDiagnostic(producer.code(), producer.severity(), producer.message(),
+                        producer.range(), ownerId, producer.facts(), List.of(), repairScopes, null,
+                        producer.notes(), null, producer.missingSymbols(), producer.excerpt(), producer.occurrence());
+            }
+            if (uiOwned) {
+                var target = targets.get(ownerId);
+                String fingerprint = target == null || target.kind().equals("document") ? digest
+                        : AmendWorkspace.digest(uiSource.substring(target.start(), target.end()));
+                diagnostic = diagnostic.withContextRequest(new CompilerProtocol.ContextRequest(
+                        new CompilerProtocol.RevisionRef(digest),
+                        target == null || target.kind().equals("document") ? CompilerProtocol.ContextKind.MODULE : CompilerProtocol.ContextKind.NODE,
+                        ownerId, fingerprint));
+            }
             UiInspection inspection = new UiInspection(
                     CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,

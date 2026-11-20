@@ -121,6 +121,9 @@ public final class UiCompilerWorkspaceTest {
         String badUi = UI.replace("value: state.title", "value: state.title state.count");
         var diagnostic = CanonicalCompiler.inspectCanonicalApp(DEAL, badUi, PACK, "./ui.pack")
                 .diagnostics().stream().filter(value -> value.code().equals("UI1009")).findFirst().orElseThrow();
+        check(diagnostic.contextRequest() != null
+                        && !diagnostic.contextRequest().revision().sourceDigest().isEmpty(),
+                "UI inspection publishes revision-pinned context evidence");
         check(diagnostic.expected().equals(")") && diagnostic.actual().equals("state"),
                 "UI parser must identify expected and actual tokens");
         check(diagnostic.range().endColumn() > diagnostic.range().startColumn(), "token range must not collapse to a point");
