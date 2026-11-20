@@ -9,7 +9,9 @@ import deal.amend.CompilerProtocol.RepairWorkspaceSnapshot;
 import deal.amend.CompilerProtocol.SlotPatch;
 import deal.amend.CompilerProtocol.SemanticId;
 import deal.amend.CompilerProtocol.SemanticSlice;
-import deal.amend.CompilerProtocol.SourceRange;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
+import deal.amend.CompilerProtocol.ContextRequest;
 import deal.amend.CompilerProtocol.StructuredDiagnostic;
 import deal.amend.AmendWorkspace;
 
@@ -126,7 +128,7 @@ public final class CanonicalCompiler {
             String code,
             SemanticId ownerId,
             List<RepairScope> allowedOperations,
-            String minimumContextQuery,
+            ContextRequest contextRequest,
             String expected,
             String actual) {
         public EditContract {
@@ -147,10 +149,9 @@ public final class CanonicalCompiler {
         } catch (UiDiagnostic failure) {
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
-                    new deal.amend.CompilerProtocol.SourceRange(
-                            failure.file().toString(), failure.line(), failure.column(), failure.line(), failure.column()),
+                    sourceRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn()),
                     new SemanticId("dealui:pack:platform"), "valid component pack", "invalid pack",
-                    List.of(), List.of(), "inspectComponentPack");
+                    List.of(), List.of(), null, failure.notes());
             List<StructuredDiagnostic> diagnostics = new ArrayList<>(deal.diagnostics());
             diagnostics.add(diagnostic);
             return new Inspection(deal, null, "", "", null, false, diagnostics);
@@ -448,14 +449,13 @@ public final class CanonicalCompiler {
                     .toList();
             return List.of(new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
-                    new SourceRange(
-                            failure.file().toString(), failure.line(), failure.column(),
+                    sourceRange(failure.file().toString(), failure.line(), failure.column(),
                             failure.endLine(), failure.endColumn()),
                     owner,
                     failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
                     failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
                     List.of(), targetedScopes.isEmpty() ? transactionScopes : targetedScopes,
-                    "query_deal_symbol", failure.notes()));
+                    null, failure.notes()));
         }
         if (inspection.appInterface() == null) {
             return List.of();
@@ -492,13 +492,13 @@ public final class CanonicalCompiler {
                             .filter(symbol -> symbol.name().equals(candidate.name()))
                             .map(deal.amend.CompilerProtocol.SymbolSnapshot::id)
                             .findFirst().orElse(operations.get(0).targetId());
-            SourceRange range = candidate == null
-                    ? new SourceRange("/generated/app.deal", 1, 1, 1, 1)
-                    : new SourceRange(
+            DiagnosticRange range = candidate == null
+                    ? DiagnosticRange.synthetic("/generated/app.deal")
+                    : sourceRange(
                             candidate.span().file().toString(),
                             candidate.span().line(), candidate.span().column(),
                             candidate.span().endLine(), candidate.span().endColumn());
-            SourceRange functionBodyRange = inspection.nodes().stream()
+            DiagnosticRange functionBodyRange = inspection.nodes().stream()
                     .filter(node -> node.ownerId().equals(owner))
                     .filter(node -> node.kind().equals("function-body"))
                     .map(deal.amend.CompilerProtocol.NodeSnapshot::range)
@@ -526,7 +526,7 @@ public final class CanonicalCompiler {
                     "// @ui-update immediately before export function "
                             + (candidate == null ? "handler" : candidate.name()),
                     markerInsideFunction ? "marker inside function body" : Integer.toString(updates.size()) + " annotated handlers",
-                    related, targetedScopes, "query_deal_module"));
+                    related, targetedScopes, null, List.of()));
         }
         return List.copyOf(diagnostics);
     }
@@ -541,16 +541,20 @@ public final class CanonicalCompiler {
         return semanticId.equals(produced);
     }
 
-    private static boolean contains(SourceRange range, int line, int column) {
+    private static DiagnosticRange sourceRange(String file, int line, int column, int endLine, int endColumn) {
+        return new DiagnosticRange(file, line, column, endLine, endColumn + 1, -1, -1, -1, RangeOrigin.SOURCE);
+    }
+
+    private static boolean contains(DiagnosticRange range, int line, int column) {
         if (range == null) return false;
         boolean afterStart = line > range.startLine()
                 || line == range.startLine() && column >= range.startColumn();
         boolean beforeEnd = line < range.endLine()
-                || line == range.endLine() && column <= range.endColumn();
+                || line == range.endLine() && column < range.endColumn();
         return afterStart && beforeEnd;
     }
 
-    private static boolean markerInsideRange(String source, SourceRange range, String marker) {
+    private static boolean markerInsideRange(String source, DiagnosticRange range, String marker) {
         if (range == null) return false;
         return source.lines()
                 .skip(Math.max(0, range.startLine() - 1L))
@@ -670,7 +674,7 @@ public final class CanonicalCompiler {
     public static EditContract explainDiagnostic(StructuredDiagnostic diagnostic) {
         return new EditContract(
                 diagnostic.code(), diagnostic.ownerId(), diagnostic.repairScopes(),
-                diagnostic.contextQuery(), diagnostic.expected(), diagnostic.actual());
+                diagnostic.contextRequest(), diagnostic.expected(), diagnostic.actual());
     }
 
     private static boolean hasErrors(List<StructuredDiagnostic> diagnostics) {

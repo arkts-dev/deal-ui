@@ -1,5 +1,3 @@
-import * as math from "std/math";
-
 // Pure presentation helpers. Call in DEAL updates/effects, never in view expressions.
 export function decimal(value: number): string {
     if (!Number.isFinite(value) || Math.floor(value) !== value) { throw {name:"INVALID_INTEGER",message:"Expected an integral value"}; }
@@ -8,8 +6,8 @@ export function decimal(value: number): string {
 
 // Explicit local minutes; no timezone conversion or travel policy is inferred.
 export function clockMinutes(minutes: number): string {
-    if (math.floor(minutes) !== minutes || minutes < 0 || minutes >= 1440) { return ""; }
-    let hour: number = math.floor(minutes / 60); let minute: number = minutes - hour * 60;
+    if (!Number.isFinite(minutes) || Math.floor(minutes) !== minutes || minutes < 0 || minutes >= 1440) { return ""; }
+    let hour = Math.floor(minutes / 60); let minute: number = minutes - hour * 60;
     let hh: string = decimal(hour); let mm: string = decimal(minute);
     if (hour < 10) { hh = "0" + hh; }
     if (minute < 10) { mm = "0" + mm; }

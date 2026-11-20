@@ -16,7 +16,8 @@ import deal.amend.CompilerProtocol.RepairWorkspaceResult;
 import deal.amend.CompilerProtocol.RepairWorkspaceSnapshot;
 import deal.amend.CompilerProtocol.RevisionRef;
 import deal.amend.CompilerProtocol.SemanticId;
-import deal.amend.CompilerProtocol.SourceRange;
+import deal.diagnostics.DiagnosticRange;
+import deal.diagnostics.RangeOrigin;
 import deal.amend.CompilerProtocol.StructuredDiagnostic;
 import deal.amend.CompilerProtocol.SlotPatch;
 import deal.amend.CompilerProtocol.SemanticSlice;
@@ -56,12 +57,12 @@ public final class UiCompilerWorkspace {
             SemanticId parentId,
             String kind,
             String component,
-            SourceRange range,
+            DiagnosticRange range,
             String fingerprint,
             List<SemanticId> children,
             List<String> statePaths,
             List<String> actionBindings,
-            Map<String, SourceRange> properties,
+            Map<String, DiagnosticRange> properties,
             List<String> writableProperties) {
         public UiNodeSnapshot {
             children = List.copyOf(children);
@@ -76,7 +77,7 @@ public final class UiCompilerWorkspace {
             SemanticId id,
             String name,
             boolean root,
-            SourceRange range,
+            DiagnosticRange range,
             String fingerprint,
             List<SemanticId> rootNodes) {
         public UiViewSnapshot {
@@ -744,7 +745,7 @@ public final class UiCompilerWorkspace {
                     changedNodes.add(parent.id());
                 }
                 case SetProperty value -> {
-                    SourceRange property = target.properties().get(value.property());
+                    DiagnosticRange property = target.properties().get(value.property());
                     if (property == null) {
                         if (!target.writableProperties().contains(value.property()) || target.argumentEnd() < 0) {
                             return rejected(base, diagnostic(
@@ -760,7 +761,7 @@ public final class UiCompilerWorkspace {
                     }
                     replacements.add(new Replacement(
                             base.index().offset(property.startLine(), property.startColumn()),
-                            base.index().offsetAfter(property.endLine(), property.endColumn()),
+                            property.endScalarOffset(),
                             value.expression().trim(), false));
                 }
             }
@@ -1096,7 +1097,7 @@ public final class UiCompilerWorkspace {
                 ? new SemanticId("dealui:document:app.dealui") : workspace.slots().get(0).targetId();
         StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                 code, "error", message, null, owner, "valid repair workspace",
-                "invalid repair request", List.of(), List.of(), "inspectChange");
+                "invalid repair request", List.of(), List.of(), null, List.of());
         return new RepairWorkspaceResult(false, source, AmendWorkspace.digest(source),
                 workspace, null, List.of(diagnostic));
     }
@@ -1127,13 +1128,13 @@ public final class UiCompilerWorkspace {
                 List<SemanticId> roots = collectNodes(
                         view.nodes(), viewId, null, view.name(), digest, index, pack, targets, nodeSnapshots);
                 Target viewTarget = new Target(
-                        viewId, viewId, "view", range(view.span()),
+                        viewId, viewId, "view", range(view.span(), index),
                         index.offset(view.span().line(), view.span().column()),
                         index.offsetAfter(view.span().endLine(), view.span().endColumn()),
                         body[0], body[1], true, roots, Map.of(), List.of(), -1);
                 targets.put(viewId, viewTarget);
                 viewSnapshots.add(new UiViewSnapshot(
-                        viewId, view.name(), view.root(), range(view.span()),
+                        viewId, view.name(), view.root(), range(view.span(), index),
                         AmendWorkspace.digest(index.slice(view.span())), roots));
             }
             var dealInspection = AmendWorkspace.inspect(
@@ -1178,9 +1179,9 @@ public final class UiCompilerWorkspace {
             }
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     failure.code(), "error", failure.getMessage(),
-                    new SourceRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn()),
+                    new DiagnosticRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn() + 1, -1, -1, -1, RangeOrigin.SOURCE),
                     ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
-                    owner == null ? "queryDealUiDocument" : "queryDealUiNode(" + owner.id().value() + ")",
+                    null,
                     failure.notes());
             String diagnosticSource = switch (failure.file().toString()) {
                 case "/generated/app.deal" -> dealSource;
@@ -1198,7 +1199,7 @@ public final class UiCompilerWorkspace {
                     ? List.of(new RepairScope(ADD_VIEW, documentId)) : List.of();
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     "CP2999", "error", failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage(),
-                    null, documentId, "", "", List.of(), repairScopes, "queryDealUiDocument");
+                    null, documentId, "", "", List.of(), repairScopes, null, List.of());
             UiInspection inspection = new UiInspection(
                     CompilerProtocol.VERSION, digest, documentId, "", List.of(), List.of(), null,
                     ALLOWED_OPERATIONS, List.of(diagnostic));
@@ -1349,7 +1350,7 @@ public final class UiCompilerWorkspace {
     private static Target narrowestTarget(Iterable<Target> targets, int line, int column) {
         Target selected = null;
         for (Target target : targets) {
-            SourceRange range = target.range();
+            DiagnosticRange range = target.range();
             if (range == null || !contains(range, line, column)) continue;
             if (selected == null || (target.end() - target.start()) < (selected.end() - selected.start())) {
                 selected = target;
@@ -1358,11 +1359,11 @@ public final class UiCompilerWorkspace {
         return selected;
     }
 
-    private static boolean contains(SourceRange range, int line, int column) {
+    private static boolean contains(DiagnosticRange range, int line, int column) {
         boolean afterStart = line > range.startLine()
                 || line == range.startLine() && column >= range.startColumn();
         boolean beforeEnd = line < range.endLine()
-                || line == range.endLine() && column <= range.endColumn();
+                || line == range.endLine() && column < range.endColumn();
         return afterStart && beforeEnd;
     }
 
@@ -1390,8 +1391,8 @@ public final class UiCompilerWorkspace {
             String component = node instanceof UiModel.Call call ? call.name() : kind;
             Set<String> paths = new LinkedHashSet<>();
             Set<String> actions = new LinkedHashSet<>();
-            Map<String, SourceRange> properties = new LinkedHashMap<>();
-            collectFacts(node, paths, actions, properties);
+            Map<String, DiagnosticRange> properties = new LinkedHashMap<>();
+            collectFacts(node, paths, actions, properties, index);
             List<String> writableProperties = writableProperties(node, pack);
             int start = index.offset(node.span().line(), node.span().column());
             int end = index.offsetAfter(node.span().endLine(), node.span().endColumn());
@@ -1401,12 +1402,12 @@ public final class UiCompilerWorkspace {
             int childEnd = childBlock ? childContentEnd(node, index, start, end) : -1;
             int argumentEnd = node instanceof UiModel.Call ? callArgumentEnd(index.source(), start, end) : -1;
             Target target = new Target(
-                    id, viewId, kind, range(node.span()), start, end,
+                    id, viewId, kind, range(node.span(), index), start, end,
                     childStart, childEnd,
                     childBlock, childIds, properties, writableProperties, argumentEnd);
             targets.put(id, target);
             snapshots.add(new UiNodeSnapshot(
-                    id, viewId, parentId, kind, component, range(node.span()),
+                    id, viewId, parentId, kind, component, range(node.span(), index),
                     AmendWorkspace.digest(index.source().substring(start, end)),
                     childIds, List.copyOf(paths), List.copyOf(actions), properties, writableProperties));
             result.add(id);
@@ -1429,10 +1430,10 @@ public final class UiCompilerWorkspace {
             UiModel.Node node,
             Set<String> paths,
             Set<String> actions,
-            Map<String, SourceRange> properties) {
+            Map<String, DiagnosticRange> properties, SourceIndex index) {
         if (node instanceof UiModel.Call call) {
             call.arguments().forEach((name, expression) -> {
-                properties.put(name, range(expression.span()));
+                properties.put(name, range(expression.span(), index));
                 collectFacts(expression, paths, actions);
             });
         } else if (node instanceof UiModel.When when) {
@@ -1569,7 +1570,17 @@ public final class UiCompilerWorkspace {
                 expected, target.kind(), List.of(), "queryDealUiNode"));
     }
 
+    private static CompilerProtocol.ContextRequest contextRequest(Analysis base, SemanticId owner) {
+        Target target = base.targets().getOrDefault(owner, base.targets().get(base.documentId()));
+        var kind = target.kind().equals("document") ? CompilerProtocol.ContextKind.MODULE
+                : target.kind().equals("view") ? CompilerProtocol.ContextKind.SYMBOL : CompilerProtocol.ContextKind.NODE;
+        String fingerprint = target.kind().equals("document") ? base.inspection().sourceDigest()
+                : AmendWorkspace.digest(base.source().substring(target.start(), target.end()));
+        return new CompilerProtocol.ContextRequest(revision(base), kind, target.id(), fingerprint);
+    }
+
     private static UiChangeResult rejected(Analysis base, StructuredDiagnostic diagnostic) {
+        diagnostic = diagnostic.withContextRequest(contextRequest(base, diagnostic.ownerId()));
         return new UiChangeResult(
                 false, base.source(), base.inspection().sourceDigest(), base.inspection(),
                 emptyImpact(), List.of(diagnostic));
@@ -1609,25 +1620,23 @@ public final class UiCompilerWorkspace {
         }
         return new StructuredDiagnostic(
                 diagnostic.code(), diagnostic.severity(), diagnostic.message(), diagnostic.range(),
-                operations.get(0).targetId(), diagnostic.expected(), diagnostic.actual(),
-                operations.stream().map(Operation::targetId).toList(),
-                scopes,
-                "queryDealUiNode(" + operations.get(0).targetId().value() + ")",
-                diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols());
+                operations.get(0).targetId(), diagnostic.facts(),
+                operations.stream().map(Operation::targetId).toList(), scopes, diagnostic.contextRequest(),
+                diagnostic.notes(), diagnostic.operationIndex(), diagnostic.missingSymbols(), diagnostic.excerpt(), diagnostic.occurrence());
     }
 
     private static StructuredDiagnostic diagnostic(
             String code,
             String message,
             SemanticId owner,
-            SourceRange range,
+            DiagnosticRange range,
             String expected,
             String actual,
             List<RepairScope> repairScopes,
             String query) {
         return new StructuredDiagnostic(
                 code, "error", message, range, owner, expected, actual,
-                List.of(), repairScopes, query);
+                List.of(), repairScopes, null, List.of());
     }
 
     private static String operationName(Operation operation) {
@@ -1647,8 +1656,11 @@ public final class UiCompilerWorkspace {
         return diagnostics.stream().anyMatch(value -> value.severity().equals("error"));
     }
 
-    private static SourceRange range(UiModel.Span span) {
-        return new SourceRange(span.file().toString(), span.line(), span.column(), span.endLine(), span.endColumn());
+    private static DiagnosticRange range(UiModel.Span span, SourceIndex index) {
+        int start = index.offset(span.line(), span.column());
+        int end = index.offsetAfter(span.endLine(), span.endColumn());
+        return new DiagnosticRange(span.file().toString(), span.line(), span.column(), span.endLine(),
+                span.endColumn() + 1, start, end, end - start, RangeOrigin.SOURCE);
     }
 
     private static Set<String> allActions(UiInspection inspection) {
@@ -1691,14 +1703,14 @@ public final class UiCompilerWorkspace {
             SemanticId id,
             SemanticId ownerViewId,
             String kind,
-            SourceRange range,
+            DiagnosticRange range,
             int start,
             int end,
             int contentStart,
             int contentEnd,
             boolean hasChildrenBlock,
             List<SemanticId> children,
-            Map<String, SourceRange> properties,
+            Map<String, DiagnosticRange> properties,
             List<String> writableProperties,
             int argumentEnd) {}
 

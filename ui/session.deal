@@ -2,7 +2,7 @@
 // Transport ingress uses DEAL JSON-number grammar, not host-language coercion.
 export function payloadNumber(text: string): number {
     const value: number = JSON.parse(text);
-    if (value-value !== 0) { throw {name:"UI3007",message:"Expected finite JSON number"}; }
+    if (!Number.isFinite(value)) { throw {name:"UI3007",message:"Expected finite JSON number"}; }
     return value;
 }
 
@@ -12,7 +12,7 @@ export function payloadNumber(text: string): number {
 export class FrameClock { visible: boolean; previous: number; delta: number; }
 export function frameVisibility(visible: boolean): FrameClock { return {visible:visible,previous:-1,delta:-1}; }
 export function frameSample(current: FrameClock, now: number): FrameClock {
-    if (now-now !== 0 || now < 0) { throw {name:"UI3006",message:"Invalid frame time"}; }
+    if (!Number.isFinite(now) || now < 0) { throw {name:"UI3006",message:"Invalid frame time"}; }
     if (!current.visible) { return current; }
     let delta: number = 0;
     if (current.previous >= 0 && now >= current.previous) { delta = now-current.previous; }

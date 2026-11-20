@@ -15,104 +15,105 @@ export class Patch {
   node: core.ViewNode;
 }
 
-export class Plan { patches: Patch[] ; }
+export class Plan { patches: Patch[]; }
 
+// Compare identity fields, not recursively checked node graphs. Keep the exported
+// node-shaped convenience API; reconciliation itself uses primitive identities.
+function sameIdentity(ls: string, lk: string, ln: number, lt: string, rs: string, rk: string, rn: number, rt: string): boolean {
+  return ls === rs && lk === rk && (lk === "number" ? ln === rn : lk === "string" ? lt === rt : true);
+}
 export function identityEquals(left: core.ViewNode, right: core.ViewNode): boolean {
-  if (left.structural !== right.structural || left.keyKind !== right.keyKind) {
-    return false;
-  }
-  if (left.keyKind === "number") {
-    return left.keyNumber === right.keyNumber;
-  }
-  if (left.keyKind === "string") {
-    return left.keyString === right.keyString;
-  }
-  return true;
+  return sameIdentity(left.structural, left.keyKind, left.keyNumber, left.keyString, right.structural, right.keyKind, right.keyNumber, right.keyString);
 }
 
-function append(patches: Patch[], kind: string, node: core.ViewNode, parent: core.ViewNode, rootParent: boolean, index: number): null {
-  patches[patches.length] = {
-    kind: kind,
-    structural: node.structural,
-    keyKind: node.keyKind,
-    keyNumber: node.keyNumber,
-    keyString: node.keyString,
-    parentStructural: parent.structural,
-    parentKeyKind: parent.keyKind,
-    parentKeyNumber: parent.keyNumber,
-    parentKeyString: parent.keyString,
-    rootParent: rootParent,
-    index: index,
-    node: node
-  };
-  return null;
+// Length prefixes prevent collisions even for arbitrary UTF-16 structural/string
+// keys. String(number) preserves === key equality, including signed zero. NaN is
+// deliberately unindexed: under === it never matches, even another NaN.
+function identity(structural: string, kind: string, numberKey: number, stringKey: string): string {
+  return String(structural.length) + ":" + structural + String(kind.length) + ":" + kind + (kind === "number" ? String(numberKey) : kind === "string" ? stringKey : "");
+}
+function matchable(kind: string, numberKey: number): boolean {
+  return kind !== "number" || !Number.isNaN(numberKey);
 }
 
-function validateUnique(nodes: core.ViewNode[]): null {
-  let leftIndex: number = 0;
-  for (let left of nodes) {
-    let rightIndex: number = 0;
-    for (let right of nodes) {
-      if (leftIndex < rightIndex && identityEquals(left, right)) {
-        throw { name: "UI3003", message: "Duplicate sibling identity" };
-      }
-      rightIndex = rightIndex + 1;
-    }
-    validateUnique(left.children);
-    leftIndex = leftIndex + 1;
-  }
-  return null;
+function patch(kind: string, node: core.ViewNode, ps: string, pk: string, pn: number, pt: string, rootParent: boolean, index: number): Patch {
+  return {kind:kind, structural:node.structural, keyKind:node.keyKind, keyNumber:node.keyNumber, keyString:node.keyString,
+    parentStructural:ps, parentKeyKind:pk, parentKeyNumber:pn, parentKeyString:pt,
+    rootParent:rootParent, index:index, node:node};
 }
 
-function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], parent: core.ViewNode, patches: Patch[]): null {
-  validateUnique(next);
-  for (let old of previous) {
-    let retained: boolean = false;
-    for (let node of next) {
-      if (identityEquals(node, old) && node.component === old.component) {
-        retained = true;
-      }
+function validateUnique(nodes: core.ViewNode[]): void {
+  let seen: Record<string, unknown> = {};
+  for (let node of nodes) {
+    if (matchable(node.keyKind, node.keyNumber)) {
+      const key = identity(node.structural, node.keyKind, node.keyNumber, node.keyString);
+      if (Object.hasOwn(seen, key)) { throw {name:"UI3003", message:"Duplicate sibling identity"}; }
+      seen[key] = true;
     }
-    if (!retained) {
-      append(patches, "dispose", old, parent, false, 0);
-    }
+    validateUnique(node.children);
   }
-  let index: number = 0;
+}
+
+function reconcileChildren(previous: core.ViewNode[], next: core.ViewNode[], ps: string, pk: string, pn: number, pt: string): Patch[] {
+  let patches: Patch[] = [];
+  let nextIndex: Record<string, unknown> = {};
+  let previousIndex: Record<string, unknown> = {};
+  let index = 0;
   for (let node of next) {
-    let retained: boolean = false;
-    for (let old of previous) {
-      if (identityEquals(old, node) && old.component === node.component) {
-        retained = true;
-        append(patches, "update", node, parent, false, index);
-        reconcileChildren(old.children, node.children, node, patches);
+    if (matchable(node.keyKind, node.keyNumber)) { nextIndex[identity(node.structural, node.keyKind, node.keyNumber, node.keyString)] = index; }
+    index++;
+  }
+  index = 0;
+  for (let old of previous) {
+    let retained = false;
+    if (matchable(old.keyKind, old.keyNumber)) {
+      const key = identity(old.structural, old.keyKind, old.keyNumber, old.keyString);
+      // Preserve historical behavior even for an untrusted previous tree with
+      // repeated identities: all matching old occurrences update in old order.
+      let occurrences: number[] = [];
+      if (Object.hasOwn(previousIndex, key)) { occurrences = previousIndex[key] as number[]; }
+      occurrences.push(index);
+      previousIndex[key] = occurrences;
+      if (Object.hasOwn(nextIndex, key)) { retained = next[nextIndex[key] as number].component === old.component; }
+    }
+    if (!retained) { patches.push(patch("dispose", old, ps, pk, pn, pt, false, 0)); }
+    index++;
+  }
+  index = 0;
+  for (let node of next) {
+    let retained = false;
+    const key = identity(node.structural, node.keyKind, node.keyNumber, node.keyString);
+    if (matchable(node.keyKind, node.keyNumber) && Object.hasOwn(previousIndex, key)) {
+      const occurrences = previousIndex[key] as number[];
+      for (let oldIndex of occurrences) {
+        const old = previous[oldIndex];
+        if (old.component === node.component) {
+          retained = true;
+          patches.push(patch("update", node, ps, pk, pn, pt, false, index));
+          for (let child of reconcileChildren(old.children, node.children, node.structural, node.keyKind, node.keyNumber, node.keyString)) { patches.push(child); }
+        }
       }
     }
-    if (!retained) {
-      append(patches, "create", node, parent, false, index);
-    }
-    index = index + 1;
+    if (!retained) { patches.push(patch("create", node, ps, pk, pn, pt, false, index)); }
+    index++;
   }
-  return null;
+  return patches;
 }
 
 export function plan(previous: core.ViewNode | null, next: core.ViewNode): Plan {
+  // One semantic uniqueness traversal per next tree, before emitting any patch.
   validateUnique(next.children);
   let patches: Patch[] = [];
-  let root: core.ViewNode = core.node("", "", core.noKey(), [], []);
   if (previous === null) {
-    append(patches, "create", next, root, true, 0);
-    return { patches: patches };
+    patches.push(patch("create", next, "", "none", 0, "", true, 0));
+    return {patches:patches};
   }
-  let old: core.ViewNode = next;
-  if (previous !== null) {
-    old = previous;
+  if (!sameIdentity(previous.structural, previous.keyKind, previous.keyNumber, previous.keyString, next.structural, next.keyKind, next.keyNumber, next.keyString) || previous.component !== next.component) {
+    patches.push(patch("dispose", previous, "", "none", 0, "", true, 0));
+    patches.push(patch("create", next, "", "none", 0, "", true, 0));
+    return {patches:patches};
   }
-  if (!identityEquals(old, next) || old.component !== next.component) {
-    append(patches, "dispose", old, root, true, 0);
-    append(patches, "create", next, root, true, 0);
-    return { patches: patches };
-  }
-  append(patches, "update", next, root, true, 0);
-  reconcileChildren(old.children, next.children, next, patches);
-  return { patches: patches };
+  patches.push(patch("update", next, "", "none", 0, "", true, 0));
+  for (let child of reconcileChildren(previous.children, next.children, next.structural, next.keyKind, next.keyNumber, next.keyString)) { patches.push(child); }
+  return {patches:patches};
 }

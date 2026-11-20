@@ -1,0 +1,15 @@
+import * as core from "./core";
+import * as reconcile from "./reconcile";
+class Request { previous: core.ViewNode | null; next: core.ViewNode; }
+export function run(input: string): string {
+  const request: Request = JSON.parse(input);
+  return JSON.stringify(reconcile.plan(request.previous,request.next)) as string;
+}
+export function numericKeys(kind: string): string {
+  let keys: number[] = kind === "nan" ? [0/0,0/0] : kind === "zero" ? [0,-0] : [1/0,-1/0];
+  let children: core.ViewNode[] = [];
+  for (let key of keys) { children.push(core.node("Text","row",core.numberKey(key),[],[])); }
+  const tree = core.node("Column","root",core.noKey(),[],children);
+  return JSON.stringify(reconcile.plan(tree,tree)) as string;
+}
+export function main(): void { return; }
