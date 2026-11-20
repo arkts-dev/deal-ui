@@ -14,6 +14,7 @@ public final class UiDiagnostic extends RuntimeException {
     private final String actual;
     private final String repairArtifact;
     private transient UiModel.Node owningNode;
+    private transient deal.diagnostics.CompilerDiagnostic compilerDiagnostic;
     private final transient java.util.List<deal.diagnostics.DiagnosticNote> notes;
 
     public UiDiagnostic(String code, String message, Path file, int line, int column) {
@@ -34,7 +35,9 @@ public final class UiDiagnostic extends RuntimeException {
     public UiDiagnostic(deal.diagnostics.CompilerDiagnostic diagnostic) {
         this(diagnostic.code(), diagnostic.message(), Path.of(diagnostic.range().file()),
                 diagnostic.range().startLine(), diagnostic.range().startColumn(),
-                diagnostic.range().endLine(), diagnostic.range().endColumn(), "", "", diagnostic.notes());
+                diagnostic.range().endLine(), Math.max(1, diagnostic.range().endColumn() - 1),
+                diagnostic.facts().expected(), diagnostic.facts().actual(), diagnostic.notes());
+        this.compilerDiagnostic = diagnostic;
     }
 
     private UiDiagnostic(String code, String message, Path file, int line, int column,
@@ -63,6 +66,7 @@ public final class UiDiagnostic extends RuntimeException {
         if (!java.util.List.of("deal", "dealui", "pack").contains(artifact)) throw new IllegalArgumentException("Unknown repair artifact");
         var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, artifact);
         result.owningNode = owningNode;
+        result.compilerDiagnostic = compilerDiagnostic;
         return result;
     }
 
@@ -73,8 +77,12 @@ public final class UiDiagnostic extends RuntimeException {
         if (owningNode != null) return this;
         var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, repairArtifact);
         result.owningNode = java.util.Objects.requireNonNull(node);
+        result.compilerDiagnostic = compilerDiagnostic;
         return result;
     }
+
+    /** Exact producer diagnostic, including facts/range/revision; null for UI-owned rules. */
+    public deal.diagnostics.CompilerDiagnostic compilerDiagnostic() { return compilerDiagnostic; }
 
     public String repairArtifact() { return repairArtifact; }
 
