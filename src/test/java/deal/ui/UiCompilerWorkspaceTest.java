@@ -54,6 +54,7 @@ public final class UiCompilerWorkspaceTest {
     }
 
     public static void main(String[] args) {
+        compilerDiagnosticEvidenceSurvivesUiWrapping();
         quotedSyntaxRemainsLiteralText();
         hostReadinessUsesPackAndActionTypes();
         diagnosticEvidenceUsesRejectedUiAndRealFile();
@@ -82,6 +83,20 @@ public final class UiCompilerWorkspaceTest {
         repairWorkspacePatchesOnlyRejectedUiSlot();
         repairCanAllocateNewUiNodeSlot();
         System.out.println("UiCompilerWorkspaceTest: all tests passed");
+    }
+
+    private static void compilerDiagnosticEvidenceSurvivesUiWrapping() {
+        var lexed = new deal.lexer.Lexer("export function broken(): void { const x = ; }", "candidate.deal").tokenize();
+        var parsed = new deal.parser.Parser(lexed.tokens(), "candidate.deal").parse();
+        var producer = parsed.diagnostics().getFirst();
+        var wrapped = new UiDiagnostic(producer).withRepairArtifact("deal");
+        check(wrapped.compilerDiagnostic() == producer, "UI wrapper preserves the exact compiler diagnostic");
+        check(wrapped.expected().equals(producer.facts().expected())
+                && wrapped.actual().equals(producer.facts().actual()), "typed facts survive UI wrapping");
+        check(wrapped.endColumn() + 1 == producer.range().endColumn(), "inclusive UI coordinates project half-open compiler ranges");
+        check(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(wrapped.compilerDiagnostic()))
+                .equals(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(producer))),
+                "range, facts, notes and occurrence serialization is unchanged");
     }
 
     private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {
