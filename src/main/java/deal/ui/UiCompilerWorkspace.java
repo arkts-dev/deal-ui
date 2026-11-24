@@ -100,6 +100,7 @@ public final class UiCompilerWorkspace {
             allowedOperations = List.copyOf(allowedOperations);
             diagnostics = List.copyOf(diagnostics);
         }
+        public String toJson() { return UiDiagnosticJson.encode(this); }
     }
 
     public record UiImpactReport(
@@ -127,6 +128,7 @@ public final class UiCompilerWorkspace {
         public UiChangeResult {
             diagnostics = List.copyOf(diagnostics);
         }
+        public String toJson() { return UiDiagnosticJson.encode(this); }
     }
 
     public record UiSemanticSlice(
@@ -780,6 +782,8 @@ public final class UiCompilerWorkspace {
         Analysis checked = analyze(dealSource, candidate, packSource, packSpecifier);
         if (hasErrors(checked.inspection().diagnostics())) {
             List<StructuredDiagnostic> scoped = checked.inspection().diagnostics().stream()
+                    .map(value -> value.occurrence() == null ? value : value.withOccurrence(value.occurrence()
+                            .withSnapshotKind(deal.diagnostics.DiagnosticOccurrence.SnapshotKind.REJECTED_CANDIDATE)))
                     .map(value -> scopeDiagnostic(value, requested, base))
                     .toList();
             return new UiChangeResult(
@@ -1086,7 +1090,7 @@ public final class UiCompilerWorkspace {
     private static String uiWorkspaceId(String deal, String pack, String packSpecifier, String baseDigest,
                                         String inspectionDigest, List<Map<String, String>> payloads) {
         return AmendWorkspace.digest(CompilerProtocolJson.encode(List.of(
-                "ui-repair-context-v2", AmendWorkspace.digest(deal), AmendWorkspace.digest(pack),
+                "ui-repair-context-v3", AmendWorkspace.digest(deal), AmendWorkspace.digest(pack),
                 packSpecifier, baseDigest, inspectionDigest, payloads)));
     }
 
@@ -1182,12 +1186,15 @@ public final class UiCompilerWorkspace {
                     ownerId, failure.expected(), failure.actual(), List.of(), repairScopes,
                     null,
                     failure.notes());
-            var producer = failure.compilerDiagnostic();
-            if (producer != null) {
-                diagnostic = new StructuredDiagnostic(producer.code(), producer.severity(), producer.message(),
+            failure.withSources(Map.of("/generated/app.deal", dealSource, "/generated/app.dealui", uiSource,
+                    "/generated/platform-ui.dealui-pack", packSource));
+            var batch = new ArrayList<StructuredDiagnostic>();
+            for (var producer : failure.diagnostics()) {
+                batch.add(new StructuredDiagnostic(producer.code(), producer.severity(), producer.message(),
                         producer.range(), ownerId, producer.facts(), List.of(), repairScopes, null,
-                        producer.notes(), null, producer.missingSymbols(), producer.excerpt(), producer.occurrence());
+                        producer.notes(), null, producer.missingSymbols(), producer.excerpt(), producer.occurrence()));
             }
+            diagnostic = batch.getFirst();
             if (uiOwned) {
                 var target = targets.get(ownerId);
                 String fingerprint = target == null || target.kind().equals("document") ? digest
@@ -1200,11 +1207,10 @@ public final class UiCompilerWorkspace {
             UiInspection inspection = new UiInspection(
                     digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,
-                    ALLOWED_OPERATIONS, List.of(diagnostic));
+                    ALLOWED_OPERATIONS, batch.size() == 1 ? List.of(diagnostic) : List.copyOf(batch));
             return new Analysis(uiSource, inspection, documentId, targets, index);
         } catch (RuntimeException failure) {
-            List<RepairScope> repairScopes = viewSnapshots.isEmpty()
-                    ? List.of(new RepairScope(ADD_VIEW, documentId)) : List.of();
+            List<RepairScope> repairScopes = List.of();
             StructuredDiagnostic diagnostic = new StructuredDiagnostic(
                     "CP2999", "error", failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage(),
                     null, documentId, "", "", List.of(), repairScopes, null, List.of());

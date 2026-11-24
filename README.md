@@ -20,6 +20,16 @@ runtime-js/session.js coordinates mounted-root drain/effects using compiler-issu
 
 The CLI and build scripts default to the sibling `../deal` compiler checkout, independent of the calling directory. Set DEAL_FS_ROOT to another matched compiler checkout. Outputs/evidence stay under build/ or private command directories. Examples cover gallery composition, payloads, keyed lists, forms, navigation, async policies, optimism, virtualization and overlays using local state.
 
+## Diagnostics
+
+Compiler diagnostics use the shared [JSON v3 protocol](../deal/fs/docs/diagnostics-protocol-v3.md): no legacy envelopes or fallback formats. `--diagnostics-json PATH` writes accepted/rejected/failed reports; source rejections without that option print the same v3 report to stderr. Exit 1 denotes rejection, exit 2 an operational failure when a report is requested.
+
+`UiDiagnostic.toJson(projectRoot)` serializes the complete retained producer batch, shared file revisions, UTF-16 ranges, context, notes and evidence. `withRepairArtifact` and node attachment preserve that batch. UI-owned syntax/type rules carry their own registered source responsibility; core producer facts are not reconstructed from messages. Sources are captured when consumed, never reread during diagnostic serialization. Hosts must transport the full JSON unchanged rather than select `compilerDiagnostic()` or flatten exception messages.
+
+Use `UiInspection.toJson()`, `UiChangeResult.toJson()`, `CanonicalCompiler.Inspection.toJson()`, or `UiDiagnosticJson.encode(response)` for UI diagnostic-bearing responses. Repair results use the same encoder and shared diagnostic indexes in slots. Java records remain in-process facts, not an alternative diagnostic wire format. `UiCompilationFailure.toJson()` retains the downstream compiler report verbatim.
+
+Embedding-owned fragment and Android adapters must consume these batch/report APIs; this repository does not own those adapters. Runtime/session/checkpoint protocols are separate and unchanged.
+
 Portable UiPortableBridge preserves store/reconciliation/action/effect/state semantics without Swing/AWT; checked metadata supplies root/action/component/pack identities and capabilities. Native hosts own lifecycle/rendering; portable targets cannot run standalone.
 
 host/storage exposes async load/save/remove through ordinary @ui-effect ordering. Android uses private preferences; DEAL owns serialization and save/restore decisions, never native reflection.

@@ -7,29 +7,33 @@ import java.util.List;
 import java.util.Map;
 
 public final class UiParser {
-    private enum K { ID, STRING, NUMBER, SYMBOL, EOF }
+    private enum K { ID, STRING, NUMBER, TEMPLATE, SYMBOL, EOF }
     private record T(K kind, String text, int line, int column, int endLine, int endColumn) {}
 
     private final Path file;
+    private final String source;
     private final List<T> tokens;
     private int position;
 
     private UiParser(Path file, String source) {
         this.file = file;
+        this.source = source;
         try {
             tokens = lex(source);
         } catch (UiDiagnostic failure) {
             throw new UiDiagnostic(failure.code(), failure.getMessage(), file, failure.line(), failure.column(),
-                    failure.endLine(), failure.endColumn(), failure.expected(), failure.actual());
+                    failure.endLine(), failure.endColumn(), failure.expected(), failure.actual()).withSources(Map.of(file.toString(), source));
         }
     }
 
     public static UiModel.ViewModule parseViews(Path file, String source) {
-        return new UiParser(file, source).views(source);
+        try { return new UiParser(file, source).views(source); }
+        catch (UiDiagnostic failure) { throw failure.withSources(Map.of(file.toString(), source)); }
     }
 
     public static UiModel.PackModule parsePack(Path file, String source) {
-        return new UiParser(file, source).pack(source);
+        try { return new UiParser(file, source).pack(source); }
+        catch (UiDiagnostic failure) { throw failure.withSources(Map.of(file.toString(), source)); }
     }
 
     private UiModel.ViewModule views(String source) {
@@ -151,6 +155,7 @@ public final class UiParser {
         List<UiModel.Import> result = new ArrayList<>();
         while (at("import")) {
             T start = take();
+            if (!at("*")) unsupported("UI1020", "Named/default/side-effect imports are not supported; use import * as alias from \"module\"", peek());
             require("*");
             require("as");
             String alias = id();
@@ -171,6 +176,8 @@ public final class UiParser {
 
     private UiModel.Node node() {
         T start = peek();
+        if (at("if")) unsupported("UI1021", "Imperative if is not a view node; use When(condition) { ... } Else { ... }", start);
+        if (at("<")) unsupported("UI1021", "JSX is not supported; use a named component invocation", start);
         if (atNamespacedStructural("When") || atNamespacedStructural("ForEach")) {
             String structural = tokens.get(position + 2).text();
             fail(
@@ -189,7 +196,9 @@ public final class UiParser {
         }
         if (match("ForEach")) {
             require("(");
+            if (!at(K.ID)) unsupported("UI1022", "ForEach requires a direct collection path; prepare computed collections in DEAL", peek());
             UiModel.PathExpr source = path();
+            if (!at(",")) unsupported("UI1022", "ForEach requires a direct collection path; prepare computed collections in DEAL", peek());
             require(",");
             String item = id();
             require(":");
@@ -206,6 +215,9 @@ public final class UiParser {
         Map<String, UiModel.Expr> arguments = new LinkedHashMap<>();
         if (!at(")")) {
             do {
+                if (at("{")) unsupported("UI1023", "Object-wrapped props are not supported; write Component(prop: value)", peek());
+                if (!at(K.ID) || position + 1 >= tokens.size() || !tokens.get(position + 1).text().equals(":"))
+                    unsupported("UI1023", "Positional arguments are not supported; write Component(prop: value)", peek());
                 String argument = id();
                 require(":");
                 if (arguments.putIfAbsent(argument, expression()) != null) fail("UI1004", "Duplicate argument '" + argument + "'", start);
@@ -225,6 +237,7 @@ public final class UiParser {
 
     private UiModel.Expr expression() {
         UiModel.Expr value = binary(1);
+        rejectExpressionToken();
         if (at("?")) {
             fail(
                 "UI1015",
@@ -259,6 +272,9 @@ public final class UiParser {
 
     private UiModel.Expr unary() {
         T start = peek();
+        if (at("[") || at("{") || at(K.TEMPLATE)) unsupported("UI1024", "Array/object/template literals are not view expressions; prepare a field in DEAL", start);
+        if (at("<")) unsupported("UI1021", "JSX/type assertions are not view expressions; use named components and checked DEAL fields", start);
+        if (at("typeof") || at("instanceof") || at("~")) unsupported("UI1025", "Operator '" + start.text() + "' is not supported in view expressions; compute a field in DEAL", start);
         if (match("!") || match("-")) return new UiModel.Unary(previous().text(), unary(), span(start));
         if (match("(")) {
             UiModel.Expr value = expression();
@@ -298,6 +314,35 @@ public final class UiParser {
         UiModel.PathExpr value = path();
         if (at("(")) fail("UI1016", "Function calls are not supported in view expressions. Compute this value in DEAL and bind a state/row field.", peek());
         return value;
+    }
+
+    private void rejectExpressionToken() {
+        T token = peek();
+        if (at("==") || at("!=")) unsupported("UI1026", "Coercing equality '" + token.text() + "' is not supported. Strict ===/!== do not coerce and distinguish null from undefined; choose the intended comparison in DEAL", token);
+        if (at("??")) unsupported("UI1027", "Nullish coalescing is not supported in views; prepare the fallback in DEAL", token);
+        if (at("?.")) unsupported("UI1028", "Optional chaining is not supported in views; prepare a safe field in DEAL or use When/has", token);
+        if (at("[")) unsupported("UI1029", "Indexing is not supported in views; use ForEach or prepare a selected field in DEAL", token);
+        if (at("!")) unsupported("UI1030", "Postfix non-null assertion is not supported; check presence in DEAL", token);
+        if (at(K.TEMPLATE)) unsupported("UI1024", "Tagged templates are not view expressions; prepare text in DEAL", token);
+        if (List.of("%", "**", "&", "|", "^", "~", "<<", ">>", ">>>", "as", "typeof", "instanceof").contains(token.text()) && token.kind() != K.STRING)
+            unsupported("UI1025", "Operator '" + token.text() + "' is not supported in view expressions; compute a field in DEAL", token);
+        if (List.of("=", "+=", "-=", "*=", "/=", "%=", "**=", "&&=", "||=", "??=", "&=", "|=", "^=", "<<=", ">>=", ">>>=", "++", "--").contains(token.text()) && token.kind() == K.SYMBOL)
+            unsupported("UI1031", "Assignment/update is not supported in declarative views; dispatch an action to a DEAL update", token);
+    }
+
+    private void unsupported(String code, String message, T token) {
+        throw new UiDiagnostic(code, message, file, token.line(), token.column(), token.endLine(), token.endColumn(),
+                "supported declarative view syntax", token.text())
+                .withFacts(new deal.diagnostics.DiagnosticFacts(code, "ui.parse", "supported declarative view syntax", token.text(),
+                        List.of("Compute application values in DEAL; bind declared fields or use When/ForEach in the view."), List.of(), null, null, null,
+                        new deal.diagnostics.DiagnosticFacts.SyntaxContext(switch (code) {
+                            case "UI1020" -> "ui.import";
+                            case "UI1021" -> "ui.node";
+                            case "UI1022" -> "ui.foreach";
+                            case "UI1023" -> "ui.invocation";
+                            default -> "ui.expression";
+                        }, List.of("declarative expression/node"), token.kind().name(), token.text(), token.text().length(), false)))
+                .withSources(Map.of(file.toString(), source));
     }
 
     private UiModel.Expr packDefault() {
@@ -371,6 +416,7 @@ public final class UiParser {
     }
     private UiModel.Span span(T token) {
         T end = position == 0 ? token : previous();
+        if (end.line() < token.line() || end.line() == token.line() && end.column() < token.column()) end = token;
         return new UiModel.Span(file, token.line(), token.column(), end.endLine(), end.endColumn());
     }
     private T peek() { return tokens.get(position); }
@@ -463,12 +509,27 @@ public final class UiParser {
                 result.add(new T(K.STRING, value.toString(), startLine, startColumn, line, column - 1));
                 continue;
             }
-            String two = i + 1 < source.length() ? source.substring(i, i + 2) : "";
-            if (List.of("||", "&&", "===", "!==", "<=", ">=").contains(two) || (i + 2 < source.length() && List.of("===", "!==").contains(source.substring(i, i + 3)))) {
-                String op = (source.startsWith("===", i) || source.startsWith("!==", i)) ? source.substring(i, i + 3) : two;
+            if (c == '`') {
+                int start = i++; column++;
+                boolean closed = false;
+                while (i < source.length()) {
+                    char d = source.charAt(i++);
+                    if (d == '\n') { line++; column = 1; } else column++;
+                    if (d == '`') { closed = true; break; }
+                    if (d == '\\' && i < source.length()) { if (source.charAt(i++) == '\n') { line++; column = 1; } else column++; }
+                }
+                if (!closed) throw new UiDiagnostic("UI1024", "Unterminated template literal; templates are not view expressions", Path.of("<source>"), startLine, startColumn);
+                result.add(new T(K.TEMPLATE, source.substring(start, i), startLine, startColumn, line, column - 1));
+                continue;
+            }
+            String op = null;
+            for (String candidate : List.of(">>>=", "===", "!==", "**=", "&&=", "||=", "??=", "<<=", ">>=", ">>>", "==", "!=", "??", "?.", "**", "<<", ">>", "||", "&&", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "++", "--")) {
+                if (source.startsWith(candidate, i)) { op = candidate; break; }
+            }
+            if (op != null) {
                 result.add(new T(K.SYMBOL, op, startLine, startColumn, line, startColumn + op.length() - 1)); i += op.length(); column += op.length(); continue;
             }
-            if ("{}()[]:,.?;=+-*/!<>|".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
+            if ("{}()[]:,.?;=+-*/!<>|%&^~".indexOf(c) >= 0) { result.add(new T(K.SYMBOL, Character.toString(c), startLine, startColumn, line, column)); i++; column++; continue; }
             throw new UiDiagnostic("UI1013", "Unexpected character '" + c + "'", Path.of("<source>"), line, column);
         }
         result.add(new T(K.EOF, "", line, column, line, column));

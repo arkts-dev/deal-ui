@@ -12,8 +12,11 @@ public final class Main {
         try {
             int exit = run(args);
             if (exit != 0) System.exit(exit);
+        } catch (UiCompilationFailure failure) {
+            System.err.println(failure.toJson());
+            System.exit(failure.status());
         } catch (UiDiagnostic diagnostic) {
-            System.err.println(diagnostic.format());
+            System.err.println(diagnostic.toJson(Path.of("").toAbsolutePath()));
             System.exit(1);
         } catch (Exception failure) {
             System.err.println("deal-ui: " + failure.getMessage());
@@ -23,6 +26,37 @@ public final class Main {
     }
 
     static int run(String[] args) throws Exception {
+        Path report = null;
+        var remaining = new java.util.ArrayList<String>();
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--diagnostics-json")) {
+                if (++i == args.length) throw new IllegalArgumentException("--diagnostics-json requires path");
+                report = Path.of(args[i]);
+            } else remaining.add(args[i]);
+        }
+        try {
+            int status = execute(remaining.toArray(String[]::new));
+            if (report != null) Files.writeString(report, UiDiagnosticJson.encode(Path.of("").toAbsolutePath(), java.util.List.of(), java.util.Map.of()));
+            return status;
+        } catch (UiDiagnostic diagnostic) {
+            if (report == null) throw diagnostic;
+            Files.writeString(report, diagnostic.toJson(Path.of("").toAbsolutePath()));
+            return 1;
+        } catch (UiCompilationFailure failure) {
+            if (report == null) throw failure;
+            Files.writeString(report, failure.toJson());
+            return failure.status();
+        } catch (Exception failure) {
+            if (report == null) throw failure;
+            var operational = new deal.diagnostics.OperationalDiagnostic("ui.operation.failed", "ui.compile", "OPERATIONAL", "HOST_CONTRACT",
+                    failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage(), deal.diagnostics.DiagnosticFacts.EMPTY);
+            Files.writeString(report, deal.amend.CompilerProtocolJson.encode(new deal.diagnostics.DiagnosticJson(null, null)
+                    .compiler(java.util.List.of(), java.util.List.of(operational), null)));
+            return 2;
+        }
+    }
+
+    private static int execute(String[] args) throws Exception {
         if (args.length == 0 || args[0].equals("--help")) { usage(); return args.length == 0 ? 1 : 0; }
         String command = args[0];
         Path source = null;
@@ -81,5 +115,5 @@ public final class Main {
     }
     private static Path runtimeClasses() throws Exception { return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()); }
     private static Path defaultFsRoot() { String configured = System.getenv("DEAL_FS_ROOT"); return configured == null || configured.isBlank() ? Path.of("../deal") : Path.of(configured); }
-    private static void usage() { System.err.println("Usage: deal-ui <check|dump-ir|build|run> <root.dealui> [--fs-root PATH] [--renderer swing|portable]"); }
+    private static void usage() { System.err.println("Usage: deal-ui <check|dump-ir|build|run> <root.dealui> [--fs-root PATH] [--renderer swing|portable] [--diagnostics-json PATH]"); }
 }

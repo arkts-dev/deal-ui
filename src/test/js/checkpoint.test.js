@@ -8,7 +8,7 @@ configureDealCapabilities([{module:'host/work',functions:[{name:'run',parameters
 const a=dealLoad(factories,'experience_entry.js'),b=dealLoad(factories,'experience_entry.js');
 
 assert.equal(a.rt.encodeGraph,undefined);assert.equal(a.rt.decodeGraph,undefined);
-assert.equal(fs.readFileSync(path.join(out,'deal/runtime.js'),'utf8'),fs.readFileSync(path.join(ui,'../deal/deal/runtime.js'),'utf8'),'Emitted runtime differs from canonical source');
+assert.equal(fs.readFileSync(path.join(out,'deal/runtime.js'),'utf8'),fs.readFileSync(path.join(process.env.DEAL_FS_ROOT || path.join(ui,'../deal'),'deal/runtime.js'),'utf8'),'Emitted runtime differs from canonical source');
 const schema=a.checkpointSchema;
 const ca=createDealUiCheckpoint(a.rt,schema,'proof'),cb=createDealUiCheckpoint(b.rt,schema,'proof');
 const original=a.entry.proofInitial.$f(),wire=JSON.parse(JSON.stringify(ca.encode(original))),descriptor=a.entry.proofInitial.$sig.slice(4),restored=cb.decode(wire,descriptor);

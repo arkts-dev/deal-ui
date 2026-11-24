@@ -15,6 +15,9 @@ public final class UiDiagnostic extends RuntimeException {
     private final String repairArtifact;
     private transient UiModel.Node owningNode;
     private transient deal.diagnostics.CompilerDiagnostic compilerDiagnostic;
+    private transient java.util.List<deal.diagnostics.CompilerDiagnostic> compilerDiagnostics = java.util.List.of();
+    private transient java.util.Map<String, String> sources = java.util.Map.of();
+    private transient deal.diagnostics.DiagnosticFacts facts;
     private final transient java.util.List<deal.diagnostics.DiagnosticNote> notes;
 
     public UiDiagnostic(String code, String message, Path file, int line, int column) {
@@ -38,6 +41,42 @@ public final class UiDiagnostic extends RuntimeException {
                 diagnostic.range().endLine(), Math.max(1, diagnostic.range().endColumn() - 1),
                 diagnostic.facts().expected(), diagnostic.facts().actual(), diagnostic.notes());
         this.compilerDiagnostic = diagnostic;
+        this.compilerDiagnostics = java.util.List.of(diagnostic);
+    }
+
+    /** One exception transports the entire ordered producer result, including warnings. */
+    public static UiDiagnostic compilerBatch(java.util.List<deal.diagnostics.CompilerDiagnostic> diagnostics,
+                                              Path file, String source) {
+        var first = diagnostics.stream().filter(d -> d.severity().equals("error")).findFirst().orElseThrow();
+        var result = new UiDiagnostic(first);
+        result.compilerDiagnostics = java.util.List.copyOf(diagnostics);
+        return result.withSources(java.util.Map.of(file.toString(), source));
+    }
+
+    /** Capture consumed bytes now; serialization never rereads paths or substitutes newer text. */
+    public UiDiagnostic withSources(java.util.Map<String, String> observed) {
+        var all = new java.util.LinkedHashMap<>(sources);
+        observed.forEach(all::putIfAbsent);
+        sources = java.util.Map.copyOf(all);
+        return this;
+    }
+
+    public java.util.List<deal.diagnostics.CompilerDiagnostic> compilerDiagnostics() { return compilerDiagnostics; }
+    public java.util.Map<String, String> sources() { return sources; }
+    public deal.diagnostics.DiagnosticFacts facts() {
+        return facts == null ? new deal.diagnostics.DiagnosticFacts(code, "ui.check", expected, actual, java.util.List.of()) : facts;
+    }
+    public UiDiagnostic withFacts(deal.diagnostics.DiagnosticFacts value) { facts = java.util.Objects.requireNonNull(value); return this; }
+
+    public java.util.List<deal.diagnostics.CompilerDiagnostic> diagnostics() {
+        if (!compilerDiagnostics.isEmpty()) return compilerDiagnostics;
+        return java.util.List.of(UiDiagnosticJson.producer(this));
+    }
+
+    public String toJson(Path projectRoot) { return UiDiagnosticJson.encode(projectRoot, diagnostics(), sources); }
+
+    public String toJson(Path projectRoot, java.util.Map<String, String> observed) {
+        return withSources(observed).toJson(projectRoot);
     }
 
     private UiDiagnostic(String code, String message, Path file, int line, int column,
@@ -66,7 +105,10 @@ public final class UiDiagnostic extends RuntimeException {
         if (!java.util.List.of("deal", "dealui", "pack").contains(artifact)) throw new IllegalArgumentException("Unknown repair artifact");
         var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, artifact);
         result.owningNode = owningNode;
+        result.facts = facts;
         result.compilerDiagnostic = compilerDiagnostic;
+        result.compilerDiagnostics = compilerDiagnostics;
+        result.sources = sources;
         return result;
     }
 
@@ -77,34 +119,15 @@ public final class UiDiagnostic extends RuntimeException {
         if (owningNode != null) return this;
         var result = new UiDiagnostic(code, getMessage(), file, line, column, endLine, endColumn, expected, actual, notes, repairArtifact);
         result.owningNode = java.util.Objects.requireNonNull(node);
+        result.facts = facts;
         result.compilerDiagnostic = compilerDiagnostic;
+        result.compilerDiagnostics = compilerDiagnostics;
+        result.sources = sources;
         return result;
     }
 
     /** Exact producer diagnostic, including facts/range/revision; null for UI-owned rules. */
     public deal.diagnostics.CompilerDiagnostic compilerDiagnostic() { return compilerDiagnostic; }
-
-    /** The compiler v3 serializer owns snapshot/file/context indexes for both core and UI diagnostics. */
-    public String toJson(Path projectRoot, java.util.Map<String, String> sources) {
-        var producer = compilerDiagnostic;
-        if (producer == null) {
-            String path = file == null ? "" : file.toString();
-            var range = new deal.diagnostics.DiagnosticRange(path, line, column, endLine, endColumn + 1,
-                    -1, -1, -1, deal.diagnostics.RangeOrigin.SOURCE);
-            producer = new deal.diagnostics.CompilerDiagnostic(code, "error", getMessage(), range, notes,
-                    null, java.util.List.of(), new deal.diagnostics.DiagnosticFacts(code, "ui.check", expected, actual, java.util.List.of()));
-            String source = sources.get(path);
-            if (source != null) producer = producer.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(path, source, producer));
-        }
-        var report = new deal.diagnostics.DiagnosticJson(projectRoot, deal.diagnostics.DiagnosticSourceBatch.observed(sources))
-                .compiler(java.util.List.of(producer), java.util.List.of(), null);
-        if (compilerDiagnostic == null) {
-            // This producer owns UI source rules; never infer responsibility from a diagnostic-code prefix.
-            @SuppressWarnings("unchecked") var diagnostics = (java.util.List<java.util.Map<String, Object>>) report.get("diagnostics");
-            diagnostics.getFirst().put("responsibility", "SOURCE_CONTRACT");
-        }
-        return deal.amend.CompilerProtocolJson.encode(report);
-    }
 
     public String repairArtifact() { return repairArtifact; }
 

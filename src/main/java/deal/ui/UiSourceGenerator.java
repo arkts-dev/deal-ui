@@ -24,8 +24,17 @@ public final class UiSourceGenerator {
                                   Map<String, String> declarations) {
         var views = UiParser.parseViews(viewPath, viewSource);
         var checker = new UiChecker();
-        var checked = checker.check(viewPath, views, dealPath, checker.parseDeal(dealPath, dealSource), packs);
-        var generated = new UiDealGenerator(checked, frameworkRoot, packs, declarations).generateSession();
+        UiModel.CheckedProgram checked;
+        try { checked = checker.check(viewPath, views, dealPath, checker.parseDeal(dealPath, dealSource), packs); }
+        catch (UiDiagnostic failure) {
+            var observed = new java.util.LinkedHashMap<String, String>();
+            observed.put(viewPath.toString(), viewSource); observed.put(dealPath.toString(), dealSource);
+            packs.values().forEach(pack -> pack.classes().values().forEach(clazz -> observed.put(clazz.span().file().toString(), pack.source())));
+            throw failure.withSources(observed);
+        }
+        UiDealGenerator.Output generated;
+        try { generated = new UiDealGenerator(checked, frameworkRoot, packs, declarations).generateSession(); }
+        catch (UiDiagnostic failure) { throw failure.withSources(java.util.Map.of(viewPath.toString(), viewSource, dealPath.toString(), dealSource)); }
         return new Result(generated.source(), generated.appAugmentation(), checked);
     }
 }

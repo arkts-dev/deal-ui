@@ -42,6 +42,7 @@ public final class CanonicalCompiler {
         public Inspection {
             diagnostics = List.copyOf(diagnostics);
         }
+        public String toJson() { return UiDiagnosticJson.encode(this); }
     }
 
     /** Compact compiler-owned description used to derive an LLM agent surface. */
@@ -147,13 +148,10 @@ public final class CanonicalCompiler {
         try {
             pack = UiParser.parsePack(Path.of("/generated/platform-ui.dealui-pack"), packSource);
         } catch (UiDiagnostic failure) {
-            StructuredDiagnostic diagnostic = new StructuredDiagnostic(
-                    failure.code(), "error", failure.getMessage(),
-                    sourceRange(failure.file().toString(), failure.line(), failure.column(), failure.endLine(), failure.endColumn()),
-                    new SemanticId("dealui:pack:platform"), "valid component pack", "invalid pack",
-                    List.of(), List.of(), null, failure.notes());
             List<StructuredDiagnostic> diagnostics = new ArrayList<>(deal.diagnostics());
-            diagnostics.add(diagnostic);
+            failure.withSources(Map.of("/generated/platform-ui.dealui-pack", packSource));
+            for (var producer : failure.diagnostics()) diagnostics.add(structured(producer,
+                    new SemanticId("dealui:pack:platform"), List.of()));
             return new Inspection(deal, null, "", "", null, false, diagnostics);
         }
         ComponentPackSnapshot componentPack = componentPackSnapshot(pack);
@@ -447,15 +445,9 @@ public final class CanonicalCompiler {
                     .filter(operation -> operationOwns(operation, owner))
                     .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
                     .toList();
-            return List.of(new StructuredDiagnostic(
-                    failure.code(), "error", failure.getMessage(),
-                    sourceRange(failure.file().toString(), failure.line(), failure.column(),
-                            failure.endLine(), failure.endColumn()),
-                    owner,
-                    failure.expected().isBlank() ? "valid Deal UI framework handler contract" : failure.expected(),
-                    failure.actual().isBlank() ? failure.getMessage() : failure.actual(),
-                    List.of(), targetedScopes.isEmpty() ? transactionScopes : targetedScopes,
-                    null, failure.notes()));
+            failure.withSources(Map.of("/generated/app.deal", source));
+            return failure.diagnostics().stream().map(producer -> structured(producer, owner,
+                    targetedScopes.isEmpty() ? transactionScopes : targetedScopes)).toList();
         }
         if (inspection.appInterface() == null) {
             return List.of();
@@ -529,6 +521,13 @@ public final class CanonicalCompiler {
                     related, targetedScopes, null, List.of()));
         }
         return List.copyOf(diagnostics);
+    }
+
+    private static StructuredDiagnostic structured(deal.diagnostics.CompilerDiagnostic producer,
+            SemanticId owner, List<RepairScope> scopes) {
+        return new StructuredDiagnostic(producer.code(), producer.severity(), producer.message(), producer.range(),
+                owner, producer.facts(), List.of(), scopes, null, producer.notes(), null,
+                producer.missingSymbols(), producer.excerpt(), producer.occurrence());
     }
 
     private static boolean operationOwns(

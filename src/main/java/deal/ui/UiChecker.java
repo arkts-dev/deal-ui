@@ -34,6 +34,7 @@ import java.util.Set;
 
 public final class UiChecker {
     private List<UiDiagnostic> collectedDiagnostics;
+    private final Map<String, String> consumedSources = new LinkedHashMap<>();
 
     public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
                                       UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
@@ -46,11 +47,15 @@ public final class UiChecker {
         } finally { collectedDiagnostics = null; }
     }
     public UiModel.DealModule parseDeal(Path file, String source) {
+        consumedSources.put(file.toString(), source);
         LexResult lexed = new Lexer(DealUiDealSource.parserSource(source), file.toString()).tokenize();
-        first(lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), file.toString()).parse();
-        first(parsed.diagnostics());
-        first(ModuleShapeValidator.validate(parsed.program(), file.toString(), false));
+        var diagnostics = new ArrayList<CompilerDiagnostic>(lexed.diagnostics());
+        diagnostics.addAll(parsed.diagnostics());
+        if (diagnostics.stream().noneMatch(d -> d.severity().equals("error")))
+            diagnostics.addAll(ModuleShapeValidator.validate(parsed.program(), file.toString(), false));
+        if (diagnostics.stream().anyMatch(d -> d.severity().equals("error")))
+            throw UiDiagnostic.compilerBatch(diagnostics, file, source);
         return dealModule(parsed.program(), file, source);
     }
 
@@ -62,6 +67,17 @@ public final class UiChecker {
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
                                          UiModel.DealModule deal, Map<String, UiModel.PackModule> packs,
                                          boolean allowUnreachableUpdates) {
+        consumedSources.put(viewFile.toString(), viewModule.source());
+        packs.values().forEach(pack -> {
+            pack.classes().values().forEach(clazz -> consumedSources.put(clazz.span().file().toString(), pack.source()));
+            pack.components().values().forEach(component -> consumedSources.put(component.span().file().toString(), pack.source()));
+        });
+        try { return checkProgram(viewFile, viewModule, dealFile, deal, packs, allowUnreachableUpdates); }
+        catch (UiDiagnostic failure) { throw failure.withSources(consumedSources); }
+    }
+
+    private UiModel.CheckedProgram checkProgram(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
+            UiModel.DealModule deal, Map<String, UiModel.PackModule> packs, boolean allowUnreachableUpdates) {
         Map<String, String> aliases = aliases(viewModule.imports());
         UiModel.View root = null;
         Map<String, UiModel.View> views = new LinkedHashMap<>();
@@ -283,7 +299,9 @@ public final class UiChecker {
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
                 UiModel.TypeRef array = type(each.source(), scope, deal, packClasses, tokens, aliases, actions, null);
-                if (!array.array() || !sameName(array.name(), each.item().type().name())) error("UI2014", "ForEach source must be exact item array", each.span());
+                if (array.optional() || array.dimensions() != each.item().type().dimensions() + 1 || !sameName(array.name(), each.item().type().name()))
+                    throw mismatch("UI2014", "ForEach requires an exact nonnullable item array", each.source().span(),
+                            typeText(each.item().type()) + "[]", typeText(array));
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
@@ -300,7 +318,7 @@ public final class UiChecker {
             }
             } catch (UiDiagnostic diagnostic) {
                 if (collectedDiagnostics == null) throw diagnostic.atNode(node);
-                collectedDiagnostics.add(diagnostic.atNode(node));
+                collectedDiagnostics.add(diagnostic.atNode(node).withSources(consumedSources));
             }
         }
         return List.copyOf(result);
@@ -352,22 +370,24 @@ public final class UiChecker {
         }
         if (expression instanceof UiModel.Unary unary) {
             UiModel.TypeRef operand = type(unary.operand(), scope, deal, packClasses, tokens, aliases, actions, event);
-            requireType(operand, unary.operator().equals("!") ? "boolean" : operand.name(), unary.span());
-            if (unary.operator().equals("-") && !operand.name().equals("number")) error("UI2019", "Unary - requires numeric operand", unary.span());
+            requireType(operand, unary.operator().equals("!") ? "boolean" : "number", unary.operand().span());
             return operand;
         }
         UiModel.Binary binary = (UiModel.Binary) expression;
         UiModel.TypeRef left = type(binary.left(), scope, deal, packClasses, tokens, aliases, actions, event);
         UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
-            case "&&", "||" -> { requireType(left, "boolean", binary.span()); requireType(right, "boolean", binary.span()); yield primitive("boolean"); }
+            case "&&", "||" -> { requireType(left, "boolean", binary.left().span()); requireType(right, "boolean", binary.right().span()); yield primitive("boolean"); }
             case "===", "!==", "<", "<=", ">", ">=" -> {
                 if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
                 yield primitive("boolean");
             }
             case "+", "-", "*", "/" -> {
-                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
-                yield left;
+                if (binary.operator().equals("+") && left.equals(primitive("string")) && right.equals(primitive("string"))) yield left;
+                if (binary.operator().equals("+") && !sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+                requireType(left, "number", binary.left().span());
+                requireType(right, "number", binary.right().span());
+                yield primitive("number");
             }
             default -> throw new IllegalStateException(binary.operator());
         };
@@ -387,7 +407,8 @@ public final class UiChecker {
                 path.parts().get(0));
         for (int i = 1; i < path.parts().size(); i++) {
             String fieldName = path.parts().get(i);
-            if (current.optional()) error("UI2022", "Nullable intermediate path access", path.span());
+            if (current.optional()) throw mismatch("UI2022", "Nullable intermediate path access; prepare a nonnullable field in DEAL", path.span(),
+                    current.name() + "[]".repeat(current.dimensions()), typeText(current));
             if (current.array()) throw new UiDiagnostic(
                     "UI2023",
                     "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
@@ -553,12 +574,18 @@ public final class UiChecker {
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
         if (actual.name().equals("null") && expected.optional()) return;
-        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions())
-            throw new UiDiagnostic("UI2031", "Expected " + expected.name() + ", got " + actual.name(),
-                    span.file(), span.line(), span.column(),
-                    expected.sourceType(expected.name()), actual.sourceType(actual.name()));
+        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions() || actual.optional() && !expected.optional())
+            throw mismatch("UI2031", "Property type mismatch", span, typeText(expected), typeText(actual));
     }
-    private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) { if (!actual.name().equals(expected)) error("UI2032", "Expected " + expected, span); }
+    private static String typeText(UiModel.TypeRef type) { return type.sourceType(type.name()); }
+    private static UiDiagnostic mismatch(String code, String message, UiModel.Span span, String expected, String actual) {
+        return new UiDiagnostic(code, message + ": expected " + expected + ", got " + actual,
+                span.file(), span.line(), span.column(), span.endLine(), span.endColumn(), expected, actual);
+    }
+    private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) {
+        if (!actual.name().equals(expected) || actual.array() || actual.optional())
+            throw mismatch("UI2032", "Operand requires a nonnullable " + expected + " (no implicit coercion)", span, expected, typeText(actual));
+    }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
     private boolean sameName(String left, String right) { return simple(left).equals(simple(right)); }
     private String prefix(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(0, dot + 1); }
@@ -683,7 +710,6 @@ public final class UiChecker {
         if (type instanceof ArrayType) return type(type, false).sourceType(type(type, false).name());
         return type.toString();
     }
-    private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic); }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
     private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {
         if (nodes.size() != 1) throw new UiDiagnostic(
@@ -706,7 +732,7 @@ public final class UiChecker {
         throw new UiDiagnostic(
                 "UI2020",
                 "Operator '" + binary.operator() + "' requires matching operand types; Deal UI performs no implicit coercion",
-                binary.span().file(), binary.span().line(), binary.span().column(),
-                left.name(), right.name());
+                binary.right().span().file(), binary.right().span().line(), binary.right().span().column(),
+                binary.right().span().endLine(), binary.right().span().endColumn(), typeText(left), typeText(right));
     }
 }

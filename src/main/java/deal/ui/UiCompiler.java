@@ -68,9 +68,19 @@ public final class UiCompiler {
         }
         if (deal == null) throw new IOException("Root view must import its application DEAL module");
         UiChecker checker = new UiChecker();
-        UiModel.DealModule dealModule = checker.parseDeal(deal, Files.readString(deal));
-        UiModel.CheckedProgram checked = checker.check(view, views, deal, dealModule, packs);
-        UiDealGenerator.Output generatedDeal = new UiDealGenerator(checked, frameworkRoot).generateJvm();
+        String dealSource = Files.readString(deal);
+        UiModel.DealModule dealModule = checker.parseDeal(deal, dealSource);
+        UiModel.CheckedProgram checked;
+        try { checked = checker.check(view, views, deal, dealModule, packs); }
+        catch (UiDiagnostic failure) {
+            var observed = new LinkedHashMap<String, String>();
+            observed.put(view.toString(), views.source()); observed.put(deal.toString(), dealSource);
+            packs.forEach((specifier, pack) -> observed.put(packFiles.get(specifier).toString(), pack.source()));
+            throw failure.withSources(observed);
+        }
+        UiDealGenerator.Output generatedDeal;
+        try { generatedDeal = new UiDealGenerator(checked, frameworkRoot).generateJvm(); }
+        catch (UiDiagnostic failure) { throw failure.withSources(Map.of(view.toString(), views.source(), deal.toString(), dealSource)); }
 
         Path project = destination.resolve("deal");
         Files.createDirectories(project);
@@ -80,8 +90,16 @@ public final class UiCompiler {
 
         Path generated = destination.resolve("generated");
         Files.createDirectories(generated);
-        run(List.of(javaExecutable(), "-cp", fsRoot.resolve("build").toString(), "deal.Main", "compile",
-            entry.toString(), "--backend", "jvm", "--output", generated.toString(), "--dump-ir"), fsRoot, "DEAL JVM compilation");
+        Path diagnosticReport = destination.resolve("diagnostics.json");
+        Process process = new ProcessBuilder(List.of(javaExecutable(), "-Ddeal.home=" + fsRoot, "-cp", fsRoot.resolve("build").toString(), "deal.Main", "compile",
+                entry.toString(), "--backend", "jvm", "--output", generated.toString(), "--dump-ir", "--diagnostics-json", diagnosticReport.toString()))
+                .directory(fsRoot.toFile()).redirectErrorStream(true).start();
+        String compilerOutput = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        if (exit != 0) {
+            if (!Files.isRegularFile(diagnosticReport)) throw new IOException("DEAL compiler failed without its v3 report: " + compilerOutput);
+            throw new UiCompilationFailure(exit, Files.readString(diagnosticReport));
+        }
         String moduleClass = JvmNames.classNameFor(stripSuffix(entry.getFileName().toString(), ".deal"));
         String bridgeClass = moduleClass + "Bridge";
         Path bridge = generated.resolve(bridgeClass + ".java");
@@ -169,9 +187,11 @@ public final class UiCompiler {
 
     private ParsedImports parsedImports(Path source, String value) throws IOException {
         LexResult lexed = new Lexer(compilerSource(value), source.toString()).tokenize();
-        requireValid(source, lexed.diagnostics());
         ParseResult parsed = new Parser(lexed.tokens(), source.toString()).parse();
-        requireValid(source, parsed.diagnostics());
+        var diagnostics = new ArrayList<CompilerDiagnostic>(lexed.diagnostics());
+        diagnostics.addAll(parsed.diagnostics());
+        if (diagnostics.stream().anyMatch(d -> d.severity().equals("error")))
+            throw UiDiagnostic.compilerBatch(diagnostics, source, value);
         Map<Integer, Token> pathTokens = new HashMap<>();
         List<Token> tokens = lexed.tokens();
         for (int i = 0; i + 5 < tokens.size(); i++) {
@@ -189,7 +209,8 @@ public final class UiCompiler {
     }
 
     private void requireValid(Path source, List<CompilerDiagnostic> diagnostics) throws IOException {
-        for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new IOException("Unable to stage DEAL dependency " + source + ": " + diagnostic);
+        if (diagnostics.stream().anyMatch(d -> d.severity().equals("error")))
+            throw UiDiagnostic.compilerBatch(diagnostics, source, Files.readString(source));
     }
 
     private Path resolveDealDependency(Path source, String specifier, List<ApprovedRoot> roots) throws IOException {
