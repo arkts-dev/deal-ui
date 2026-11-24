@@ -14,9 +14,21 @@ public final class UiModel {
         }
     }
     public record Import(String alias, String specifier, Span span) {}
-    public record TypeRef(String name, boolean optional, int dimensions) {
+    public record TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers) {
+        public TypeRef {
+            readonlyLayers = List.copyOf(readonlyLayers);
+            if (readonlyLayers.size() != dimensions) throw new IllegalArgumentException("Array qualifier depth mismatch");
+        }
+        public TypeRef(String name, boolean optional, int dimensions) { this(name, optional, dimensions, java.util.Collections.nCopies(dimensions, false)); }
         public TypeRef(String name, boolean optional, boolean array) { this(name, optional, array ? 1 : 0); }
         public boolean array() { return dimensions > 0; }
+        public String sourceType(String qualifiedName) {
+            String result = qualifiedName;
+            for (boolean readonly : readonlyLayers) {
+                result = readonly ? "readonly (" + result + ")[]" : (result.startsWith("readonly ") ? "(" + result + ")[]" : result + "[]");
+            }
+            return result + (optional ? " | null" : "");
+        }
     }
     public record Parameter(String name, TypeRef type) {}
 

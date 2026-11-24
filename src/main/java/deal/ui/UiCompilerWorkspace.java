@@ -86,7 +86,6 @@ public final class UiCompilerWorkspace {
     }
 
     public record UiInspection(
-            String protocolVersion,
             String sourceDigest,
             SemanticId documentId,
             String appInterfaceFingerprint,
@@ -1152,7 +1151,7 @@ public final class UiCompilerWorkspace {
             UiModel.CheckedProgram checked = checker.check(
                     uiFile, views, dealFile, deal, Map.of(packSpecifier, pack));
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
+                    digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, checked.metadata(), ALLOWED_OPERATIONS, List.of());
             return new Analysis(uiSource, inspection, documentId, targets, index);
         } catch (UiDiagnostic failure) {
@@ -1199,7 +1198,7 @@ public final class UiCompilerWorkspace {
                         ownerId, fingerprint));
             }
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, documentId, interfaceFingerprint,
+                    digest, documentId, interfaceFingerprint,
                     viewSnapshots, nodeSnapshots, null,
                     ALLOWED_OPERATIONS, List.of(diagnostic));
             return new Analysis(uiSource, inspection, documentId, targets, index);
@@ -1210,7 +1209,7 @@ public final class UiCompilerWorkspace {
                     "CP2999", "error", failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage(),
                     null, documentId, "", "", List.of(), repairScopes, null, List.of());
             UiInspection inspection = new UiInspection(
-                    CompilerProtocol.VERSION, digest, documentId, "", List.of(), List.of(), null,
+                    digest, documentId, "", List.of(), List.of(), null,
                     ALLOWED_OPERATIONS, List.of(diagnostic));
             return new Analysis(uiSource, inspection, documentId, targets, index);
         }
@@ -1295,7 +1294,7 @@ public final class UiCompilerWorkspace {
     }
 
     private static String typeText(UiModel.TypeRef type) {
-        return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? "?" : "");
+        return type.sourceType(type.name());
     }
 
     private static RevisionRef revision(Analysis analysis) {

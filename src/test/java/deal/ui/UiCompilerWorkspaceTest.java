@@ -55,6 +55,7 @@ public final class UiCompilerWorkspaceTest {
 
     public static void main(String[] args) {
         compilerDiagnosticEvidenceSurvivesUiWrapping();
+        uiDiagnosticsUseV3Snapshots();
         quotedSyntaxRemainsLiteralText();
         hostReadinessUsesPackAndActionTypes();
         diagnosticEvidenceUsesRejectedUiAndRealFile();
@@ -97,6 +98,17 @@ public final class UiCompilerWorkspaceTest {
         check(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(wrapped.compilerDiagnostic()))
                 .equals(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(producer))),
                 "range, facts, notes and occurrence serialization is unchanged");
+    }
+
+    private static void uiDiagnosticsUseV3Snapshots() {
+        var path = java.nio.file.Path.of("/candidate/view.dealui");
+        String source = "export view Broken(): View {}";
+        var diagnostic = new UiDiagnostic("UI2037", "View requires one root", path, 1, 1);
+        String json = diagnostic.toJson(path.getParent(), java.util.Map.of(path.toString(), source));
+        check(json.contains("\"version\":3") && json.contains("\"status\":\"rejected\""), "UI diagnostics use compiler v3");
+        check(json.contains("\"file\":\"view.dealui\"") && json.contains("\"file\":0"), "UI ranges reference shared root-relative file snapshots");
+        check(json.contains("\"responsibility\":\"SOURCE_CONTRACT\"") && json.contains("\"revision\":"), "UI producer owns source responsibility and revision");
+        check(!json.contains("classification") && !json.contains("compilation"), "no obsolete diagnostic envelope");
     }
 
     private static void diagnosticEvidenceUsesRejectedUiAndRealFile() {

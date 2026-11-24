@@ -469,6 +469,9 @@ public final class UiFrameworkTest {
 
     private static void borrowedHandlerContracts(Path root) throws Exception {
         String original = deal(root);
+        String readonlyState = original.replace("  items: Item[] ;", "  readonly items: readonly Item[] ;");
+        expectValid(root, source(root), readonlyState, pack(root), "readonly array state binds and iterates without writable projection");
+        expect("UI2050", source(root), readonlyState.replace("return {\n    title: state.title,", "state.items[0].title = \"changed\"; return {\n    title: state.title,"));
         String originalUpdate = "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState {\n  return {\n    title: state.title,\n    count: state.count,\n    expanded: !state.expanded,\n    items: state.items\n  };\n}";
         expect("UI2050", source(root), original.replace(originalUpdate,
             "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { state.expanded = true; return state; }"));

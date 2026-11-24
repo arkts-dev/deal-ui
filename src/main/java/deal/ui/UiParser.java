@@ -332,11 +332,15 @@ public final class UiParser {
 
     private UiModel.TypeRef type() { return type(false); }
     private UiModel.TypeRef type(boolean optional) {
+        boolean readonly = match("readonly");
         String name = qualified();
         int dimensions = 0;
         while (match("[")) { require("]"); dimensions++; }
+        if (readonly && dimensions == 0) fail("UI1007", "readonly requires an array type", peek());
         if (match("|")) { require("null"); optional = true; }
-        return new UiModel.TypeRef(name, optional, dimensions);
+        List<Boolean> layers = new ArrayList<>(java.util.Collections.nCopies(dimensions, false));
+        if (readonly) layers.set(dimensions - 1, true);
+        return new UiModel.TypeRef(name, optional, dimensions, layers);
     }
     private String qualified() {
         StringBuilder value = new StringBuilder(id());

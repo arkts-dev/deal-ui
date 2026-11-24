@@ -84,6 +84,28 @@ public final class UiDiagnostic extends RuntimeException {
     /** Exact producer diagnostic, including facts/range/revision; null for UI-owned rules. */
     public deal.diagnostics.CompilerDiagnostic compilerDiagnostic() { return compilerDiagnostic; }
 
+    /** The compiler v3 serializer owns snapshot/file/context indexes for both core and UI diagnostics. */
+    public String toJson(Path projectRoot, java.util.Map<String, String> sources) {
+        var producer = compilerDiagnostic;
+        if (producer == null) {
+            String path = file == null ? "" : file.toString();
+            var range = new deal.diagnostics.DiagnosticRange(path, line, column, endLine, endColumn + 1,
+                    -1, -1, -1, deal.diagnostics.RangeOrigin.SOURCE);
+            producer = new deal.diagnostics.CompilerDiagnostic(code, "error", getMessage(), range, notes,
+                    null, java.util.List.of(), new deal.diagnostics.DiagnosticFacts(code, "ui.check", expected, actual, java.util.List.of()));
+            String source = sources.get(path);
+            if (source != null) producer = producer.withOccurrence(deal.diagnostics.DiagnosticOccurrence.fromSource(path, source, producer));
+        }
+        var report = new deal.diagnostics.DiagnosticJson(projectRoot, deal.diagnostics.DiagnosticSourceBatch.observed(sources))
+                .compiler(java.util.List.of(producer), java.util.List.of(), null);
+        if (compilerDiagnostic == null) {
+            // This producer owns UI source rules; never infer responsibility from a diagnostic-code prefix.
+            @SuppressWarnings("unchecked") var diagnostics = (java.util.List<java.util.Map<String, Object>>) report.get("diagnostics");
+            diagnostics.getFirst().put("responsibility", "SOURCE_CONTRACT");
+        }
+        return deal.amend.CompilerProtocolJson.encode(report);
+    }
+
     public String repairArtifact() { return repairArtifact; }
 
     public String code() { return code; }

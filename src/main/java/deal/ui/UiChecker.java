@@ -553,10 +553,10 @@ public final class UiChecker {
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
         if (actual.name().equals("null") && expected.optional()) return;
-        if (!sameName(actual.name(), expected.name()) || actual.array() != expected.array())
+        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions())
             throw new UiDiagnostic("UI2031", "Expected " + expected.name() + ", got " + actual.name(),
                     span.file(), span.line(), span.column(),
-                    expected.name() + (expected.array() ? "[]" : ""), actual.name() + (actual.array() ? "[]" : ""));
+                    expected.sourceType(expected.name()), actual.sourceType(actual.name()));
     }
     private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) { if (!actual.name().equals(expected)) error("UI2032", "Expected " + expected, span); }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
@@ -669,13 +669,18 @@ public final class UiChecker {
 
     private UiModel.TypeRef type(TypeNode type, boolean optional) {
         if (type instanceof NullableType nullable) return type(nullable.innerType(), true);
-        if (type instanceof ArrayType array) { UiModel.TypeRef element = type(array.elementType(), optional); return new UiModel.TypeRef(element.name(), element.optional(), element.dimensions() + 1); }
+        if (type instanceof ArrayType array) {
+            UiModel.TypeRef element = type(array.elementType(), optional);
+            List<Boolean> layers = new ArrayList<>(element.readonlyLayers());
+            layers.add(array.readonly());
+            return new UiModel.TypeRef(element.name(), element.optional(), element.dimensions() + 1, layers);
+        }
         return new UiModel.TypeRef(typeName(type), optional, false);
     }
     private String typeName(TypeNode type) {
         if (type instanceof NamedType named) return named.name();
         if (type instanceof QualifiedType qualified) return qualified.moduleName() + "." + qualified.typeName();
-        if (type instanceof ArrayType array) return typeName(array.elementType()) + "[]";
+        if (type instanceof ArrayType) return type(type, false).sourceType(type(type, false).name());
         return type.toString();
     }
     private void first(List<CompilerDiagnostic> diagnostics) { for (CompilerDiagnostic diagnostic : diagnostics) if (diagnostic.severity().equals("error")) throw new UiDiagnostic(diagnostic); }

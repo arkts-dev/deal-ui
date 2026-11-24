@@ -122,7 +122,7 @@ final class UiDealGenerator {
         StringBuilder augmentation = new StringBuilder();
         for (UiModel.View view : program.views().values()) {
             Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
-            for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), new UiModel.TypeRef(simple(parameter.type().name()), parameter.type().optional(), parameter.type().array()));
+            for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), new UiModel.TypeRef(simple(parameter.type().name()), parameter.type().optional(), parameter.type().dimensions(), parameter.type().readonlyLayers()));
             appendForEachAccessors(augmentation, view.nodes(), scope, new java.util.LinkedHashSet<>());
         }
         String flattened = flattenFramework(out.toString());
@@ -379,7 +379,7 @@ final class UiDealGenerator {
                 String root = each.source().parts().get(0);
                 UiModel.TypeRef rootType = scope.get(root);
                 if (rootType == null) throw new IllegalStateException("Unknown iteration scope " + root);
-                if (lines.add(each.span().line())) out.append("\nexport function uiItems").append(each.span().line()).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(simple(each.item().type().name())).append("[] { return ").append(String.join(".", each.source().parts())).append("; }\n");
+                if (lines.add(each.span().line())) out.append("\nexport function uiItems").append(each.span().line()).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 appendForEachAccessors(out, each.children(), nested, lines);
@@ -485,9 +485,9 @@ final class UiDealGenerator {
     private String qualifiedType(UiModel.TypeRef type, String app) {
         String name = type.name();
         if (!name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
-        return name + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : "");
+        return type.sourceType(name);
     }
-    private String dealType(UiModel.TypeRef type) { return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : ""); }
+    private String dealType(UiModel.TypeRef type) { return type.sourceType(type.name()); }
     private String defaultValue(UiModel.TypeRef type) {
         if (type.optional()) return "null";
         if (type.array()) return "[]";

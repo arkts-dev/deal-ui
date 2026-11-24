@@ -253,7 +253,7 @@ public final class CanonicalCompiler {
     }
 
     private static String typeText(UiModel.TypeRef type) {
-        return type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? "?" : "");
+        return type.sourceType(type.name());
     }
 
     private static List<PayloadTypeSnapshot> payloadTypes(UiModel.PackModule pack, UiModel.TypeRef root) {
