@@ -56,6 +56,7 @@ public final class UiCompilerWorkspaceTest {
     public static void main(String[] args) {
         compilerDiagnosticEvidenceSurvivesUiWrapping();
         uiDiagnosticsUseV3Snapshots();
+        readonlyTypeAnnotationsRoundtrip();
         quotedSyntaxRemainsLiteralText();
         hostReadinessUsesPackAndActionTypes();
         diagnosticEvidenceUsesRejectedUiAndRealFile();
@@ -98,6 +99,19 @@ public final class UiCompilerWorkspaceTest {
         check(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(wrapped.compilerDiagnostic()))
                 .equals(deal.diagnostics.DiagnosticStructuredOutput.toJson(List.of(producer))),
                 "range, facts, notes and occurrence serialization is unchanged");
+    }
+
+    private static void readonlyTypeAnnotationsRoundtrip() {
+        for (var layers : List.of(List.of(true, false), List.of(false, true), List.of(true, true))) {
+            var type = new UiModel.TypeRef("app.Row", false, 2, layers);
+            var parsed = UiParser.parseViews(java.nio.file.Path.of("arrays.dealui"),
+                    "export view Arrays(values: " + type.sourceType(type.name()) + "): View {}");
+            check(parsed.views().getFirst().parameters().getFirst().type().equals(type), "preserve each readonly array layer");
+        }
+        try {
+            UiParser.parseViews(java.nio.file.Path.of("arrays.dealui"), "export view Arrays(values: (number | null)[]): View {}");
+            throw new AssertionError("Never relocate element nullability to the outer array");
+        } catch (UiDiagnostic expected) { check(expected.code().equals("UI1007"), "unsupported annotation rejects explicitly"); }
     }
 
     private static void uiDiagnosticsUseV3Snapshots() {

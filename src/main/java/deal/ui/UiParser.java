@@ -333,14 +333,19 @@ public final class UiParser {
     private UiModel.TypeRef type() { return type(false); }
     private UiModel.TypeRef type(boolean optional) {
         boolean readonly = match("readonly");
-        String name = qualified();
-        int dimensions = 0;
-        while (match("[")) { require("]"); dimensions++; }
-        if (readonly && dimensions == 0) fail("UI1007", "readonly requires an array type", peek());
+        UiModel.TypeRef base;
+        if (match("(")) { base = type(); require(")"); }
+        else base = new UiModel.TypeRef(qualified(), false, false);
+        List<Boolean> layers = new ArrayList<>(base.readonlyLayers());
+        int initialDepth = layers.size();
+        while (match("[")) {
+            if (base.optional()) fail("UI1007", "Nullable array elements are not supported in view annotations", peek());
+            require("]"); layers.add(false);
+        }
+        if (readonly && layers.size() == initialDepth) fail("UI1007", "readonly requires an array type", peek());
+        if (readonly) layers.set(layers.size() - 1, true);
         if (match("|")) { require("null"); optional = true; }
-        List<Boolean> layers = new ArrayList<>(java.util.Collections.nCopies(dimensions, false));
-        if (readonly) layers.set(dimensions - 1, true);
-        return new UiModel.TypeRef(name, optional, dimensions, layers);
+        return new UiModel.TypeRef(base.name(), optional || base.optional(), layers.size(), layers);
     }
     private String qualified() {
         StringBuilder value = new StringBuilder(id());
