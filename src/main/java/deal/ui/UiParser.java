@@ -459,6 +459,10 @@ public final class UiParser {
 
     private static List<T> lex(String source) {
         List<T> result = new ArrayList<>();
+        var core = new deal.lexer.Lexer(source, "<source>").tokenize();
+        var literals = new java.util.HashMap<Integer, deal.lexer.Token>();
+        for (var token : core.tokens()) if (token.type() == deal.ast.TokenType.STRING_LITERAL || token.type() == deal.ast.TokenType.NUMBER_LITERAL)
+            literals.put(token.startScalarOffset(), token);
         int i = 0, line = 1, column = 1;
         while (i < source.length()) {
             char c = source.charAt(i);
@@ -485,37 +489,25 @@ public final class UiParser {
                 result.add(new T(K.ID, source.substring(start, i), startLine, startColumn, line, column - 1));
                 continue;
             }
-            if (Character.isDigit(c)) {
-                int start = i++;
-                column++;
-                while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; }
-                if (i < source.length() && source.charAt(i) == '.') { i++; column++; while (i < source.length() && Character.isDigit(source.charAt(i))) { i++; column++; } }
-                // The canonical printer emits Double spellings, including exponents.
-                // Consume the entire literal so emitted source is parseable again.
-                if (i < source.length() && (source.charAt(i) == 'e' || source.charAt(i) == 'E')) {
-                    i++; column++;
-                    if (i < source.length() && (source.charAt(i) == '+' || source.charAt(i) == '-')) { i++; column++; }
-                    int digits = i;
-                    while (i < source.length() && source.charAt(i) >= '0' && source.charAt(i) <= '9') { i++; column++; }
-                    if (i == digits) throw new UiDiagnostic("UI1006", "Expected exponent digits", Path.of("<source>"), startLine, startColumn);
+            if (Character.isDigit(c) || c == '.' && i + 1 < source.length() && Character.isDigit(source.charAt(i + 1)) || c == '\'' || c == '"') {
+                var literal = literals.get(i);
+                if (literal == null) throw new UiDiagnostic("UI1012", "Invalid core literal", Path.of("<source>"), line, column);
+                for (var diagnostic : core.diagnostics()) if (diagnostic.severity().equals("error") && diagnostic.range() != null
+                        && diagnostic.range().startScalarOffset() >= i && diagnostic.range().startScalarOffset() < literal.endScalarOffset())
+                    throw new UiDiagnostic(literal.type() == deal.ast.TokenType.NUMBER_LITERAL ? "UI1006" : "UI1012", diagnostic.message(), Path.of("<source>"), line, column);
+                boolean string = literal.type() == deal.ast.TokenType.STRING_LITERAL;
+                String value = literal.lexeme();
+                if (string) value = deal.lexer.TemplateScanner.decodeText(value.substring(1, value.length() - 1));
+                else {
+                    String spelling = value.replace("_", "");
+                    int radix = spelling.matches("0[xX].*") ? 16 : spelling.matches("0[bB].*") ? 2 : spelling.matches("0[oO].*") ? 8 : 0;
+                    double number = radix == 0 ? Double.parseDouble(spelling) : new java.math.BigInteger(spelling.substring(2), radix).doubleValue();
+                    if (!Double.isFinite(number)) throw new UiDiagnostic("UI1006", "Numeric literal must be finite", Path.of("<source>"), line, column);
+                    value = Double.toString(number);
                 }
-                String spelling = source.substring(start, i);
-                if (!Double.isFinite(Double.parseDouble(spelling))) throw new UiDiagnostic("UI1006", "Numeric literal must be finite", Path.of("<source>"), startLine, startColumn);
-                result.add(new T(K.NUMBER, spelling, startLine, startColumn, line, column - 1));
-                continue;
-            }
-            if (c == '"') {
-                i++; column++;
-                StringBuilder value = new StringBuilder();
-                boolean closed = false;
-                while (i < source.length()) {
-                    char d = source.charAt(i++); column++;
-                    if (d == '"') { closed = true; break; }
-                    if (d == '\\') { if (i >= source.length()) break; char e = source.charAt(i++); column++; value.append(switch (e) { case 'n' -> '\n'; case 'r' -> '\r'; case 't' -> '\t'; case '"' -> '"'; case '\\' -> '\\'; default -> throw new UiDiagnostic("UI1012", "Unsupported escape", Path.of("<source>"), startLine, startColumn); }); }
-                    else value.append(d);
-                }
-                if (!closed) throw new UiDiagnostic("UI1012", "Unterminated string", Path.of("<source>"), startLine, startColumn);
-                result.add(new T(K.STRING, value.toString(), startLine, startColumn, line, column - 1));
+                int end = literal.endScalarOffset();
+                while (i < end) { char unit = source.charAt(i++); if (unit == '\n') { line++; column = 1; } else column++; }
+                result.add(new T(string ? K.STRING : K.NUMBER, value, startLine, startColumn, line, column - 1));
                 continue;
             }
             if (c == '`') {
