@@ -608,7 +608,7 @@ public final class UiChecker {
     private Map<String, UiModel.Handler> handlers(List<UiModel.Handler> source, String kind) {
         Map<String, UiModel.Handler> result = new LinkedHashMap<>();
         for (UiModel.Handler handler : source) if (handler.kind().equals(kind) && result.putIfAbsent(handler.actionType(), handler) != null) error("UI2033", "Duplicate " + kind + " handler for action '" + handler.actionType() + "'", handler.span());
-        return Map.copyOf(result);
+        return java.util.Collections.unmodifiableMap(result);
     }
 
     private Map<String, String> aliases(List<UiModel.Import> imports) {
