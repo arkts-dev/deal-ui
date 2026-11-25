@@ -24,6 +24,7 @@ public final class UiSourceGenerator {
                                   Map<String, String> declarations) {
         var views = UiParser.parseViews(viewPath, viewSource);
         var checker = new UiChecker();
+        checker.externalDeclarations(packs, declarations);
         UiModel.CheckedProgram checked;
         try { checked = checker.check(viewPath, views, dealPath, checker.parseDeal(dealPath, dealSource), packs); }
         catch (UiDiagnostic failure) {

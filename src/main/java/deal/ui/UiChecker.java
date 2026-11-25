@@ -36,6 +36,21 @@ public final class UiChecker {
     private List<UiDiagnostic> collectedDiagnostics;
     private final Map<String, String> consumedSources = new LinkedHashMap<>();
     private final Map<String, String> typeNames = new LinkedHashMap<>();
+    private final Map<String, UiModel.DealClass> externalClasses = new LinkedHashMap<>();
+    void externalDeclarations(Map<String, UiModel.PackModule> packs, Map<String, String> declarations) {
+        for (var pack : packs.values()) for (var imported : pack.imports()) {
+            String source = declarations.get(imported.specifier());
+            if (source == null) continue;
+            var module = parseDeal(Path.of("external.d.deal"), source);
+            for (var clazz : module.classes().values()) {
+                var fields = new LinkedHashMap<String, UiModel.Field>();
+                for (var field : clazz.fields().values()) fields.put(field.name(), new UiModel.Field(field.name(),
+                        module.classes().containsKey(field.type().name()) ? field.type().withName(imported.alias() + "." + field.type().name()) : field.type(),
+                        field.defaultValue(), field.span(), field.optional()));
+                externalClasses.put(imported.alias() + "." + clazz.name(), new UiModel.DealClass(clazz.name(), fields, clazz.exported()));
+            }
+        }
+    }
 
     public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
                                       UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
@@ -87,6 +102,13 @@ public final class UiChecker {
             if (pack == null) continue;
             String canonical = packAliases.computeIfAbsent(imported.specifier(), ignored -> imported.alias());
             for (String name : pack.classes().keySet()) typeNames.put(imported.alias() + "." + name, canonical + "." + name);
+        }
+        for (var pack : packs.values()) for (var imported : pack.imports()) {
+            var names = aliases(pack.imports());
+            for (String name : deal.classes().keySet()) {
+                String qualified = imported.alias() + "." + name;
+                if (localType(qualified, names, dealFile, deal).equals(name)) typeNames.put(qualified, name);
+            }
         }
         for (UiModel.Import imported : viewModule.imports()) {
             if (!packs.containsKey(imported.specifier())) for (String name : deal.classes().keySet()) {
@@ -463,7 +485,8 @@ public final class UiChecker {
                     "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
                     path.span().file(), path.span().line(), path.span().column(),
                     "direct ForEach collection path or explicit scalar field", joined);
-            UiModel.DealClass clazz = deal.classes().get(typeNames.getOrDefault(current.name(), current.name()));
+            UiModel.DealClass clazz = externalClasses.get(current.name());
+            if (clazz == null) clazz = deal.classes().get(typeNames.getOrDefault(current.name(), current.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
             if (clazz == null && packClass == null) throw new UiDiagnostic(
                     "UI2023", "Path traverses a value that has no declared fields",

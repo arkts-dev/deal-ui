@@ -41,7 +41,8 @@ final class UiDealGenerator {
         schemaDigest = digest(stateSchema(program) + new java.util.TreeMap<>(declarations) + new java.util.TreeMap<>(program.metadata().packDigests()));
         for (var pack : packs.values()) for (var imported : pack.imports()) {
             String declaration = declarations.get(imported.specifier());
-            if (declaration == null) throw new IllegalArgumentException("Missing nominal declaration: " + imported.specifier());
+            if (declaration == null && (imported.specifier().equals("./" + moduleName(program.dealSource())) || imported.specifier().equals("./" + moduleName(program.dealSource()) + ".deal"))) continue;
+            if (declaration == null) throw new UiDiagnostic("UI2053", "Missing nominal declaration: " + imported.specifier(), program.viewSource(), 1, 1);
             String previous = nominalImports.putIfAbsent(imported.alias(), imported.specifier());
             if (previous != null && !previous.equals(imported.specifier())) throw new IllegalArgumentException("Conflicting nominal alias");
             var parsed = new UiChecker().parseDeal(java.nio.file.Path.of("external.d.deal"), declaration);
@@ -312,9 +313,11 @@ final class UiDealGenerator {
     private void generatePayloadTypes(StringBuilder out) {
         for (Map.Entry<Integer, GeneratedAction> entry : actions.entrySet()) {
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
-            String kind = payloadType == null ? "none" : simple(payloadType.name());
-            if (payloadType != null && nominalClasses.containsKey(payloadType.name())) {
-                out.append("export function decodePayload_").append(entry.getKey()).append("(text: string): ").append(payloadType.name()).append(" { return JSON.parse(text); }\n");
+            String kind = payloadType == null ? "none" : payloadType.name();
+            if (payloadType != null && (payloadType.array() || payloadType.nullish() || !List.of("number", "boolean", "string").contains(payloadType.name()))) {
+                if (payloadType.undefined() || payloadType.name().equals("undefined") || payloadType.undefinedElements().contains(true))
+                    throw new UiDiagnostic("UI2053", "JSON event ingress cannot represent undefined", program.viewSource(), 1, 1);
+                out.append("export function decodePayload_").append(entry.getKey()).append("(text: string): ").append(qualifiedType(payloadType, moduleName(program.dealSource()))).append(" { return JSON.parse(text); }\n");
                 kind = "json";
             }
             out.append("export function payloadType_").append(entry.getKey()).append("(): string { return \"").append(kind).append("\"; }\n");
@@ -367,7 +370,7 @@ final class UiDealGenerator {
             int id = actionIds.get(simple(action.name()));
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
             out.append("export function action_").append(entry.getKey()).append("(bindings: Record<string, unknown>");
-            if (payloadType != null) out.append(", payload: ").append(dealType(payloadType));
+            if (payloadType != null) out.append(", payload: ").append(qualifiedType(payloadType, moduleName(program.dealSource())));
             out.append("): UiAction {\n");
             for (var capture : entry.getValue().captures().entrySet()) {
                 out.append("  let ").append(capture.getKey()).append(": ").append(qualifiedType(capture.getValue(), moduleName(program.dealSource())))
@@ -547,7 +550,7 @@ final class UiDealGenerator {
     }
 
     private String payloadExpr(UiModel.Expr expression) {
-        if (expression instanceof UiModel.PathExpr path && path.parts().get(0).equals("payload")) return "payload";
+        if (expression instanceof UiModel.PathExpr path && path.parts().get(0).equals("payload")) return String.join(".", path.parts());
         if (expression instanceof UiModel.Unary unary) return unary.operator() + "(" + payloadExpr(unary.operand()) + ")";
         if (expression instanceof UiModel.Binary binary) return "(" + payloadExpr(binary.left()) + " " + binary.operator() + " " + payloadExpr(binary.right()) + ")";
         return expr(expression, moduleName(program.dealSource()));
