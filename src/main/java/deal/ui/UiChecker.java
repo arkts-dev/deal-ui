@@ -356,8 +356,16 @@ public final class UiChecker {
         if (expression instanceof UiModel.Literal literal) return new UiModel.TypeRef(literal.type(), literal.value() == null, false);
         if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, packClasses, tokens);
         if (expression instanceof UiModel.Has has) {
-            UiModel.TypeRef operand = pathType(has.path(), scope, deal, packClasses, tokens);
-            if (!operand.undefined()) error("UI2017", "has requires an optional final field", has.span());
+            pathType(has.path(), scope, deal, packClasses, tokens);
+            List<String> parts = has.path().parts();
+            if (parts.size() < 2) error("UI2017", "has requires an optional final field, not a parameter", has.span());
+            UiModel.TypeRef owner = pathType(new UiModel.PathExpr(parts.subList(0, parts.size() - 1), has.path().span()), scope, deal, packClasses, tokens);
+            UiModel.DealClass clazz = deal.classes().get(simple(owner.name()));
+            UiModel.PackClass packClass = clazz == null ? uniquePackClass(owner.name(), packClasses, has.span()) : null;
+            String fieldName = parts.getLast();
+            UiModel.Field field = clazz != null ? clazz.fields().get(fieldName) : packClass == null ? null
+                    : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
+            if (field == null || !field.optional()) error("UI2017", "has requires an optional final field", has.span());
             return primitive("boolean");
         }
         if (expression instanceof UiModel.Action action) {
