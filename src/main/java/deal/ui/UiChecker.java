@@ -91,7 +91,11 @@ public final class UiChecker {
         }
         if (root == null) throw new UiDiagnostic("UI2002", "Exactly one exported @ui-root view is required", viewFile, 1, 1);
         if (root.parameters().size() != 1) error("UI2003", "Root view requires one state parameter", root.span());
-        String stateType = localType(root.parameters().get(0).type().name(), aliases, dealFile, deal);
+        UiModel.TypeRef rootType = root.parameters().get(0).type();
+        if (rootType.array() || rootType.optional())
+            throw mismatch("UI2004", "Root state parameter requires a nonnullable nominal class", root.span(),
+                    rootType.name(), typeText(rootType));
+        String stateType = localType(rootType.name(), aliases, dealFile, deal);
         UiModel.DealClass state = deal.classes().get(stateType);
         if (state == null) error("UI2004", "Unknown root state class '" + stateType + "'", root.span());
 
