@@ -135,17 +135,51 @@ final class UiDealGenerator {
             nominalImports.forEach((alias, specifier) -> source.append("import * as ").append(alias).append(" from ").append(quote(specifier)).append(";\n"));
             for (String module : List.of("core", "store", "actions", "effects", "interaction", "reconcile", "session")) {
                 String value = java.nio.file.Files.readString(frameworkRoot.resolve("ui/" + module + ".deal"));
-                value = value.replace("import * as core from \"./core\";\n\n", "").replace("core.", "").replace("export ", "");
+                value = rewriteFrameworkNames(value.replace("import * as core from \"./core\";\n\n", ""), true);
                 if (module.equals("store")) value = value.replace("function finish(", "function lifecycleFinish(").replace("function reject(", "function lifecycleReject(").replace("function dispose(", "function lifecycleDispose(");
                 if (module.equals("actions")) value = value.replace("function route(", "function actionRoute(");
                 source.append(value).append("\n");
             }
-            String body = generatedSource.substring(generatedSource.indexOf('\n') + 1).replace("core.", "").replace("store.finish", "lifecycleFinish").replace("store.reject", "lifecycleReject").replace("store.dispose", "lifecycleDispose").replace("store.", "").replace("actions.route", "actionRoute").replace("actions.", "").replace("effects.", "").replace("reconcile.", "");
+            String body = rewriteFrameworkNames(generatedSource.substring(generatedSource.indexOf('\n') + 1), false);
             source.append(body);
             return source.toString();
         } catch (java.io.IOException failure) {
             throw new IllegalStateException("Unable to load DEAL framework modules", failure);
         }
+    }
+
+    /** Rewrite only lexical names, never text inside strings, templates or comments. */
+    private static String rewriteFrameworkNames(String source, boolean framework) {
+        var tokens = new deal.lexer.Lexer(source, "generated.deal").tokenize().tokens();
+        StringBuilder result = new StringBuilder();
+        int offset = 0;
+        for (int i = 0; i < tokens.size(); i++) {
+            var token = tokens.get(i);
+            if (!token.hasScalarOffsets()) continue;
+            int end = token.endScalarOffset();
+            String replacement = null;
+            if (framework && token.type() == deal.ast.TokenType.EXPORT) replacement = "";
+            if (token.type() == deal.ast.TokenType.IDENTIFIER && i + 2 < tokens.size()
+                    && tokens.get(i + 1).lexeme().equals(".")
+                    && tokens.get(i + 2).type() == deal.ast.TokenType.IDENTIFIER
+                    && (token.lexeme().equals("core") || !framework && List.of("store", "actions", "effects", "reconcile").contains(token.lexeme()))) {
+                String member = tokens.get(i + 2).lexeme();
+                replacement = switch (token.lexeme() + "." + member) {
+                    case "store.finish" -> "lifecycleFinish";
+                    case "store.reject" -> "lifecycleReject";
+                    case "store.dispose" -> "lifecycleDispose";
+                    case "actions.route" -> "actionRoute";
+                    default -> member;
+                };
+                end = tokens.get(i + 2).endScalarOffset();
+                i += 2;
+            }
+            if (replacement != null) {
+                result.append(source, offset, token.startScalarOffset()).append(replacement);
+                offset = end;
+            }
+        }
+        return result.append(source, offset, source.length()).toString();
     }
 
     private void generateView(StringBuilder out, UiModel.View view, String app) {
