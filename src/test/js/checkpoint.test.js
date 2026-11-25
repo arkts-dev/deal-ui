@@ -14,12 +14,21 @@ const ca=createDealUiCheckpoint(a.rt,schema,'proof'),cb=createDealUiCheckpoint(b
 const original=a.entry.proofInitial.$f(),wire=JSON.parse(JSON.stringify(ca.encode(original))),descriptor=a.entry.proofInitial.$sig.slice(4),restored=cb.decode(wire,descriptor);
 assert.deepEqual(cb.encode(restored),wire);
 assert.equal(ca.elementType(original.bag.get('nums')),'number');assert.equal(ca.elementType(original.bag.get('strs')),'string');
-assert.deepEqual(wire.value[3][0][1][2].slice(0,2).map(p=>p[0]),['2','10']);
+assert.deepEqual(wire.value[3][0][1][3].slice(0,2).map(p=>p[0]),['2','10']);
 assert(Object.is(restored.bag.get('box').value,-0));assert(Number.isNaN(restored.bag.get('nan')));assert.equal(restored.bag.get('pos'),Infinity);assert.equal(restored.bag.get('neg'),-Infinity);assert.equal(restored.bag.get('text'),'\ud800');
 const recursive=b.entry.proofRecursive.$f();const recursiveCopy=cb.decode(JSON.parse(JSON.stringify(cb.encode(recursive))),b.entry.proofRecursive.$sig.slice(4));assert.equal(recursiveCopy.child,recursiveCopy);
 assert.equal(restored.bag.get('selfArray')[0],restored.bag.get('selfArray'));
 assert.equal(cb.elementType(restored.bag.get('functions')),'(number)->number');
 assert.equal(cb.elementType(restored.bag.get('parsed').get('array')),'unknown');
+assert.equal(restored.bag.get('labels'),restored.bag.get('labelsAlias'));
+for(const key of ['labels','emptyLabels','decodedLabels']){
+ const labels=restored.bag.get(key);
+ assert.equal(b.rt.checkType('record[string]',labels),labels);
+ assert.throws(()=>b.rt.checkType('record',labels));
+ assert.throws(()=>b.rt.tableSet(labels,'bad',42));
+ assert.equal(labels.has('bad'),false);
+}
+assert.equal(cb.elementType(restored.bag.get('dictionaries')),'record[string]');
 b.entry.proofVerify.$f(restored);
 assert.throws(()=>b.rt.checkArray('[string]',restored.bag.get('nums')));
 assert.throws(()=>b.rt.checkArray('[number]',restored.bag.get('strs')));
@@ -30,7 +39,7 @@ assert.throws(()=>cb.decode({schemaDigest:'proof',value:['class',0,'toString',[]
 assert.throws(()=>cb.decode({schemaDigest:'wrong',value:['null']},'unknown'));
 assert.throws(()=>ca.encode(a.entry.proofInitial));
 assert.throws(()=>ca.encode(new Map([['hidden',a.entry.proofInitial]])));
-const badCycle=['record',0,[]];badCycle[2].push(['self',badCycle]);assert.throws(()=>cb.decode({schemaDigest:'proof',value:badCycle},'unknown'));
-for(const value of [['ref',99],['number','01'],['array',0,'@unknown/Unavailable',[]],['array',0,'number',[['string','bad']]],['class',0,'Error',[]],['record',0,[['x',['null']],['x',['null']]]]])assert.throws(()=>cb.decode({schemaDigest:'proof',value},'unknown'));
+const badCycle=['record',0,'record',[]];badCycle[3].push(['self',badCycle]);assert.throws(()=>cb.decode({schemaDigest:'proof',value:badCycle},'unknown'));
+for(const value of [['ref',99],['number','01'],['array',0,'@unknown/Unavailable',[]],['array',0,'number',[['string','bad']]],['class',0,'Error',[]],['record',0,'record',[['x',['null']],['x',['null']]]],['record',0,'record[number]',[]],['record',0,'record[string]',[['x',['number','1']]]],['record',0,[]]])assert.throws(()=>cb.decode({schemaDigest:'proof',value},'unknown'));
 assert.equal(JSON.stringify(cb.encode(restored)),before);
-console.log('PASS: actual compiled state across fresh runtimes: hidden empty/nested typed arrays, nominal identity, aliases/cycles, presence, binary64, UTF-16, builtin Errors, malformed rejection');
+console.log('PASS: actual compiled state across fresh runtimes: hidden empty/nested typed arrays, string/unknown Record descriptors, nominal identity, aliases/cycles, presence, binary64, UTF-16, builtin Errors, malformed rejection');

@@ -55,11 +55,13 @@ public final class UiCheckpointCompiler {
 
     private static final class Inventory {
         private final Set<String> elements = new LinkedHashSet<>();
+        private final Set<String> records = new LinkedHashSet<>(Set.of("record"));
         private final Map<String,ClassLayout> classes = new LinkedHashMap<>();
         void type(RuntimeDescriptor descriptor) {
             if (descriptor instanceof RuntimeDescriptor.Array array) {
                 elements.add(array.element().canonicalSpecText()); type(array.element());
-            } else if (descriptor instanceof RuntimeDescriptor.Nullable nullable) type(nullable.inner());
+            } else if (descriptor instanceof RuntimeDescriptor.Table table) records.add(table.canonicalSpecText());
+            else if (descriptor instanceof RuntimeDescriptor.Nullable nullable) type(nullable.inner());
             else if (descriptor instanceof RuntimeDescriptor.Func function) {
                 function.paramTypes().forEach(this::type); type(function.returnType());
             }
@@ -70,6 +72,7 @@ public final class UiCheckpointCompiler {
         }
         String json() {
             return "{\"elements\":[" + elements.stream().map(UiCheckpointCompiler::quote).collect(Collectors.joining(","))
+                + "],\"records\":[" + records.stream().map(UiCheckpointCompiler::quote).collect(Collectors.joining(","))
                 + "],\"classes\":{" + classes.entrySet().stream().map(entry -> quote(entry.getKey()) + ":["
                     + entry.getValue().fields().stream().map(field -> "{\"name\":" + quote(field.name())
                         + ",\"descriptor\":" + quote(field.descriptor().canonicalSpecText()) + ",\"optional\":" + !field.required() + "}")

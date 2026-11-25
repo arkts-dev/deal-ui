@@ -49,7 +49,7 @@ import java.util.Set;
 final class UiBorrowedValueChecker {
     private record Shape(String name, int dimensions, boolean unknown) {
         boolean reference(Map<String, ClassDeclaration> classes) {
-            return unknown || dimensions > 0 || classes.containsKey(simple(name)) || name.equals("Record<string, unknown>") || name.equals("unknown") || name.equals("function");
+            return unknown || dimensions > 0 || classes.containsKey(simple(name)) || (name.equals("Record<string, unknown>") || name.equals("Record<string, string>")) || name.equals("unknown") || name.equals("function");
         }
     }
 

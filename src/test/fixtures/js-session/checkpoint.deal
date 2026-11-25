@@ -10,9 +10,16 @@ export function initial(): State {
  let self:unknown[]=[];self.push(self);
  let absent:(number | null)[]=[];let funcs:((x:number)=>number)[]=[];
  bag.parsed=parsed;bag.selfArray=self;bag.nullable=absent;bag.functions=funcs;
+ let labels:Record<string,string>={"2":"two","__proto__":"safe",text:"\ud800"};
+ let empty:Record<string,string>={};let decoded:Record<string,string>=JSON.parse("{\"name\":\"Ada\"}");
+ let dictionaries:Record<string,string>[]=[labels,empty];
+ bag.labels=labels;bag.labelsAlias=labels;bag.emptyLabels=empty;bag.decodedLabels=decoded;bag.dictionaries=dictionaries;
  bag.self=bag;return {bag:bag};
 }
 export function verify(state:State):void {
+ let labels=state.bag.labels as Record<string,string>;
+ if(labels!==state.bag.labelsAlias as Record<string,string> || (labels["__proto__"] as string)!=="safe" || labels.missing!==undefined){throw {name:"RECORD",message:"descriptor/identity/absence"};}
+ labels.next="checked";
  let nums=state.bag.nums as number[];let strs=state.bag.strs as string[];
  let nested=state.bag.nested as number[][];let box=state.bag.box as Box;
  if(nested[0]!==nums || (state.bag.alias as Box)!==box || (state.bag.self as Record<string,unknown>)!==state.bag){throw {name:"ALIAS",message:"identity"};}

@@ -488,6 +488,14 @@ public final class UiFrameworkTest {
             "export function setTitle(state: GalleryState, action: SetTitle): GalleryState {\n  return {\n    title: action.value,\n    count: state.count,\n    expanded: state.expanded,\n    items: state.items\n  };\n}",
             "export function setTitle(state: GalleryState, action: SetTitle): GalleryState { action.value = \"changed\"; return state; }"));
 
+        // A typed Record remains a mutable reference at a borrowed handler boundary.
+        String recordHelper = "function mutateLabels(labels: Record<string, string>): void { labels.title = \"changed\"; }\n";
+        String recordState = original.replace("  items: Item[] ;", "  items: Item[] ;\n  labels?: Record<string, string>;");
+        expect("UI2051", source(root), recordState.replace("// @ui-update\n" + originalUpdate,
+            recordHelper + "// @ui-update\nexport function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { mutateLabels(state.labels as Record<string, string>); return state; }"));
+        expectValid(root, source(root), original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let labels: Record<string, string> = {}; labels.title = state.title; return state; }"), pack(root), "fresh string records remain writable");
+
         String freshLocal = original.replace(originalUpdate,
             "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { " +
             "let item: Item = { id: 7, title: \"fresh\" }; let items: Item[] = [item]; items[0] = { id: 8, title: \"replacement\" }; " +
