@@ -289,6 +289,9 @@ final class UiBorrowedValueChecker {
         }
 
         private void call(CallExpr call) {
+            // Arguments have already been traversed. The closed, unshadowable builtin
+            // observes identity only: it neither mutates nor retains a borrowed value.
+            if (isArrayInspection(call)) return;
             String name = calledFunction(call.callee());
             Summary summary = name == null ? null : summaries.get(name);
             if (summary == null) {
@@ -360,6 +363,7 @@ final class UiBorrowedValueChecker {
                 return array.dimensions() > 0 ? new Shape(array.name(), array.dimensions() - 1, array.unknown()) : unknown();
             }
             if (expression instanceof CallExpr call) {
+                if (isArrayInspection(call)) return new Shape("boolean", 0, false);
                 String called = calledFunction(call.callee());
                 FunctionDeclaration function = called == null ? null : functions.get(called);
                 return function == null ? unknown() : shape(function.returnType());
@@ -425,6 +429,12 @@ final class UiBorrowedValueChecker {
         if (type instanceof QualifiedType qualified) return new Shape(qualified.moduleName() + "." + qualified.typeName(), 0, false);
         if (type instanceof FunctionType) return new Shape("function", 0, false);
         return unknown();
+    }
+
+    private static boolean isArrayInspection(CallExpr call) {
+        return call.callee() instanceof MemberAccessExpr member
+            && member.object() instanceof IdentifierExpr namespace
+            && namespace.name().equals("Array") && member.field().equals("isArray");
     }
 
     private String calledFunction(ExpressionNode callee) {

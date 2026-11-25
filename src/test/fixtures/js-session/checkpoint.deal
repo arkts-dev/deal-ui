@@ -17,6 +17,9 @@ export function initial(): State {
  bag.self=bag;return {bag:bag};
 }
 export function verify(state:State):void {
+ const view:readonly unknown[]=state.bag.nums as readonly unknown[];
+ const parsed=state.bag.parsed as Record<string,unknown>;
+ if(!Array.isArray(view) || !Array.isArray(state.bag.strs) || !Array.isArray(state.bag.nested) || !Array.isArray(state.bag.selfArray) || !Array.isArray(parsed.array) || Array.isArray(state.bag) || Array.isArray(state.bag.labels) || Array.isArray(state.bag.box) || Array.isArray(null) || Array.isArray("[]")){throw {name:"ARRAY",message:"checkpoint array identity"};}
  let labels=state.bag.labels as Record<string,string>;
  if(labels!==state.bag.labelsAlias as Record<string,string> || (labels["__proto__"] as string)!=="safe" || labels.missing!==undefined){throw {name:"RECORD",message:"descriptor/identity/absence"};}
  labels.next="checked";

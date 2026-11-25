@@ -496,6 +496,16 @@ public final class UiFrameworkTest {
         expectValid(root, source(root), original.replace(originalUpdate,
             "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { let labels: Record<string, string> = {}; labels.title = state.title; return state; }"), pack(root), "fresh string records remain writable");
 
+        String inspectArrays = original.replace(originalUpdate,
+            "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { " +
+            "let array: boolean = Array.isArray(state.items); return { title: state.title, count: state.count, expanded: array, items: state.items }; }");
+        expectValid(root, source(root), inspectArrays, pack(root), "Array.isArray inspects borrowed arrays without escape");
+        expectValid(root, source(root), inspectArrays.replace("Array.isArray(state.items)", "Array.isArray(action)"), pack(root), "Array.isArray may inspect a borrowed non-array");
+        expectValid(root, source(root), inspectArrays.replace("Array.isArray(state.items)", "Array.isArray(state.items as readonly unknown[])"), pack(root), "Array.isArray preserves readonly borrowed views");
+        expectValid(root, source(root), inspectArrays.replace("return { title: state.title", "let flags: boolean[] = [array]; flags[0] = false; return { title: state.title"), pack(root), "Array.isArray returns a fresh scalar, not a borrowed alias");
+        expect("UI2050", source(root), inspectArrays.replace("let array: boolean = Array.isArray(state.items);", "let array: boolean = Array.isArray(state.items); state.items[0].title = \"changed\";"));
+        expect("UI2051", source(root), inspectArrays.replace("// @ui-update\nexport function toggleDetails", "function inspectAndMutate(items: Item[]): Item[] { items[0].title = \"changed\"; return items; }\n// @ui-update\nexport function toggleDetails").replace("Array.isArray(state.items)", "Array.isArray(inspectAndMutate(state.items))"));
+
         String freshLocal = original.replace(originalUpdate,
             "export function toggleDetails(state: GalleryState, action: ToggleDetails): GalleryState { " +
             "let item: Item = { id: 7, title: \"fresh\" }; let items: Item[] = [item]; items[0] = { id: 8, title: \"replacement\" }; " +
