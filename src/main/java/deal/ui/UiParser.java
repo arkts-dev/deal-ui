@@ -335,7 +335,16 @@ public final class UiParser {
         boolean readonly = match("readonly");
         UiModel.TypeRef base;
         if (match("(")) { base = type(); require(")"); }
-        else base = new UiModel.TypeRef(qualified(), false, false);
+        else {
+            String name = qualified();
+            if (name.equals("Record")) {
+                require("<"); require("string"); require(",");
+                String value = id();
+                if (!value.equals("string") && !value.equals("unknown")) fail("UI1007", "Record values must be string or unknown", previous());
+                require(">"); name = "Record<string, " + value + ">";
+            }
+            base = new UiModel.TypeRef(name, false, false);
+        }
         List<Boolean> layers = new ArrayList<>(base.readonlyLayers());
         int initialDepth = layers.size();
         while (match("[")) {

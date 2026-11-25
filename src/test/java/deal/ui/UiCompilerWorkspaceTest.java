@@ -102,6 +102,16 @@ public final class UiCompilerWorkspaceTest {
     }
 
     private static void readonlyTypeAnnotationsRoundtrip() {
+        for (String value : List.of("string", "unknown")) {
+            var type = new UiModel.TypeRef("Record<string, " + value + ">", false, 1, List.of(true));
+            var parsed = UiParser.parseViews(java.nio.file.Path.of("records.dealui"),
+                "export view Records(values: " + type.sourceType(type.name()) + "): View {}");
+            check(parsed.views().getFirst().parameters().getFirst().type().equals(type), "closed Record annotations preserve readonly layers");
+        }
+        try {
+            UiParser.parseViews(java.nio.file.Path.of("records.dealui"), "export view Records(values: Record<string, number>): View {}");
+            throw new AssertionError("No general Record applications");
+        } catch (UiDiagnostic expected) { check(expected.code().equals("UI1007"), "unsupported Record value type rejects"); }
         for (var layers : List.of(List.of(true, false), List.of(false, true), List.of(true, true))) {
             var type = new UiModel.TypeRef("app.Row", false, 2, layers);
             var parsed = UiParser.parseViews(java.nio.file.Path.of("arrays.dealui"),
