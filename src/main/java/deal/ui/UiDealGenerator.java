@@ -21,13 +21,14 @@ final class UiDealGenerator {
     private int localId;
     private boolean splitViews;
     private final StringBuilder viewHelpers = new StringBuilder();
+    private final Map<UiModel.Call, List<UiModel.Node>> forwardedViews = new java.util.IdentityHashMap<>();
     private final Map<UiModel.ForEach, Integer> iterationIds = new java.util.IdentityHashMap<>();
 
     UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
         this.frameworkRoot = frameworkRoot;
         schemaDigest = digest(stateSchema(program));
-        for (UiModel.View view : program.views().values()) indexIterations(view.nodes());
+        for (UiModel.View view : program.views().values()) if (!actionView(view)) { expandForwarding(view.nodes()); indexIterations(view.nodes()); }
         int id = 0;
         for (String action : program.updates().keySet()) actionIds.put(action, id++);
         id = 0;
@@ -83,7 +84,7 @@ final class UiDealGenerator {
                     .append(qualifiedType(field.type(), app)).append(";\n");
             out.append("}\n");
         }
-        for (UiModel.View view : program.views().values()) generateView(out, view, app);
+        for (UiModel.View view : program.views().values()) if (!actionView(view)) generateView(out, view, app);
         out.append(viewHelpers);
         generateActionFactories(out);
         generatePayloadTypes(out);
@@ -132,7 +133,7 @@ final class UiDealGenerator {
         for (UiModel.View view : program.views().values()) {
             Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
             for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), parameter.type().withName(simple(parameter.type().name())));
-            appendForEachAccessors(augmentation, view.nodes(), scope);
+            if (!actionView(view)) appendForEachAccessors(augmentation, view.nodes(), scope);
         }
         String flattened = flattenFramework(out.toString());
         return new Output(flattened, augmentation.toString(), Map.copyOf(actions), Map.copyOf(actionIds), Map.copyOf(effectIds));
@@ -191,6 +192,8 @@ final class UiDealGenerator {
         return result.append(source, offset, source.length()).toString();
     }
 
+    private boolean actionView(UiModel.View view) { return view.parameters().stream().anyMatch(parameter -> parameter.type().name().equals("Action")); }
+
     private void generateView(StringBuilder out, UiModel.View view, String app) {
         out.append("export function view_").append(view.name()).append("(identityPrefix: string");
         for (int i = 0; i < view.parameters().size(); i++) {
@@ -211,8 +214,13 @@ final class UiDealGenerator {
             String structural = identity + "/" + index++;
             String pad = "  ".repeat(indent);
             if (node instanceof UiModel.Call call) {
-                UiModel.View view = program.views().get(simple(call.name()));
+                UiModel.View view = program.views().get(call.name());
                 if (view != null && !program.components().containsKey(call.name())) {
+                    if (actionView(view)) {
+                        var bound = forwardedViews.get(call);
+                        emitNodes(out, bound, target, structural + "/" + view.name(), key, app, indent, scope);
+                        continue;
+                    }
                     out.append(pad).append(target).append("[").append(target).append(".length] = view_").append(view.name()).append("(\"").append(structural).append("\"");
                     for (int i = 0; i < view.parameters().size(); i++) {
                         out.append(", ");
@@ -430,12 +438,25 @@ final class UiDealGenerator {
 
     }
 
+    private void expandForwarding(List<UiModel.Node> nodes) {
+        for (var node : nodes) {
+            if (node instanceof UiModel.Call call) {
+                var view = program.views().get(call.name());
+                if (view != null && actionView(view)) {
+                    var bound = UiViewBindings.bind(view.nodes(), call.arguments());
+                    forwardedViews.put(call, bound); expandForwarding(bound);
+                } else expandForwarding(call.children());
+            } else if (node instanceof UiModel.When when) { expandForwarding(when.thenNodes()); expandForwarding(when.elseNodes()); }
+            else if (node instanceof UiModel.ForEach each) expandForwarding(each.children());
+        }
+    }
+
     private void indexIterations(List<UiModel.Node> nodes) {
         for (UiModel.Node node : nodes) {
             if (node instanceof UiModel.ForEach each) {
                 iterationIds.put(each, iterationIds.size());
                 indexIterations(each.children());
-            } else if (node instanceof UiModel.Call call) indexIterations(call.children());
+            } else if (node instanceof UiModel.Call call) indexIterations(forwardedViews.getOrDefault(call, call.children()));
             else if (node instanceof UiModel.When when) { indexIterations(when.thenNodes()); indexIterations(when.elseNodes()); }
         }
     }
@@ -450,7 +471,7 @@ final class UiDealGenerator {
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 appendForEachAccessors(out, each.children(), nested);
-            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, call.children(), scope);
+            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, forwardedViews.getOrDefault(call, call.children()), scope);
             else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), scope); appendForEachAccessors(out, when.elseNodes(), scope); }
         }
     }

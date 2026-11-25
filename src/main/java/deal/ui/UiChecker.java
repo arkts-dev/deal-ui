@@ -238,6 +238,14 @@ public final class UiChecker {
                     if (!call.children().isEmpty()) error("UI2010", "View calls reject children", call.span());
                     exactArguments(call.arguments(), view.parameters().stream().map(UiModel.Parameter::name).toList(), call.span());
                     if (!viewStack.add(view.name())) error("UI2011", "Recursive view call '" + view.name() + "'", call.span());
+                    if (view.parameters().stream().anyMatch(parameter -> parameter.type().name().equals("Action"))) {
+                        for (var parameter : view.parameters()) if (!parameter.type().name().equals("Action"))
+                            checkAssignable(type(call.arguments().get(parameter.name()), scope, deal, packClasses, tokens, aliases, actions, null), parameter.type(), call.span());
+                        result.addAll(lower(UiViewBindings.bind(view.nodes(), call.arguments()), nodeIdentity + "/" + view.name(), scope, views, components,
+                                packClasses, tokens, deal, aliases, actions, viewStack));
+                        viewStack.remove(view.name());
+                        continue;
+                    }
                     Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>();
                     Map<String, UiModel.Expr> bindings = new LinkedHashMap<>();
                     for (UiModel.Parameter parameter : view.parameters()) {
