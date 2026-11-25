@@ -10,6 +10,7 @@ mkdir -p "$TEST_CLASSES"
 TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiDiagnosticsV3Test.java
   "$ROOT"/src/test/java/deal/ui/UiNullableElementsTest.java
+  "$ROOT"/src/test/java/deal/ui/UiBorrowedValuesTest.java
   "$ROOT"/src/test/java/deal/ui/UiFrameworkTest.java
   "$ROOT"/src/test/java/deal/ui/UiRuntimeInvariantTest.java
   "$ROOT"/src/test/java/deal/ui/UiCompilerWorkspaceTest.java
@@ -18,6 +19,7 @@ TEST_SOURCES=(
 javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -d "$TEST_CLASSES" "${TEST_SOURCES[@]}"
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiDiagnosticsV3Test
 java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullableElementsTest
+java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiBorrowedValuesTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiFrameworkTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRuntimeInvariantTest
 java -ea -Djava.awt.headless=true -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCompilerWorkspaceTest

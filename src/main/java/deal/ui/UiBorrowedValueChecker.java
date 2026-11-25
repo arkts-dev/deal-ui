@@ -225,6 +225,20 @@ final class UiBorrowedValueChecker {
         private void expression(ExpressionNode expression) {
             if (expression instanceof AssignmentExpr assignment) {
                 assignment(assignment);
+            } else if (expression instanceof deal.ast.ConditionalExpr conditional) {
+                expression(conditional.condition());
+                Analyzer yes = new Analyzer(this);
+                yes.expression(conditional.consequent());
+                Analyzer no = new Analyzer(this);
+                no.expression(conditional.alternate());
+                merge(yes);
+                merge(no);
+            } else if (expression instanceof deal.ast.OptionalChainExpr chain) {
+                expression(chain.expression());
+            } else if (expression instanceof deal.ast.OptionalGuardExpr guard) {
+                expression(guard.value());
+            } else if (expression instanceof deal.ast.InstanceofExpr test) {
+                expression(test.value());
             } else if (expression instanceof BinaryExpr binary) {
                 expression(binary.left());
                 expression(binary.right());
@@ -291,7 +305,23 @@ final class UiBorrowedValueChecker {
         private void call(CallExpr call) {
             // Arguments have already been traversed. The closed, unshadowable builtin
             // observes identity only: it neither mutates nor retains a borrowed value.
-            if (isArrayInspection(call)) return;
+            if (builtinShape(call) != null) return;
+            if (call.callee() instanceof MemberAccessExpr member && expressionShape(member.object()).dimensions() > 0) {
+                String method = member.field();
+                if (Set.of("push", "pop", "splice").contains(method)) {
+                    for (int parameter : origin(member.object()).direct())
+                        violations.putIfAbsent(parameter, new Violation("UI2050", "mutates a borrowed array through '" + method + "'", call.span()));
+                }
+                if (method.equals("push") && member.object() instanceof IdentifierExpr identifier) {
+                    Origin old = origins.getOrDefault(identifier.name(), Origin.NONE);
+                    for (ExpressionNode argument : call.args()) old = new Origin(old.direct(), Origin.union(old.nested(), origin(argument).all()));
+                    origins.put(identifier.name(), old);
+                }
+                if (Set.of("map", "filter", "find", "findIndex", "some", "every", "toSorted").contains(method)) {
+                    for (ExpressionNode callback : call.args()) callback(callback, member.object(), method.equals("toSorted"));
+                }
+                if (Set.of("push", "pop", "splice", "map", "filter", "find", "findIndex", "some", "every", "toSorted", "slice", "concat", "includes", "indexOf", "join").contains(method)) return;
+            }
             String name = calledFunction(call.callee());
             Summary summary = name == null ? null : summaries.get(name);
             if (summary == null) {
@@ -311,6 +341,28 @@ final class UiBorrowedValueChecker {
             }
         }
 
+        private void callback(ExpressionNode callback, ExpressionNode receiver, boolean comparator) {
+            Origin borrowed = origin(receiver).member(true);
+            if (callback instanceof FunctionExpr function) {
+                Analyzer nested = new Analyzer(this);
+                for (int i = 0; i < function.params().size(); i++) {
+                    Parameter parameter = function.params().get(i);
+                    nested.shapes.put(parameter.name(), shape(parameter.type()));
+                    nested.origins.put(parameter.name(), i == 1 && !comparator ? Origin.NONE : borrowed);
+                }
+                nested.block(function.body());
+                nested.violations.forEach(violations::putIfAbsent);
+            } else if (callback instanceof IdentifierExpr identifier && summaries.containsKey(identifier.name())) {
+                Summary summary = summaries.get(identifier.name());
+                if (summary.parameters().keySet().stream().anyMatch(i -> comparator || i != 1))
+                    for (int parameter : borrowed.all()) violations.putIfAbsent(parameter,
+                        new Violation("UI2051", "array callback may mutate a borrowed value", callback.span()));
+            } else {
+                for (int parameter : borrowed.all()) violations.putIfAbsent(parameter,
+                    new Violation("UI2051", "borrowed value escapes to an unknown array callback", callback.span()));
+            }
+        }
+
         private Origin origin(ExpressionNode expression) {
             Shape resultShape = expressionShape(expression);
             if (expression instanceof IdentifierExpr identifier) return origins.getOrDefault(identifier.name(), Origin.NONE);
@@ -326,6 +378,19 @@ final class UiBorrowedValueChecker {
                 for (var property : object.properties()) result = new Origin(Set.of(), result.merge(origin(property.value())).all());
                 return result;
             }
+            if (expression instanceof deal.ast.ConditionalExpr conditional) return origin(conditional.consequent()).merge(origin(conditional.alternate()));
+            if (expression instanceof deal.ast.OptionalChainExpr chain) return origin(chain.expression());
+            if (expression instanceof deal.ast.OptionalGuardExpr guard) return origin(guard.value());
+            if (expression instanceof FunctionExpr function) {
+                Analyzer nested = new Analyzer(this);
+                nested.returned = Origin.NONE;
+                for (Parameter parameter : function.params()) {
+                    nested.origins.put(parameter.name(), Origin.NONE);
+                    nested.shapes.put(parameter.name(), shape(parameter.type()));
+                }
+                nested.block(function.body());
+                return nested.returned;
+            }
             if (expression instanceof deal.ast.AssertionExpr assertion) return origin(assertion.value());
             if (expression instanceof AssignmentExpr assignment) return origin(assignment.value());
             if (expression instanceof BinaryExpr binary) return origin(binary.left()).merge(origin(binary.right()));
@@ -336,7 +401,15 @@ final class UiBorrowedValueChecker {
                 Summary summary = called == null ? null : summaries.get(called);
                 Origin result = Origin.NONE;
                 if (summary == null) {
+                    if (builtinShape(call) != null) return Origin.NONE;
+                    result = origin(call.callee());
                     for (ExpressionNode argument : call.args()) result = result.merge(origin(argument));
+                    if (call.callee() instanceof MemberAccessExpr member && expressionShape(member.object()).dimensions() > 0) {
+                        Origin receiver = origin(member.object());
+                        if (Set.of("slice", "concat", "filter", "toSorted", "splice").contains(member.field()))
+                            return new Origin(Set.of(), receiver.all()).merge(new Origin(Set.of(), result.all()));
+                        if (Set.of("find", "pop").contains(member.field())) return receiver.member(resultShape.reference(classes));
+                    }
                     return result;
                 }
                 for (int index : summary.returned().direct()) {
@@ -355,6 +428,9 @@ final class UiBorrowedValueChecker {
         }
 
         private Shape expressionShape(ExpressionNode expression) {
+            if (expression instanceof deal.ast.ConditionalExpr conditional) return expressionShape(conditional.consequent());
+            if (expression instanceof deal.ast.OptionalChainExpr chain) return expressionShape(chain.expression());
+            if (expression instanceof deal.ast.OptionalGuardExpr guard) return expressionShape(guard.value());
             if (expression instanceof deal.ast.AssertionExpr assertion) return shape(assertion.target());
             if (expression instanceof IdentifierExpr identifier) return shapes.getOrDefault(identifier.name(), unknown());
             if (expression instanceof MemberAccessExpr member) return memberShape(expressionShape(member.object()), member.field());
@@ -363,7 +439,19 @@ final class UiBorrowedValueChecker {
                 return array.dimensions() > 0 ? new Shape(array.name(), array.dimensions() - 1, array.unknown()) : unknown();
             }
             if (expression instanceof CallExpr call) {
-                if (isArrayInspection(call)) return new Shape("boolean", 0, false);
+                Shape builtin = builtinShape(call);
+                if (builtin != null) return builtin;
+                if (call.callee() instanceof MemberAccessExpr member) {
+                    Shape receiver = expressionShape(member.object());
+                    if (receiver.dimensions() > 0) return switch (member.field()) {
+                        case "find", "pop" -> new Shape(receiver.name(), receiver.dimensions() - 1, receiver.unknown());
+                        case "slice", "concat", "filter", "toSorted", "splice" -> receiver;
+                        case "push", "findIndex", "indexOf" -> new Shape("number", 0, false);
+                        case "includes", "some", "every" -> new Shape("boolean", 0, false);
+                        case "join" -> new Shape("string", 0, false);
+                        default -> unknown();
+                    };
+                }
                 String called = calledFunction(call.callee());
                 FunctionDeclaration function = called == null ? null : functions.get(called);
                 return function == null ? unknown() : shape(function.returnType());
@@ -401,6 +489,7 @@ final class UiBorrowedValueChecker {
     }
 
     private Shape memberShape(Shape owner, String fieldName) {
+        if (fieldName.equals("length") && (owner.dimensions() > 0 || owner.name().equals("string"))) return new Shape("number", 0, false);
         if (owner.dimensions() > 0 || owner.unknown()) return unknown();
         ClassDeclaration declaration = classes.get(simple(owner.name()));
         if (declaration == null) return unknown();
@@ -431,10 +520,22 @@ final class UiBorrowedValueChecker {
         return unknown();
     }
 
-    private static boolean isArrayInspection(CallExpr call) {
-        return call.callee() instanceof MemberAccessExpr member
-            && member.object() instanceof IdentifierExpr namespace
-            && namespace.name().equals("Array") && member.field().equals("isArray");
+    /** Closed core builtins only; argument expressions are still traversed before this lookup. */
+    private static Shape builtinShape(CallExpr call) {
+        if (call.callee() instanceof IdentifierExpr identifier) return switch (identifier.name()) {
+            case "String" -> new Shape("string", 0, false);
+            case "Number" -> new Shape("number", 0, false);
+            default -> null;
+        };
+        if (!(call.callee() instanceof MemberAccessExpr member) || !(member.object() instanceof IdentifierExpr namespace)) return null;
+        return switch (namespace.name() + "." + member.field()) {
+            case "Array.isArray", "Number.isFinite", "Number.isNaN", "Object.hasOwn" -> new Shape("boolean", 0, false);
+            case "Object.keys" -> new Shape("string", 1, false);
+            case "JSON.stringify" -> new Shape("string", 0, false);
+            case "JSON.parse" -> unknown();
+            case "Math.floor", "Math.ceil", "Math.sqrt", "Math.abs", "Math.min", "Math.max", "Math.round", "Math.pow" -> new Shape("number", 0, false);
+            default -> null;
+        };
     }
 
     private String calledFunction(ExpressionNode callee) {
