@@ -35,6 +35,7 @@ import java.util.Set;
 public final class UiChecker {
     private List<UiDiagnostic> collectedDiagnostics;
     private final Map<String, String> consumedSources = new LinkedHashMap<>();
+    private final Map<String, String> typeNames = new LinkedHashMap<>();
 
     public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
                                       UiModel.DealModule deal, Map<String, UiModel.PackModule> packs) {
@@ -79,6 +80,20 @@ public final class UiChecker {
     private UiModel.CheckedProgram checkProgram(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
             UiModel.DealModule deal, Map<String, UiModel.PackModule> packs, boolean allowUnreachableUpdates) {
         Map<String, String> aliases = aliases(viewModule.imports());
+        typeNames.clear();
+        var packAliases = new LinkedHashMap<String, String>();
+        for (var imported : viewModule.imports()) {
+            var pack = packs.get(imported.specifier());
+            if (pack == null) continue;
+            String canonical = packAliases.computeIfAbsent(imported.specifier(), ignored -> imported.alias());
+            for (String name : pack.classes().keySet()) typeNames.put(imported.alias() + "." + name, canonical + "." + name);
+        }
+        for (UiModel.Import imported : viewModule.imports()) {
+            if (!packs.containsKey(imported.specifier())) for (String name : deal.classes().keySet()) {
+                String qualified = imported.alias() + "." + name;
+                if (localType(qualified, aliases, dealFile, deal).equals(name)) typeNames.put(qualified, name);
+            }
+        }
         UiModel.View root = null;
         Map<String, UiModel.View> views = new LinkedHashMap<>();
         for (UiModel.View view : viewModule.views()) {
@@ -106,8 +121,11 @@ public final class UiChecker {
             UiModel.PackModule pack = packs.get(imported.specifier());
             if (pack == null) continue;
             pack.components().forEach((name, value) -> components.put(imported.alias() + "." + name, value));
-            pack.classes().forEach((name, value) -> packClasses.put(imported.alias() + "." + name, value));
-            pack.tokens().forEach((name, value) -> tokens.put(imported.alias() + "." + name, value));
+            pack.classes().forEach((name, value) -> packClasses.put(imported.alias() + "." + name,
+                    new UiModel.PackClass(value.name(), value.fields().stream().map(field -> new UiModel.Field(field.name(),
+                            qualifyPackType(field.type(), imported.alias(), pack), field.defaultValue(), field.span(), field.optional())).toList(), value.span())));
+            pack.tokens().forEach((name, value) -> tokens.put(imported.alias() + "." + name,
+                    new UiModel.Token(value.name(), qualifyPackType(value.type(), imported.alias(), pack), value.value(), value.span())));
         }
         validatePack(components, packClasses, tokens);
 
@@ -215,7 +233,7 @@ public final class UiChecker {
             String nodeIdentity = identity + "/" + index++;
             try {
             if (node instanceof UiModel.Call call) {
-                UiModel.View view = views.get(simple(call.name()));
+                UiModel.View view = views.get(call.name());
                 if (view != null && !components.containsKey(call.name())) {
                     if (!call.children().isEmpty()) error("UI2010", "View calls reject children", call.span());
                     exactArguments(call.arguments(), view.parameters().stream().map(UiModel.Parameter::name).toList(), call.span());
@@ -360,7 +378,7 @@ public final class UiChecker {
             List<String> parts = has.path().parts();
             if (parts.size() < 2) error("UI2017", "has requires an optional final field, not a parameter", has.span());
             UiModel.TypeRef owner = pathType(new UiModel.PathExpr(parts.subList(0, parts.size() - 1), has.path().span()), scope, deal, packClasses, tokens);
-            UiModel.DealClass clazz = deal.classes().get(simple(owner.name()));
+            UiModel.DealClass clazz = deal.classes().get(typeNames.getOrDefault(owner.name(), owner.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(owner.name(), packClasses, has.span()) : null;
             String fieldName = parts.getLast();
             UiModel.Field field = clazz != null ? clazz.fields().get(fieldName) : packClass == null ? null
@@ -369,7 +387,7 @@ public final class UiChecker {
             return primitive("boolean");
         }
         if (expression instanceof UiModel.Action action) {
-            String name = simple(action.name());
+            String name = typeNames.getOrDefault(action.name(), action.name());
             UiModel.DealClass declaration = deal.classes().get(name);
             if (declaration == null) error("UI2018", "Unknown nominal action '" + name + "'", action.span());
             for (var field : declaration.fields().values()) if (!field.optional() && !action.fields().containsKey(field.name()))
@@ -437,7 +455,7 @@ public final class UiChecker {
                     "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
                     path.span().file(), path.span().line(), path.span().column(),
                     "direct ForEach collection path or explicit scalar field", joined);
-            UiModel.DealClass clazz = deal.classes().get(simple(current.name()));
+            UiModel.DealClass clazz = deal.classes().get(typeNames.getOrDefault(current.name(), current.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
             if (clazz == null && packClass == null) throw new UiDiagnostic(
                     "UI2023", "Path traverses a value that has no declared fields",
@@ -458,7 +476,7 @@ public final class UiChecker {
     private UiModel.PackClass uniquePackClass(String typeName, Map<String, UiModel.PackClass> classes,
                                                UiModel.Span span) {
         List<UiModel.PackClass> matches = classes.entrySet().stream()
-            .filter(entry -> entry.getKey().equals(typeName) || simple(entry.getKey()).equals(simple(typeName)))
+            .filter(entry -> entry.getKey().equals(typeName) || !typeName.contains(".") && simple(entry.getKey()).equals(typeName))
             .map(Map.Entry::getValue)
             .distinct()
             .toList();
@@ -627,7 +645,10 @@ public final class UiChecker {
             throw mismatch("UI2032", "Operand requires a nonnullable " + expected + " (no implicit coercion)", span, expected, typeText(actual));
     }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
-    private boolean sameName(String left, String right) { return simple(left).equals(simple(right)); }
+    private boolean sameName(String left, String right) { return typeNames.getOrDefault(left, left).equals(typeNames.getOrDefault(right, right)); }
+    private UiModel.TypeRef qualifyPackType(UiModel.TypeRef type, String alias, UiModel.PackModule pack) {
+        return pack.classes().containsKey(type.name()) ? type.withName(alias + "." + type.name()) : type;
+    }
     private String prefix(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(0, dot + 1); }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
 
@@ -650,7 +671,7 @@ public final class UiChecker {
         if (specifier == null) return name;
         Path resolved = dealFile.getParent().resolve(specifier).normalize();
         if (!resolved.toString().endsWith(".deal")) resolved = Path.of(resolved + ".deal");
-        return resolved.equals(deal.source().normalize()) ? simple(name) : name;
+        return resolved.equals(deal.source().normalize()) && name.indexOf('.') == name.lastIndexOf('.') ? simple(name) : name;
     }
 
     private UiModel.DealModule dealModule(ProgramNode program, Path file, String source) {
