@@ -22,6 +22,7 @@ TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiActionSamplesTest.java
   "$ROOT"/src/test/java/deal/ui/UiLexicalParityTest.java
   "$ROOT"/src/test/java/deal/ui/UiNominalIdentityTest.java
+  "$ROOT"/src/test/java/deal/ui/UiPackPathsTest.java
   "$ROOT"/src/test/java/deal/ui/UiFrameworkTest.java
   "$ROOT"/src/test/java/deal/ui/UiRuntimeInvariantTest.java
   "$ROOT"/src/test/java/deal/ui/UiCompilerWorkspaceTest.java
@@ -38,6 +39,7 @@ java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCompar
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPresenceTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiLexicalParityTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNominalIdentityTest
+(cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPackPathsTest)
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiActionSamplesTest)
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiDiagnosticsV3Test
 java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullableElementsTest

@@ -76,6 +76,13 @@ final class UiDealGenerator {
             .append("export class UiAction {\n  slot: number;\n");
         for (Map.Entry<String, Integer> entry : actionIds.entrySet()) out.append("  nominal").append(entry.getValue()).append("?: app.").append(entry.getKey()).append(";\n");
         out.append("}\n\nexport class UiStore {\n  lifecycle: store.StoreLifecycle;\n  queue: UiAction[];\n}\n\nexport class EnqueueResult {\n  store: UiStore;\n  accepted: boolean;\n  startDrain: boolean;\n}\n\nexport class DequeueResult {\n  store: UiStore;\n  action: UiAction;\n  present: boolean;\n}\n\nexport class Transition {\n  tree: core.ViewNode;\n  plan: reconcile.Plan;\n  store: UiStore;\n  effect: effects.EffectDescriptor;\n}\n\n");
+        for (var entry : program.packClasses().entrySet()) {
+            if (entry.getValue().fields().stream().anyMatch(field -> field.type().name().equals("Action"))) continue;
+            out.append("class ").append(packTypeName(entry.getKey())).append(" {\n");
+            for (var field : entry.getValue().fields()) out.append("  ").append(field.name()).append(field.optional() ? "?: " : ": ")
+                    .append(qualifiedType(field.type(), app)).append(";\n");
+            out.append("}\n");
+        }
         for (UiModel.View view : program.views().values()) generateView(out, view, app);
         out.append(viewHelpers);
         generateActionFactories(out);
@@ -473,7 +480,12 @@ final class UiDealGenerator {
     private UiModel.TypeRef fieldType(UiModel.TypeRef root, UiModel.PathExpr path) { return pathType(root, path.parts().subList(1, path.parts().size())); }
     private UiModel.TypeRef pathType(UiModel.TypeRef root, List<String> fields) {
         UiModel.TypeRef current = root;
-        for (String field : fields) current = program.deal().classes().get(simple(current.name())).fields().get(field).type();
+        for (String field : fields) {
+            var pack = program.packClasses().get(current.name());
+            UiModel.Field declaration = pack == null ? program.deal().classes().get(simple(current.name())).fields().get(field)
+                    : pack.fields().stream().filter(value -> value.name().equals(field)).findFirst().orElseThrow();
+            current = declaration.optional() ? declaration.type().withUndefined(true) : declaration.type();
+        }
         return current;
     }
 
@@ -481,9 +493,14 @@ final class UiDealGenerator {
         if (expression instanceof UiModel.Literal literal) {
             if (literal.value() == null) return "null";
             if (literal.value() instanceof String string) return quote(string);
+            if (literal.value() instanceof Map<?, ?> fields) return "{" + fields.entrySet().stream()
+                    .map(field -> field.getKey() + ": " + expr((UiModel.Expr) field.getValue(), app)).collect(java.util.stream.Collectors.joining(", ")) + "}";
             return String.valueOf(literal.value());
         }
-        if (expression instanceof UiModel.PathExpr path) return String.join(".", path.parts());
+        if (expression instanceof UiModel.PathExpr path) {
+            var token = program.tokens().get(String.join(".", path.parts()));
+            return token == null ? String.join(".", path.parts()) : expr(token.value(), app);
+        }
         if (expression instanceof UiModel.Has has) {
             List<String> parts = has.path().parts();
             return "Object.hasOwn(" + String.join(".", parts.subList(0, parts.size() - 1))
@@ -535,9 +552,11 @@ final class UiDealGenerator {
 
     private String qualifiedType(UiModel.TypeRef type, String app) {
         String name = type.name();
+        if (program.packClasses().containsKey(name)) name = packTypeName(name);
         if (!name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
         return type.sourceType(name);
     }
+    private String packTypeName(String name) { return "UiPack_" + name.replace(".", "_"); }
     private String dealType(UiModel.TypeRef type) { return type.sourceType(type.name()); }
     private String defaultValue(UiModel.TypeRef type) {
         if (type.optional()) return "null";
