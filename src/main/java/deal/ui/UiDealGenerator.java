@@ -239,8 +239,11 @@ final class UiDealGenerator {
                         value = "core.boundActionProp(\"" + argument.getKey() + "\", " + slot + ", {" + data + "})";
                     } else {
                         UiModel.TypeRef type = expressionType(argument.getValue(), scope);
+                        if (type.undefined() || type.name().equals("undefined") || type.undefinedElements().contains(true))
+                            throw new UiDiagnostic("UI2053", "Renderer props cannot encode undefined; prepare an explicit supported value in DEAL",
+                                    argument.getValue().span().file(), argument.getValue().span().line(), argument.getValue().span().column());
                         boolean token = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts()));
-                        boolean structured = !token && (type.array() || !List.of("number", "boolean", "string").contains(simple(type.name())));
+                        boolean structured = !token && (type.nullish() || type.array() || !List.of("number", "boolean", "string").contains(simple(type.name())));
                         String factory = structured ? "jsonProp" : switch (simple(type.name())) {
                             case "number" -> "numberProp";
                             case "boolean" -> "booleanProp";
@@ -248,8 +251,14 @@ final class UiDealGenerator {
                             default -> "tokenProp";
                         };
                         String expression = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts())) ? "\"" + String.join(".", path.parts()) + "\"" : expr(argument.getValue(), app);
-                        if (structured) expression = "(JSON.stringify(" + expression + ") as string)";
-                        value = "core." + factory + "(\"" + argument.getKey() + "\", " + expression + ")";
+                        if (structured) {
+                            String helper = "viewProp" + local + "_" + argument.getKey();
+                            viewHelpers.append("function ").append(helper).append("(value: ").append(qualifiedType(type, app)).append("): core.Prop {\n");
+                            if (type.name().equals("unknown"))
+                                viewHelpers.append("  if (value === undefined) { throw {name: \"UI3005\", message: \"Renderer props cannot encode undefined\"}; }\n");
+                            viewHelpers.append("  return core.jsonProp(").append(quote(argument.getKey())).append(", JSON.stringify(value) as string);\n}\n");
+                            value = helper + "(" + expression + ")";
+                        } else value = "core." + factory + "(\"" + argument.getKey() + "\", " + expression + ")";
                     }
                     out.append(pad).append(props).append("[").append(props).append(".length] = ").append(value).append(";\n");
                 }
@@ -565,5 +574,15 @@ final class UiDealGenerator {
     }
     private String moduleName(java.nio.file.Path path) { String name = path.getFileName().toString(); return name.substring(0, name.length() - ".deal".length()); }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
-    private String quote(String value) { return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""; }
+    private String quote(String value) {
+        StringBuilder result = new StringBuilder("\"");
+        for (int i = 0; i < value.length(); i++) {
+            char unit = value.charAt(i);
+            if (unit == '\\' || unit == '"') result.append('\\').append(unit);
+            else if (unit < 0x20 || unit == 0x2028 || unit == 0x2029 || Character.isSurrogate(unit))
+                result.append(String.format(java.util.Locale.ROOT, "\\u%04x", (int) unit));
+            else result.append(unit);
+        }
+        return result.append('"').toString();
+    }
 }
