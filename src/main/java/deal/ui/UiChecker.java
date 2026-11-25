@@ -578,8 +578,6 @@ public final class UiChecker {
     }
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
-        if (!actual.array() && actual.name().equals("null") && expected.optional()) return;
-        if (!actual.array() && actual.name().equals("undefined") && expected.undefined()) return;
         if (!assignable(actual, expected))
             throw mismatch("UI2031", "Property type mismatch", span, typeText(expected), typeText(actual));
     }
@@ -589,11 +587,15 @@ public final class UiChecker {
                 && actual.nullableElements().equals(expected.nullableElements()) && actual.undefinedElements().equals(expected.undefinedElements());
     }
     private boolean assignable(UiModel.TypeRef actual, UiModel.TypeRef expected) {
-        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions()
-                || actual.optional() && !expected.optional() || actual.undefined() && !expected.undefined()) return false;
+        if (!expected.array() && expected.name().equals("unknown")) return !actual.name().equals("void");
+        if (!actual.array() && actual.name().equals("null")) return expected.optional() || !expected.array() && expected.name().equals("null");
+        if (!actual.array() && actual.name().equals("undefined")) return expected.undefined() || !expected.array() && expected.name().equals("undefined");
+        if (actual.optional() && !expected.optional() || actual.undefined() && !expected.undefined()) return false;
+        if (actual.array() && expected.array() && expected.readonlyLayers().get(expected.dimensions() - 1))
+            return assignable(actual.elementType(), expected.elementType());
+        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions()) return false;
         if (!actual.array()) return true;
         int outer = actual.dimensions() - 1;
-        if (expected.readonlyLayers().get(outer)) return assignable(actual.elementType(), expected.elementType());
         return !actual.readonlyLayers().get(outer) && sameElementType(actual.elementType(), expected.elementType())
                 && actual.elementType().readonlyLayers().equals(expected.elementType().readonlyLayers());
     }
