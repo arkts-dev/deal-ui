@@ -21,11 +21,13 @@ final class UiDealGenerator {
     private int localId;
     private boolean splitViews;
     private final StringBuilder viewHelpers = new StringBuilder();
+    private final Map<UiModel.ForEach, Integer> iterationIds = new java.util.IdentityHashMap<>();
 
     UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
         this.frameworkRoot = frameworkRoot;
         schemaDigest = digest(stateSchema(program));
+        for (UiModel.View view : program.views().values()) indexIterations(view.nodes());
         int id = 0;
         for (String action : program.updates().keySet()) actionIds.put(action, id++);
         id = 0;
@@ -123,7 +125,7 @@ final class UiDealGenerator {
         for (UiModel.View view : program.views().values()) {
             Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
             for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), parameter.type().withName(simple(parameter.type().name())));
-            appendForEachAccessors(augmentation, view.nodes(), scope, new java.util.LinkedHashSet<>());
+            appendForEachAccessors(augmentation, view.nodes(), scope);
         }
         String flattened = flattenFramework(out.toString());
         return new Output(flattened, augmentation.toString(), Map.copyOf(actions), Map.copyOf(actionIds), Map.copyOf(effectIds));
@@ -271,7 +273,7 @@ final class UiDealGenerator {
                 out.append(pad).append("}\n");
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
-                out.append(pad).append("for (let ").append(each.item().name()).append(" of app.uiItems").append(each.span().line()).append("(").append(each.source().parts().get(0)).append(")) {\n");
+                out.append(pad).append("for (let ").append(each.item().name()).append(" of app.uiItems").append(iterationIds.get(each)).append("(").append(each.source().parts().get(0)).append(")) {\n");
                 UiModel.TypeRef keyType = fieldType(each.item().type(), each.key());
                 String keyExpr = simple(keyType.name()).equals("number") ? "core.numberKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
@@ -407,18 +409,28 @@ final class UiDealGenerator {
 
     }
 
-    private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, Map<String, UiModel.TypeRef> scope, java.util.Set<Integer> lines) {
+    private void indexIterations(List<UiModel.Node> nodes) {
+        for (UiModel.Node node : nodes) {
+            if (node instanceof UiModel.ForEach each) {
+                iterationIds.put(each, iterationIds.size());
+                indexIterations(each.children());
+            } else if (node instanceof UiModel.Call call) indexIterations(call.children());
+            else if (node instanceof UiModel.When when) { indexIterations(when.thenNodes()); indexIterations(when.elseNodes()); }
+        }
+    }
+
+    private void appendForEachAccessors(StringBuilder out, List<UiModel.Node> nodes, Map<String, UiModel.TypeRef> scope) {
         for (UiModel.Node node : nodes) {
             if (node instanceof UiModel.ForEach each) {
                 String root = each.source().parts().get(0);
                 UiModel.TypeRef rootType = scope.get(root);
                 if (rootType == null) throw new IllegalStateException("Unknown iteration scope " + root);
-                if (lines.add(each.span().line())) out.append("\nexport function uiItems").append(each.span().line()).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
+                out.append("\nexport function uiItems").append(iterationIds.get(each)).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
-                appendForEachAccessors(out, each.children(), nested, lines);
-            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, call.children(), scope, lines);
-            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), scope, lines); appendForEachAccessors(out, when.elseNodes(), scope, lines); }
+                appendForEachAccessors(out, each.children(), nested);
+            } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, call.children(), scope);
+            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), scope); appendForEachAccessors(out, when.elseNodes(), scope); }
         }
     }
 
