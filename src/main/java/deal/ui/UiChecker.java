@@ -383,8 +383,15 @@ public final class UiChecker {
         UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
             case "&&", "||" -> { requireType(left, "boolean", binary.left().span()); requireType(right, "boolean", binary.right().span()); yield primitive("boolean"); }
-            case "===", "!==", "<", "<=", ">", ">=" -> {
-                if (!sameName(left.name(), right.name())) typeMismatch(binary, left, right);
+            case "===", "!==" -> {
+                if (!sameElementType(left, right) || !left.readonlyLayers().equals(right.readonlyLayers())) {
+                    if (!singletonComparison(left, right) && !singletonComparison(right, left)) typeMismatch(binary, left, right);
+                }
+                yield primitive("boolean");
+            }
+            case "<", "<=", ">", ">=" -> {
+                if (!(left.equals(primitive("number")) && right.equals(primitive("number")))
+                        && !(left.equals(primitive("string")) && right.equals(primitive("string")))) typeMismatch(binary, left, right);
                 yield primitive("boolean");
             }
             case "+", "-", "*", "/" -> {
@@ -747,6 +754,15 @@ public final class UiChecker {
     }
 
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
+
+    private boolean singletonComparison(UiModel.TypeRef singleton, UiModel.TypeRef target) {
+        if (singleton.array()) return false;
+        return switch (singleton.name()) {
+            case "null" -> target.optional() || !target.array() && (target.name().equals("unknown") || target.name().equals("null"));
+            case "undefined" -> target.undefined() || !target.array() && (target.name().equals("unknown") || target.name().equals("undefined"));
+            default -> false;
+        };
+    }
 
     private void typeMismatch(UiModel.Binary binary, UiModel.TypeRef left, UiModel.TypeRef right) {
         throw new UiDiagnostic(
