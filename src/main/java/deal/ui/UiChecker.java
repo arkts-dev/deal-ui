@@ -372,7 +372,10 @@ public final class UiChecker {
             String name = simple(action.name());
             UiModel.DealClass declaration = deal.classes().get(name);
             if (declaration == null) error("UI2018", "Unknown nominal action '" + name + "'", action.span());
-            exactArguments(action.fields(), declaration.fields().keySet().stream().toList(), action.span());
+            for (var field : declaration.fields().values()) if (!field.optional() && !action.fields().containsKey(field.name()))
+                error("UI2030", "Missing required action field '" + field.name() + "'", action.span());
+            for (String field : action.fields().keySet()) if (!declaration.fields().containsKey(field))
+                error("UI2030", "Unknown action field '" + field + "'", action.span());
             Map<String, UiModel.TypeRef> actionScope = new LinkedHashMap<>(scope);
             if (event != null && event.payload() != null) actionScope.put("payload", event.payload());
             for (Map.Entry<String, UiModel.Expr> field : action.fields().entrySet()) {

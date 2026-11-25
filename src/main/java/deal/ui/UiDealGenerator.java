@@ -310,11 +310,15 @@ final class UiDealGenerator {
 
     private String checkSample(UiModel.TypeRef type, java.util.Set<String> active) {
         if (type.optional()) return "null";
+        if (type.undefined()) return "undefined";
         if (type.array()) return "[]";
         return switch (simple(type.name())) {
             case "number" -> "1";
             case "boolean" -> "true";
             case "string" -> "\"12\"";
+            case "unknown", "null" -> "null";
+            case "undefined" -> "undefined";
+            case "Record<string, unknown>", "Record<string, string>" -> "{}";
             default -> {
                 if (!active.add(type.name())) throw new UiDiagnostic("UI2053", "Synthetic event has a required recursive type", program.dealSource(), 1, 1);
                 UiModel.DealClass clazz = nominalClasses.get(type.name());
@@ -322,6 +326,7 @@ final class UiDealGenerator {
                 if (clazz == null) throw new UiDiagnostic("UI2053", "Missing event nominal declaration", program.dealSource(), 1, 1);
                 List<String> fields = new ArrayList<>();
                 for (var field : clazz.fields().values()) {
+                    if (field.optional()) continue;
                     String value = checkSample(field.type(), active);
                     if (nominalImports.getOrDefault(type.name().contains(".") ? type.name().substring(0,type.name().indexOf('.')) : "", "").equals("embedding/graphics") && simple(type.name()).equals("Pointer")) value = switch (field.name()) { case "phase" -> "\"down\""; case "x", "y" -> "12"; case "id" -> "0"; default -> value; };
                     fields.add(field.name() + ": " + value);
@@ -354,7 +359,7 @@ final class UiDealGenerator {
                 if (containsPayload(field.getValue())) out.append(payloadExpr(field.getValue()));
                 else out.append(expr(field.getValue(), moduleName(program.dealSource())));
             }
-            for (String field : declaration.fields().keySet()) if (!action.fields().containsKey(field)) throw new IllegalStateException("Missing action field " + field);
+            for (var field : declaration.fields().values()) if (!field.optional() && !action.fields().containsKey(field.name())) throw new IllegalStateException("Missing action field " + field.name());
             out.append("} };\n}\n\n");
         }
     }
