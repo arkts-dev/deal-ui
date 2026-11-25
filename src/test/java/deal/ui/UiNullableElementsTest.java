@@ -33,8 +33,8 @@ public final class UiNullableElementsTest {
             var pack = UiParser.parsePack(Path.of("roundtrip.pack"), PACK.replace("TYPE", text));
             check(pack.classes().get("Props").fields().getFirst().type().equals(expected), "pack roundtrip " + text);
         }
-        var optional = new UiChecker().parseDeal(Path.of("optional.deal"), "export class State { values?: (number | null)[]; }").classes().get("State").fields().get("values").type();
-        check(optional.optional() && optional.elementType().optional(), "optional field and nullable element remain independent");
+        var optional = new UiChecker().parseDeal(Path.of("optional.deal"), "export class State { values?: (number | null)[]; }").classes().get("State").fields().get("values");
+        check(optional.optional() && !optional.type().optional() && optional.type().elementType().optional(), "optional presence and nullable element remain independent");
         var eventPack = UiParser.parsePack(Path.of("event.pack"), PACK.replace("TYPE", "(number | null)[]").replace("event onClick;", "event onClick(payload: (number | null)[]);"));
         var event = eventPack.components().get("Data").contracts().stream().filter(UiModel.Event.class::isInstance).map(UiModel.Event.class::cast).findFirst().orElseThrow();
         check(!event.payload().optional() && event.payload().elementType().optional(), "event payload retains nullable elements");

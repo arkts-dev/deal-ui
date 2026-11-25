@@ -15,6 +15,7 @@ TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiLiteralPreservationTest.java
   "$ROOT"/src/test/java/deal/ui/UiIterationIdentityTest.java
   "$ROOT"/src/test/java/deal/ui/UiRootTypeTest.java
+  "$ROOT"/src/test/java/deal/ui/UiNullishTypesTest.java
   "$ROOT"/src/test/java/deal/ui/UiFrameworkTest.java
   "$ROOT"/src/test/java/deal/ui/UiRuntimeInvariantTest.java
   "$ROOT"/src/test/java/deal/ui/UiCompilerWorkspaceTest.java
@@ -25,6 +26,7 @@ javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiLiteralPreservationTest)
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiIterationIdentityTest)
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRootTypeTest
+java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullishTypesTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiDiagnosticsV3Test
 java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullableElementsTest
 java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiBorrowedValuesTest

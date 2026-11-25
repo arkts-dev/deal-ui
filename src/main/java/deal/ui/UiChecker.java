@@ -92,7 +92,7 @@ public final class UiChecker {
         if (root == null) throw new UiDiagnostic("UI2002", "Exactly one exported @ui-root view is required", viewFile, 1, 1);
         if (root.parameters().size() != 1) error("UI2003", "Root view requires one state parameter", root.span());
         UiModel.TypeRef rootType = root.parameters().get(0).type();
-        if (rootType.array() || rootType.optional())
+        if (rootType.array() || rootType.nullish())
             throw mismatch("UI2004", "Root state parameter requires a nonnullable nominal class", root.span(),
                     rootType.name(), typeText(rootType));
         String stateType = localType(rootType.name(), aliases, dealFile, deal);
@@ -303,14 +303,14 @@ public final class UiChecker {
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
                 UiModel.TypeRef array = type(each.source(), scope, deal, packClasses, tokens, aliases, actions, null);
-                if (array.optional() || !array.array() || !sameElementType(array.elementType(), each.item().type())
+                if (array.nullish() || !array.array() || !sameElementType(array.elementType(), each.item().type())
                         || !array.elementType().readonlyLayers().equals(each.item().type().readonlyLayers()))
                     throw mismatch("UI2014", "ForEach requires an exact nonnullable item array", each.source().span(),
                             typeText(each.item().type().arrayOf(false)), typeText(array));
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
-                if (key.optional() || key.array() || !key.name().equals("number") && !key.name().equals("string")) {
+                if (key.nullish() || key.array() || !key.name().equals("number") && !key.name().equals("string")) {
                     throw new UiDiagnostic(
                             "UI2015", "ForEach key must be a stable number or string item field",
                             each.key().span().file(), each.key().span().line(), each.key().span().column(),
@@ -357,7 +357,7 @@ public final class UiChecker {
         if (expression instanceof UiModel.PathExpr path) return pathType(path, scope, deal, packClasses, tokens);
         if (expression instanceof UiModel.Has has) {
             UiModel.TypeRef operand = pathType(has.path(), scope, deal, packClasses, tokens);
-            if (!operand.optional()) error("UI2017", "has requires an optional final field", has.span());
+            if (!operand.undefined()) error("UI2017", "has requires an optional final field", has.span());
             return primitive("boolean");
         }
         if (expression instanceof UiModel.Action action) {
@@ -412,7 +412,7 @@ public final class UiChecker {
                 path.parts().get(0));
         for (int i = 1; i < path.parts().size(); i++) {
             String fieldName = path.parts().get(i);
-            if (current.optional()) throw mismatch("UI2022", "Nullable intermediate path access; prepare a nonnullable field in DEAL", path.span(),
+            if (current.nullish()) throw mismatch("UI2022", "Nullable intermediate path access; prepare a nonnullable field in DEAL", path.span(),
                     typeText(current.withOptional(false)), typeText(current));
             if (current.array()) throw new UiDiagnostic(
                     "UI2023",
@@ -432,7 +432,7 @@ public final class UiChecker {
                     path.span().file(), path.span().line(), path.span().column(),
                     (clazz != null ? clazz.fields().keySet().stream() : packClass.fields().stream().map(UiModel.Field::name))
                             .sorted().collect(java.util.stream.Collectors.joining(", ")), fieldName);
-            current = field.type();
+            current = field.optional() ? field.type().withUndefined(true) : field.type();
         }
         return current;
     }
@@ -564,7 +564,7 @@ public final class UiChecker {
         Set<String> known = new LinkedHashSet<>();
         for (UiModel.Field field : props.fields()) {
             known.add(field.name());
-            if (!field.type().optional() && field.defaultValue() == null && !values.containsKey(field.name()))
+            if (!field.optional() && field.defaultValue() == null && !values.containsKey(field.name()))
                 diagnostics.add(new UiDiagnostic("UI2028", "Missing required prop '" + field.name() + "'", span.file(), span.line(), span.column(),
                         field.name() + ": " + field.type().name() + (field.type().array() ? "[]" : ""), "absent"));
         }
@@ -578,17 +578,19 @@ public final class UiChecker {
     }
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
-        if (actual.name().equals("null") && expected.optional()) return;
+        if (!actual.array() && actual.name().equals("null") && expected.optional()) return;
+        if (!actual.array() && actual.name().equals("undefined") && expected.undefined()) return;
         if (!assignable(actual, expected))
             throw mismatch("UI2031", "Property type mismatch", span, typeText(expected), typeText(actual));
     }
     private boolean sameElementType(UiModel.TypeRef actual, UiModel.TypeRef expected) {
         return sameName(actual.name(), expected.name()) && actual.dimensions() == expected.dimensions()
-                && actual.optional() == expected.optional() && actual.nullableElements().equals(expected.nullableElements());
+                && actual.optional() == expected.optional() && actual.undefined() == expected.undefined()
+                && actual.nullableElements().equals(expected.nullableElements()) && actual.undefinedElements().equals(expected.undefinedElements());
     }
     private boolean assignable(UiModel.TypeRef actual, UiModel.TypeRef expected) {
         if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions()
-                || actual.optional() && !expected.optional()) return false;
+                || actual.optional() && !expected.optional() || actual.undefined() && !expected.undefined()) return false;
         if (!actual.array()) return true;
         int outer = actual.dimensions() - 1;
         if (expected.readonlyLayers().get(outer)) return assignable(actual.elementType(), expected.elementType());
@@ -601,7 +603,7 @@ public final class UiChecker {
                 span.file(), span.line(), span.column(), span.endLine(), span.endColumn(), expected, actual);
     }
     private void requireType(UiModel.TypeRef actual, String expected, UiModel.Span span) {
-        if (!actual.name().equals(expected) || actual.array() || actual.optional())
+        if (!actual.name().equals(expected) || actual.array() || actual.nullish())
             throw mismatch("UI2032", "Operand requires a nonnullable " + expected + " (no implicit coercion)", span, expected, typeText(actual));
     }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
@@ -643,7 +645,7 @@ public final class UiChecker {
             if (declaration instanceof ClassDeclaration clazz) {
                 classDeclarations.put(clazz.name(), clazz);
                 Map<String, UiModel.Field> fields = new LinkedHashMap<>();
-                for (ClassField field : clazz.fields()) fields.put(field.name(), new UiModel.Field(field.name(), type(field.type(), field.optional()), null, span(file, field.span().startLine(), field.span().startColumn())));
+                for (ClassField field : clazz.fields()) fields.put(field.name(), new UiModel.Field(field.name(), type(field.type(), false), null, span(file, field.span().startLine(), field.span().startColumn()), field.optional()));
                 classes.put(clazz.name(), new UiModel.DealClass(clazz.name(), fields, isExported));
             } else if (declaration instanceof FunctionDeclaration function) {
                 functions.add(function);
@@ -713,7 +715,10 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef type(TypeNode type, boolean optional) {
-        if (type instanceof NullableType nullable) return type(nullable.innerType(), false).withOptional(true);
+        if (type instanceof NullableType nullable) {
+            UiModel.TypeRef inner = type(nullable.innerType(), false);
+            return nullable.undefinedMember() ? inner.withUndefined(true) : inner.withOptional(true);
+        }
         if (type instanceof ArrayType array) return type(array.elementType(), false).arrayOf(array.readonly()).withOptional(optional);
         return new UiModel.TypeRef(typeName(type), optional, false);
     }

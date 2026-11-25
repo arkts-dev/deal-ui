@@ -426,7 +426,7 @@ public final class UiCompilerWorkspace {
         UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
         List<FieldSnapshot> properties = props == null ? List.of() : props.fields().stream()
                 .map(field -> new FieldSnapshot(
-                        field.name(), typeText(field.type()), field.type().optional(), field.type().array()))
+                        field.name(), typeText(field.type()), field.optional(), field.type().array()))
                 .toList();
         String children = "none";
         String parent = "any";

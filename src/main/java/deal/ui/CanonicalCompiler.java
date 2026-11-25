@@ -187,7 +187,7 @@ public final class CanonicalCompiler {
         List<String> arguments = new ArrayList<>();
         if (props != null) {
             for (UiModel.Field field : props.fields()) {
-                if (field.type().optional() || field.defaultValue() != null) continue;
+                if (field.optional() || field.defaultValue() != null) continue;
                 arguments.add(field.name() + ": " + defaultExpression(field.type()));
             }
         }
@@ -212,7 +212,7 @@ public final class CanonicalCompiler {
             UiModel.PackClass props = pack.classes().get(simpleName(component.propsType()));
             List<PropertySnapshot> properties = props == null ? List.of() : props.fields().stream()
                     .map(field -> new PropertySnapshot(
-                            field.name(), typeText(field.type()), field.type().optional(), field.defaultValue() != null,
+                            field.name(), typeText(field.type()), field.optional(), field.defaultValue() != null,
                             field.defaultValue() instanceof UiModel.Literal literal ? snapshotLiteral(literal.value())
                                     : field.defaultValue() instanceof UiModel.PathExpr path ? Map.of("path", path.parts()) : null))
                     .toList();
@@ -266,7 +266,7 @@ public final class CanonicalCompiler {
             UiModel.PackClass record = pack.classes().get(name);
             if (record == null) continue;
             result.add(new PayloadTypeSnapshot(name, record.fields().stream().map(field ->
-                    new PropertySnapshot(field.name(), typeText(field.type()), field.type().optional())).toList()));
+                    new PropertySnapshot(field.name(), typeText(field.type()), field.optional())).toList()));
             record.fields().forEach(field -> pending.add(simpleName(field.type().name())));
         }
         return List.copyOf(result);

@@ -85,10 +85,10 @@ public final class UiParser {
                     String fieldName = id();
                     boolean optional = match("?");
                     require(":");
-                    UiModel.TypeRef type = type(optional);
+                    UiModel.TypeRef type = type();
                     UiModel.Expr value = match("=") ? packDefault() : null;
                     match(";");
-                    fields.add(new UiModel.Field(fieldName, type, value, span(field)));
+                    fields.add(new UiModel.Field(fieldName, type, value, span(field), optional));
                 }
                 duplicate(classes, name, new UiModel.PackClass(name, fields, span(start)));
             } else if (match("component")) {
@@ -396,9 +396,18 @@ public final class UiParser {
         if (readonly) {
             var layers = new ArrayList<>(base.readonlyLayers());
             layers.set(layers.size() - 1, true);
-            base = new UiModel.TypeRef(base.name(), base.optional(), base.dimensions(), layers, base.nullableElements());
+            base = new UiModel.TypeRef(base.name(), base.optional(), base.dimensions(), layers, base.nullableElements(), base.undefined(), base.undefinedElements());
         }
-        if (match("|")) { require("null"); optional = true; }
+        while (match("|")) {
+            UiModel.TypeRef member = type();
+            if (!base.array() && (base.name().equals("null") || base.name().equals("undefined"))) {
+                boolean nullMember = base.name().equals("null") || base.optional();
+                boolean undefinedMember = base.name().equals("undefined") || base.undefined();
+                base = member.withOptional(member.optional() || nullMember).withUndefined(member.undefined() || undefinedMember);
+            } else if (!member.array() && member.name().equals("null")) base = base.withOptional(true).withUndefined(base.undefined() || member.undefined());
+            else if (!member.array() && member.name().equals("undefined")) base = base.withUndefined(true).withOptional(base.optional() || member.optional());
+            else fail("UI1007", "Only nullish unions are supported", previous());
+        }
         return base.withOptional(optional || base.optional());
     }
     private String qualified() {

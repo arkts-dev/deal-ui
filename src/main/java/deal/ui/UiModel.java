@@ -14,14 +14,18 @@ public final class UiModel {
         }
     }
     public record Import(String alias, String specifier, Span span) {}
-    /** Qualifiers run from the nominal/scalar leaf outwards; optional describes only the outer value. */
+    /** Qualifiers run leaf-outward. optional is the legacy name for outer null admission, not field absence. */
     public record TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers,
-                          List<Boolean> nullableElements) {
+                          List<Boolean> nullableElements, boolean undefined, List<Boolean> undefinedElements) {
         public TypeRef {
             readonlyLayers = List.copyOf(readonlyLayers);
             nullableElements = List.copyOf(nullableElements);
-            if (readonlyLayers.size() != dimensions || nullableElements.size() != dimensions)
+            undefinedElements = List.copyOf(undefinedElements);
+            if (readonlyLayers.size() != dimensions || nullableElements.size() != dimensions || undefinedElements.size() != dimensions)
                 throw new IllegalArgumentException("Array qualifier depth mismatch");
+        }
+        public TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers, List<Boolean> nullableElements) {
+            this(name, optional, dimensions, readonlyLayers, nullableElements, false, java.util.Collections.nCopies(dimensions, false));
         }
         public TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers) {
             this(name, optional, dimensions, readonlyLayers, java.util.Collections.nCopies(dimensions, false));
@@ -29,27 +33,32 @@ public final class UiModel {
         public TypeRef(String name, boolean optional, int dimensions) { this(name, optional, dimensions, java.util.Collections.nCopies(dimensions, false)); }
         public TypeRef(String name, boolean optional, boolean array) { this(name, optional, array ? 1 : 0); }
         public boolean array() { return dimensions > 0; }
-        public TypeRef withOptional(boolean value) { return new TypeRef(name, value, dimensions, readonlyLayers, nullableElements); }
-        public TypeRef withName(String value) { return new TypeRef(value, optional, dimensions, readonlyLayers, nullableElements); }
+        public boolean nullish() { return optional || undefined || !array() && (name.equals("null") || name.equals("undefined")); }
+        public TypeRef withOptional(boolean value) { return new TypeRef(name, value, dimensions, readonlyLayers, nullableElements, undefined, undefinedElements); }
+        public TypeRef withUndefined(boolean value) { return new TypeRef(name, optional, dimensions, readonlyLayers, nullableElements, value, undefinedElements); }
+        public TypeRef withName(String value) { return new TypeRef(value, optional, dimensions, readonlyLayers, nullableElements, undefined, undefinedElements); }
         public TypeRef arrayOf(boolean readonly) {
             var layers = new java.util.ArrayList<>(readonlyLayers); layers.add(readonly);
             var elements = new java.util.ArrayList<>(nullableElements); elements.add(optional);
-            return new TypeRef(name, false, dimensions + 1, layers, elements);
+            var missing = new java.util.ArrayList<>(undefinedElements); missing.add(undefined);
+            return new TypeRef(name, false, dimensions + 1, layers, elements, false, missing);
         }
         public TypeRef elementType() {
             if (!array()) throw new IllegalStateException("Not an array type");
             return new TypeRef(name, nullableElements.get(dimensions - 1), dimensions - 1,
-                    readonlyLayers.subList(0, dimensions - 1), nullableElements.subList(0, dimensions - 1));
+                    readonlyLayers.subList(0, dimensions - 1), nullableElements.subList(0, dimensions - 1),
+                    undefinedElements.get(dimensions - 1), undefinedElements.subList(0, dimensions - 1));
         }
         public String sourceType(String qualifiedName) {
             String result = qualifiedName;
             for (int i = 0; i < dimensions; i++) {
-                boolean nullable = nullableElements.get(i);
-                if (nullable) result += " | null";
+                boolean nullable = nullableElements.get(i) || undefinedElements.get(i);
+                if (nullableElements.get(i)) result += " | null";
+                if (undefinedElements.get(i)) result += " | undefined";
                 result = readonlyLayers.get(i) ? "readonly (" + result + ")[]"
                         : (nullable || result.startsWith("readonly ") ? "(" + result + ")[]" : result + "[]");
             }
-            return result + (optional ? " | null" : "");
+            return result + (optional ? " | null" : "") + (undefined ? " | undefined" : "");
         }
     }
     public record Parameter(String name, TypeRef type) {}
@@ -83,7 +92,9 @@ public final class UiModel {
         public ViewModule { imports = List.copyOf(imports); views = List.copyOf(views); }
     }
 
-    public record Field(String name, TypeRef type, Expr defaultValue, Span span) {}
+    public record Field(String name, TypeRef type, Expr defaultValue, Span span, boolean optional) {
+        public Field(String name, TypeRef type, Expr defaultValue, Span span) { this(name, type, defaultValue, span, false); }
+    }
     public record PackClass(String name, List<Field> fields, Span span) { public PackClass { fields = List.copyOf(fields); } }
     public sealed interface Contract permits Children, Parent, Event, Accessibility, TokenProp, Capability {}
     public record Children(boolean required, String componentType) implements Contract {
