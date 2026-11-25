@@ -299,13 +299,14 @@ public final class UiChecker {
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
                 UiModel.TypeRef array = type(each.source(), scope, deal, packClasses, tokens, aliases, actions, null);
-                if (array.optional() || array.dimensions() != each.item().type().dimensions() + 1 || !sameName(array.name(), each.item().type().name()))
+                if (array.optional() || !array.array() || !sameElementType(array.elementType(), each.item().type())
+                        || !array.elementType().readonlyLayers().equals(each.item().type().readonlyLayers()))
                     throw mismatch("UI2014", "ForEach requires an exact nonnullable item array", each.source().span(),
-                            typeText(each.item().type()) + "[]", typeText(array));
+                            typeText(each.item().type().arrayOf(false)), typeText(array));
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
-                if (!key.name().equals("number") && !key.name().equals("string")) {
+                if (key.optional() || key.array() || !key.name().equals("number") && !key.name().equals("string")) {
                     throw new UiDiagnostic(
                             "UI2015", "ForEach key must be a stable number or string item field",
                             each.key().span().file(), each.key().span().line(), each.key().span().column(),
@@ -408,7 +409,7 @@ public final class UiChecker {
         for (int i = 1; i < path.parts().size(); i++) {
             String fieldName = path.parts().get(i);
             if (current.optional()) throw mismatch("UI2022", "Nullable intermediate path access; prepare a nonnullable field in DEAL", path.span(),
-                    current.name() + "[]".repeat(current.dimensions()), typeText(current));
+                    typeText(current.withOptional(false)), typeText(current));
             if (current.array()) throw new UiDiagnostic(
                     "UI2023",
                     "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
@@ -574,8 +575,21 @@ public final class UiChecker {
 
     private void checkAssignable(UiModel.TypeRef actual, UiModel.TypeRef expected, UiModel.Span span) {
         if (actual.name().equals("null") && expected.optional()) return;
-        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions() || actual.optional() && !expected.optional())
+        if (!assignable(actual, expected))
             throw mismatch("UI2031", "Property type mismatch", span, typeText(expected), typeText(actual));
+    }
+    private boolean sameElementType(UiModel.TypeRef actual, UiModel.TypeRef expected) {
+        return sameName(actual.name(), expected.name()) && actual.dimensions() == expected.dimensions()
+                && actual.optional() == expected.optional() && actual.nullableElements().equals(expected.nullableElements());
+    }
+    private boolean assignable(UiModel.TypeRef actual, UiModel.TypeRef expected) {
+        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions()
+                || actual.optional() && !expected.optional()) return false;
+        if (!actual.array()) return true;
+        int outer = actual.dimensions() - 1;
+        if (expected.readonlyLayers().get(outer)) return assignable(actual.elementType(), expected.elementType());
+        return !actual.readonlyLayers().get(outer) && sameElementType(actual.elementType(), expected.elementType())
+                && actual.elementType().readonlyLayers().equals(expected.elementType().readonlyLayers());
     }
     private static String typeText(UiModel.TypeRef type) { return type.sourceType(type.name()); }
     private static UiDiagnostic mismatch(String code, String message, UiModel.Span span, String expected, String actual) {
@@ -695,13 +709,8 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef type(TypeNode type, boolean optional) {
-        if (type instanceof NullableType nullable) return type(nullable.innerType(), true);
-        if (type instanceof ArrayType array) {
-            UiModel.TypeRef element = type(array.elementType(), optional);
-            List<Boolean> layers = new ArrayList<>(element.readonlyLayers());
-            layers.add(array.readonly());
-            return new UiModel.TypeRef(element.name(), element.optional(), element.dimensions() + 1, layers);
-        }
+        if (type instanceof NullableType nullable) return type(nullable.innerType(), false).withOptional(true);
+        if (type instanceof ArrayType array) return type(array.elementType(), false).arrayOf(array.readonly()).withOptional(optional);
         return new UiModel.TypeRef(typeName(type), optional, false);
     }
     private String typeName(TypeNode type) {

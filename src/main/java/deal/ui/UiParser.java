@@ -390,16 +390,16 @@ public final class UiParser {
             }
             base = new UiModel.TypeRef(name, false, false);
         }
-        List<Boolean> layers = new ArrayList<>(base.readonlyLayers());
-        int initialDepth = layers.size();
-        while (match("[")) {
-            if (base.optional()) fail("UI1007", "Nullable array elements are not supported in view annotations", peek());
-            require("]"); layers.add(false);
+        int initialDepth = base.dimensions();
+        while (match("[")) { require("]"); base = base.arrayOf(false); }
+        if (readonly && base.dimensions() == initialDepth) fail("UI1007", "readonly requires an array type", peek());
+        if (readonly) {
+            var layers = new ArrayList<>(base.readonlyLayers());
+            layers.set(layers.size() - 1, true);
+            base = new UiModel.TypeRef(base.name(), base.optional(), base.dimensions(), layers, base.nullableElements());
         }
-        if (readonly && layers.size() == initialDepth) fail("UI1007", "readonly requires an array type", peek());
-        if (readonly) layers.set(layers.size() - 1, true);
         if (match("|")) { require("null"); optional = true; }
-        return new UiModel.TypeRef(base.name(), optional || base.optional(), layers.size(), layers);
+        return base.withOptional(optional || base.optional());
     }
     private String qualified() {
         StringBuilder value = new StringBuilder(id());

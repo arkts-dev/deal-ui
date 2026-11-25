@@ -14,18 +14,40 @@ public final class UiModel {
         }
     }
     public record Import(String alias, String specifier, Span span) {}
-    public record TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers) {
+    /** Qualifiers run from the nominal/scalar leaf outwards; optional describes only the outer value. */
+    public record TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers,
+                          List<Boolean> nullableElements) {
         public TypeRef {
             readonlyLayers = List.copyOf(readonlyLayers);
-            if (readonlyLayers.size() != dimensions) throw new IllegalArgumentException("Array qualifier depth mismatch");
+            nullableElements = List.copyOf(nullableElements);
+            if (readonlyLayers.size() != dimensions || nullableElements.size() != dimensions)
+                throw new IllegalArgumentException("Array qualifier depth mismatch");
+        }
+        public TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers) {
+            this(name, optional, dimensions, readonlyLayers, java.util.Collections.nCopies(dimensions, false));
         }
         public TypeRef(String name, boolean optional, int dimensions) { this(name, optional, dimensions, java.util.Collections.nCopies(dimensions, false)); }
         public TypeRef(String name, boolean optional, boolean array) { this(name, optional, array ? 1 : 0); }
         public boolean array() { return dimensions > 0; }
+        public TypeRef withOptional(boolean value) { return new TypeRef(name, value, dimensions, readonlyLayers, nullableElements); }
+        public TypeRef withName(String value) { return new TypeRef(value, optional, dimensions, readonlyLayers, nullableElements); }
+        public TypeRef arrayOf(boolean readonly) {
+            var layers = new java.util.ArrayList<>(readonlyLayers); layers.add(readonly);
+            var elements = new java.util.ArrayList<>(nullableElements); elements.add(optional);
+            return new TypeRef(name, false, dimensions + 1, layers, elements);
+        }
+        public TypeRef elementType() {
+            if (!array()) throw new IllegalStateException("Not an array type");
+            return new TypeRef(name, nullableElements.get(dimensions - 1), dimensions - 1,
+                    readonlyLayers.subList(0, dimensions - 1), nullableElements.subList(0, dimensions - 1));
+        }
         public String sourceType(String qualifiedName) {
             String result = qualifiedName;
-            for (boolean readonly : readonlyLayers) {
-                result = readonly ? "readonly (" + result + ")[]" : (result.startsWith("readonly ") ? "(" + result + ")[]" : result + "[]");
+            for (int i = 0; i < dimensions; i++) {
+                boolean nullable = nullableElements.get(i);
+                if (nullable) result += " | null";
+                result = readonlyLayers.get(i) ? "readonly (" + result + ")[]"
+                        : (nullable || result.startsWith("readonly ") ? "(" + result + ")[]" : result + "[]");
             }
             return result + (optional ? " | null" : "");
         }

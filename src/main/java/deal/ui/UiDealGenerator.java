@@ -122,7 +122,7 @@ final class UiDealGenerator {
         StringBuilder augmentation = new StringBuilder();
         for (UiModel.View view : program.views().values()) {
             Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
-            for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), new UiModel.TypeRef(simple(parameter.type().name()), parameter.type().optional(), parameter.type().dimensions(), parameter.type().readonlyLayers()));
+            for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), parameter.type().withName(simple(parameter.type().name())));
             appendForEachAccessors(augmentation, view.nodes(), scope, new java.util.LinkedHashSet<>());
         }
         String flattened = flattenFramework(out.toString());

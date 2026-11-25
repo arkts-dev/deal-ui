@@ -160,7 +160,7 @@ final class UiJavaBridgeGenerator {
     }
     private String payloadConversion(int slot, UiModel.TypeRef type) {
         if (type == null) throw new IllegalArgumentException("Payload conversion requires an event payload contract");
-        String expected = type.name() + "[]".repeat(type.dimensions()) + (type.optional() ? " | null" : "");
+        String expected = type.sourceType(type.name());
         String invalid = "invalidPayload(" + slot + ", \"" + expected + "\", payload)";
         String conversion;
         if (type.array()) conversion = "payload instanceof deal.codegen.jvm.JvmRuntime.Array value ? value : " + invalid;

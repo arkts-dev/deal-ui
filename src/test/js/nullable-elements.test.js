@@ -1,0 +1,16 @@
+"use strict";
+const path = require("path"), fs = require("fs"), vm = require("vm"), assert = require("node:assert/strict");
+const out = path.resolve(process.argv[2]), root = path.resolve(process.argv[3]);
+const entry = require(path.join(out, "entry.js")), rt = require(path.join(out, "deal/runtime.js"));
+const state = entry.bridgeInitialState.$f(), tree = entry.view_App.$f("root", state);
+assert.equal(tree.children[0].props[0].stringValue, "[1,null,3]");
+assert.equal(tree.children[1].props[0].stringValue, "[null,2]");
+vm.runInThisContext(fs.readFileSync(path.join(root, "runtime-js/checkpoint.js"), "utf8"));
+const codec = createDealUiCheckpoint(rt, require(path.join(out, "checkpoint-schema.js")), "nullable-elements");
+const restored = codec.decode(JSON.parse(JSON.stringify(codec.encode(state))), entry.bridgeInitialState.$sig.slice(4));
+assert.deepEqual(Array.from(restored.values), [1, null, 3]);
+assert.equal(restored.outer, null);
+assert.equal(codec.elementType(restored.values), "?number");
+assert.throws(() => rt.checkArray("[number]", restored.values));
+assert.equal(entry.view_App.$f("restored", restored).children[0].props[0].stringValue, "[1,null,3]");
+console.log("Nullable elements: actual generated JS helper/ForEach props and checkpoint preserve nullable elements independently of outer nullability");

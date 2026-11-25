@@ -118,10 +118,10 @@ public final class UiCompilerWorkspaceTest {
                     "export view Arrays(values: " + type.sourceType(type.name()) + "): View {}");
             check(parsed.views().getFirst().parameters().getFirst().type().equals(type), "preserve each readonly array layer");
         }
-        try {
-            UiParser.parseViews(java.nio.file.Path.of("arrays.dealui"), "export view Arrays(values: (number | null)[]): View {}");
-            throw new AssertionError("Never relocate element nullability to the outer array");
-        } catch (UiDiagnostic expected) { check(expected.code().equals("UI1007"), "unsupported annotation rejects explicitly"); }
+        var nullableElement = UiParser.parseViews(java.nio.file.Path.of("arrays.dealui"),
+                "export view Arrays(values: (number | null)[]): View {}").views().getFirst().parameters().getFirst().type();
+        check(!nullableElement.optional() && nullableElement.elementType().optional(), "element nullability stays inside the array");
+        check(nullableElement.sourceType(nullableElement.name()).equals("(number | null)[]"), "nullable elements print faithfully");
     }
 
     private static void uiDiagnosticsUseV3Snapshots() {

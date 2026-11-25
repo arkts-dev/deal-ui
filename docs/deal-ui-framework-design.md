@@ -117,6 +117,7 @@ Quoted terminals are contextual.
 
 - Imports lead. One exported `@ui-root` selects state. Named calls resolve exactly.
 - Views are pure. Paths start at parameters, items, tokens, actions, or payloads; nullable traversal fails.
+- Type projection preserves nullability at every array depth, independently of readonly qualifiers: `(T | null)[]` is not `T[] | null`. View/pack annotations, imported DEAL types, checked contracts and generated signatures retain that distinction. Writable arrays require exact element types; readonly views may widen element nullability without changing storage.
 - Event `ActionLiteral` binds declared `payload`.
 - Nominal actions are checked statically and dynamically. `When` takes `boolean`; `ForEach` takes `T[]` and a unique `number|string` key.
 - `View` is only a view/component result; `Action` is only a forwarded view parameter or event prop. Children follow contracts. A typed child contract accepts that component through direct calls, `When`, `ForEach`, and composed views, and rejects every other child root.
