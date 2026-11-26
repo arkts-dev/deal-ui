@@ -9,7 +9,12 @@ public final class UiPackDefaultsTest {
         String[][] invalid = {{"number", "\"wrong\""}, {"number", "null"}, {"number", "[1]"}, {"number", "{}"}, {"number[]", "[1, \"wrong\"]"}, {"Size", "{value: \"wrong\"}"}, {"Size", "{}"}, {"Size", "{value: 1, extra: 2}"}, {"number", "small"}, {"Size", "missing"}, {"Record<string, string>", "{label: 1}"}, {"number[][]", "[[1], [null]]"}};
         for (var pair : valid) check(pair, true);
         for (var pair : invalid) check(pair, false);
-        System.out.println("UiPackDefaultsTest: scalar, null, arrays, nested nominal, Record and token defaults checked");
+        for (String initializer : new String[]{"\"wrong\"", "missing", "bad"}) {
+            String bad = "export token bad: number = " + initializer + ";export class Props {count: number = 0;}export component Data(props: Props): View;";
+            var checker = new UiChecker();
+            UiCoreParityTest.expect("UI2026", () -> checker.check(Path.of("root/view.dealui"), UiParser.parseViews(Path.of("root/view.dealui"), "import * as app from \"./app\";import * as ui from \"./pack\";\n// @ui-root\nexport view Root(state: app.State): View {ui.Data()}"), Path.of("root/app.deal"), checker.parseDeal(Path.of("root/app.deal"), "export class State {}"), Map.of("./pack", UiParser.parsePack(Path.of("root/pack"), bad))));
+        }
+        System.out.println("UiPackDefaultsTest: typed defaults and token initializers; unknown/cyclic references reject");
     }
     private static void check(String[] pair, boolean valid) {
         String pack = "export class Size {value: number;}export token small: Size = {value: 1};export class Props {count: " + pair[0] + " = " + pair[1] + ";}export component Data(props: Props): View;";

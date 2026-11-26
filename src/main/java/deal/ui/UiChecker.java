@@ -595,7 +595,28 @@ public final class UiChecker {
         for (var entry : classes.entrySet()) for (UiModel.Field field : entry.getValue().fields()) {
             if (field.defaultValue() != null) validateDefault(field.defaultValue(), field.type(), prefix(entry.getKey()), classes, tokens);
         }
-        for (UiModel.Token token : tokens.values()) if (token.value() == null) error("UI2026", "Token requires a host value", token.span());
+        for (var entry : tokens.entrySet()) validateToken(entry.getKey(), tokens, classes, new LinkedHashSet<>(), new LinkedHashSet<>());
+    }
+
+    private void validateToken(String name, Map<String, UiModel.Token> tokens, Map<String, UiModel.PackClass> classes, Set<String> active, Set<String> done) {
+        if (done.contains(name)) return;
+        var token = tokens.get(name);
+        if (!active.add(name)) error("UI2026", "Cyclic token initializer '" + name + "'", token.span());
+        if (token.value() == null) error("UI2026", "Token requires a host value", token.span());
+        validateTokenReferences(token.value(), prefix(name), tokens, classes, active, done);
+        validateDefault(token.value(), token.type(), prefix(name), classes, tokens);
+        active.remove(name); done.add(name);
+    }
+    private void validateTokenReferences(UiModel.Expr value, String namespace, Map<String, UiModel.Token> tokens, Map<String, UiModel.PackClass> classes, Set<String> active, Set<String> done) {
+        if (value instanceof UiModel.PathExpr path) {
+            String name = String.join(".", path.parts());
+            if (!tokens.containsKey(name)) name = namespace + name;
+            if (!tokens.containsKey(name)) error("UI2026", "Unknown token initializer", value.span());
+            validateToken(name, tokens, classes, active, done);
+        } else if (value instanceof UiModel.Literal literal && literal.value() instanceof Map<?, ?> fields)
+            fields.values().forEach(v -> validateTokenReferences((UiModel.Expr)v, namespace, tokens, classes, active, done));
+        else if (value instanceof UiModel.Literal literal && literal.value() instanceof List<?> items)
+            items.forEach(v -> validateTokenReferences((UiModel.Expr)v, namespace, tokens, classes, active, done));
     }
 
     private void validateDefault(UiModel.Expr value, UiModel.TypeRef expected, String namespace,
