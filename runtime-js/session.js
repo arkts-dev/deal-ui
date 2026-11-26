@@ -39,6 +39,16 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
     const effect = {key: command.key, started: false, suppressed: false, finished: false, timer: null, cancel: null};
     effects.add(effect); status = call('bridgeSessionStarted', status);
     const snapshot = state;
+    const failed = error => {
+      if (effect.suppressed || store.lifecycle.disposed) return;
+      const failure = rt.reifyError(error);
+      const mapper = entry['bridgeEffectFailure' + transition.effect.effectId];
+      if (mapper && mapper.$kind === 'function') {
+        try { enqueue(call('bridgeEffectFailure' + transition.effect.effectId, snapshot, action, failure.message || String(error)), true); return; }
+        catch (mappingError) { status = call('bridgeSessionFailed', status, rt.reifyError(mappingError).message || String(mappingError), true); return; }
+      }
+      status = call('bridgeSessionFailed', status, failure.message || String(error), true);
+    };
     const start = () => {
       if (effect.suppressed || store.lifecycle.disposed) { finishEffect(effect); return; }
       effect.started = true;
@@ -46,10 +56,10 @@ globalThis.createDealUiSession = function(entry, rt, restoredState, scheduleEffe
         effect.cancel = scheduleEffect(
           () => call('bridgeEffect' + transition.effect.effectId, snapshot, action),
           result => { if (!effect.suppressed && !store.lifecycle.disposed) enqueue(result, true); },
-          error => { if (!effect.suppressed && !store.lifecycle.disposed) status = call('bridgeSessionFailed', status, rt.reifyError(error).message || String(error), true); },
+          failed,
           () => finishEffect(effect));
       } catch (error) {
-        try { if (!effect.suppressed && !store.lifecycle.disposed) status = call('bridgeSessionFailed', status, rt.reifyError(error).message || String(error), true); }
+        try { failed(error); }
         finally { finishEffect(effect); }
       }
     };

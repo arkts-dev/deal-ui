@@ -579,7 +579,7 @@ final class UiDealGenerator {
 
     private void validateEffectPolicyTypes() {
         UiModel.DealClass command = program.deal().classes().get("EffectCommand");
-        if ((!program.effectPolicies().isEmpty() || !program.effectFailures().isEmpty()) && command == null) throw new UiDiagnostic("UI2042", "EffectCommand must be declared by the application", program.dealSource(), 1, 1);
+        if (!program.effectPolicies().isEmpty() && command == null) throw new UiDiagnostic("UI2042", "EffectCommand must be declared by the application", program.dealSource(), 1, 1);
         if (command == null) return;
         Map<String, String> expected = Map.of("operation", "string", "key", "string", "delayMillis", "number", "cancellationMode", "string");
         for (Map.Entry<String, String> field : expected.entrySet()) {
