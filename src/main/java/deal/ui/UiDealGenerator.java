@@ -86,6 +86,7 @@ final class UiDealGenerator {
             out.append("}\n");
         }
         for (UiModel.View view : program.views().values()) if (!actionView(view)) generateView(out, view, app);
+        out.append("function repeatedScope(key: core.Key): string { if (key.kind === \"none\") { return \"\"; } let value = key.kind === \"number\" ? String(key.numberValue) : key.stringValue; return \"/\" + key.kind + String(value.length) + \":\" + value; }\n");
         out.append(viewHelpers);
         generateActionFactories(out);
         generatePayloadTypes(out);
@@ -202,10 +203,14 @@ final class UiDealGenerator {
             UiModel.Parameter parameter = view.parameters().get(i);
             out.append(parameter.name()).append(": ").append(qualifiedType(parameter.type(), app));
         }
+        out.append("): core.ViewNode { return keyedView_").append(view.name()).append("(identityPrefix, core.noKey()");
+        for (var parameter : view.parameters()) out.append(", ").append(parameter.name());
+        out.append("); }\nfunction keyedView_").append(view.name()).append("(identityPrefix: string, inheritedKey: core.Key");
+        for (var parameter : view.parameters()) out.append(", ").append(parameter.name()).append(": ").append(qualifiedType(parameter.type(), app));
         out.append("): core.ViewNode {\n  let nodes: core.ViewNode[] = [];\n");
         Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
         for (UiModel.Parameter parameter : view.parameters()) scope.put(parameter.name(), parameter.type());
-        emitNodes(out, view.nodes(), "nodes", "\" + identityPrefix + \"", "core.noKey()", app, 1, scope);
+        emitNodes(out, view.nodes(), "nodes", "\" + identityPrefix + \"", "inheritedKey", app, 1, scope);
         out.append("  return nodes[0];\n}\n\n");
     }
 
@@ -222,7 +227,7 @@ final class UiDealGenerator {
                         emitNodes(out, bound, target, structural + "/" + view.name(), key, app, indent, scope);
                         continue;
                     }
-                    out.append(pad).append(target).append("[").append(target).append(".length] = view_").append(view.name()).append("(\"").append(structural).append("\"");
+                    out.append(pad).append(target).append("[").append(target).append(".length] = keyedView_").append(view.name()).append("(\"").append(structural).append("\", ").append(key);
                     for (int i = 0; i < view.parameters().size(); i++) {
                         out.append(", ");
                         out.append(expr(call.arguments().get(view.parameters().get(i).name()), app));
@@ -303,7 +308,7 @@ final class UiDealGenerator {
                 String keyExpr = simple(keyType.name()).equals("number") ? "core.numberKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
-                emitNodes(out, each.children(), target, structural + "/item", keyExpr, app, indent + 1, nested);
+                emitNodes(out, each.children(), target, structural + "/item\" + repeatedScope(" + key + ") + \"", keyExpr, app, indent + 1, nested);
                 out.append(pad).append("}\n");
             }
         }
@@ -470,7 +475,7 @@ final class UiDealGenerator {
                 String root = each.source().parts().get(0);
                 UiModel.TypeRef rootType = scope.get(root);
                 if (rootType == null) throw new IllegalStateException("Unknown iteration scope " + root);
-                out.append("\nexport function uiItems").append(iterationIds.get(each)).append("(").append(root).append(": ").append(dealType(rootType)).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
+                out.append("\nexport function uiItems").append(iterationIds.get(each)).append("(").append(root).append(": ").append(dealType(rootType.withName(simple(rootType.name())))).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
                 nested.put(each.item().name(), each.item().type());
                 appendForEachAccessors(out, each.children(), nested);
