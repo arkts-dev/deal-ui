@@ -480,11 +480,11 @@ public final class UiChecker {
             String fieldName = path.parts().get(i);
             if (current.nullish()) throw mismatch("UI2022", "Nullable intermediate path access; prepare a nonnullable field in DEAL", path.span(),
                     typeText(current.withOptional(false)), typeText(current));
-            if (current.array()) throw new UiDiagnostic(
-                    "UI2023",
-                    "Arrays may be used only as the direct collection source of ForEach; expose count or presence as an explicit DEAL field",
-                    path.span().file(), path.span().line(), path.span().column(),
-                    "direct ForEach collection path or explicit scalar field", joined);
+            if (current.array()) {
+                if (fieldName.equals("length")) { current = primitive("number"); continue; }
+                throw new UiDiagnostic("UI2023", "Arrays expose only length in view paths; use ForEach for elements",
+                        path.span().file(), path.span().line(), path.span().column(), "array length or ForEach collection path", joined);
+            }
             UiModel.DealClass clazz = externalClasses.get(current.name());
             if (clazz == null) clazz = deal.classes().get(typeNames.getOrDefault(current.name(), current.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;
