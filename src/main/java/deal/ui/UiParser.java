@@ -375,57 +375,19 @@ public final class UiParser {
         return new UiModel.PathExpr(parts, span(start));
     }
 
-    private UiModel.TypeRef type() { int start = position; UiModel.TypeRef result = type(false); validateNullish(start, position); return result; }
-    private void validateNullish(int start, int end) {
-        // Validate the source annotation before projection can erase duplicate members.
-        String text = tokens.subList(start, end).stream().map(T::text).collect(java.util.stream.Collectors.joining(" "));
-        var parsed = new deal.parser.Parser(new deal.lexer.Lexer("class Value { field: " + text + "; }", file.toString()).tokenize().tokens(), file.toString()).parse();
-        if (!parsed.diagnostics().isEmpty()) return;
-        var type = ((deal.ast.ClassDeclaration) parsed.program().statements().getFirst()).fields().getFirst().type();
-        validateNullish(type, tokens.get(start));
-    }
-    private void validateNullish(deal.ast.TypeNode type, T start) {
-        if (type instanceof deal.ast.NullableType nullable) {
-            for (deal.ast.TypeNode node = nullable.innerType(); node instanceof deal.ast.NullableType inner; node = inner.innerType())
-                if (nullable.undefinedMember() == inner.undefinedMember()) fail("UI1007", "Duplicate nullish member", start);
-            if (nullable.innerType() instanceof deal.ast.NamedType named && named.name().equals(nullable.undefinedMember() ? "undefined" : "null"))
-                fail("UI1007", "Duplicate nullish member", start);
-            validateNullish(nullable.innerType(), start);
-        } else if (type instanceof deal.ast.ArrayType array) validateNullish(array.elementType(), start);
-    }
-    private UiModel.TypeRef type(boolean optional) {
-        boolean readonly = match("readonly");
-        UiModel.TypeRef base;
-        if (match("(")) { base = type(); require(")"); }
-        else {
-            String name = qualified();
-            if (name.equals("Record")) {
-                require("<"); require("string"); require(",");
-                String value = id();
-                if (!value.equals("string") && !value.equals("unknown")) fail("UI1007", "Record values must be string or unknown", previous());
-                require(">"); name = "Record<string, " + value + ">";
-            }
-            base = new UiModel.TypeRef(name, false, false);
+    private UiModel.TypeRef type() {
+        T start = peek(); int begin = position, parentheses = 0, brackets = 0, angles = 0;
+        while (!at(K.EOF)) {
+            String text = peek().text();
+            if (parentheses == 0 && brackets == 0 && angles == 0 && List.of(",", ")", ";", "=", "}").contains(text)) break;
+            if (text.equals("(")) parentheses++; else if (text.equals(")")) parentheses--;
+            else if (text.equals("[")) brackets++; else if (text.equals("]")) brackets--;
+            else if (text.equals("<")) angles++; else if (text.equals(">")) angles--;
+            take();
         }
-        int initialDepth = base.dimensions();
-        while (match("[")) { require("]"); base = base.arrayOf(false); }
-        if (readonly && base.dimensions() == initialDepth) fail("UI1007", "readonly requires an array type", peek());
-        if (readonly) {
-            var layers = new ArrayList<>(base.readonlyLayers());
-            layers.set(layers.size() - 1, true);
-            base = new UiModel.TypeRef(base.name(), base.optional(), base.dimensions(), layers, base.nullableElements(), base.undefined(), base.undefinedElements());
-        }
-        while (match("|")) {
-            UiModel.TypeRef member = type();
-            if (!base.array() && (base.name().equals("null") || base.name().equals("undefined"))) {
-                boolean nullMember = base.name().equals("null") || base.optional();
-                boolean undefinedMember = base.name().equals("undefined") || base.undefined();
-                base = member.withOptional(member.optional() || nullMember).withUndefined(member.undefined() || undefinedMember);
-            } else if (!member.array() && member.name().equals("null")) base = base.withOptional(true).withUndefined(base.undefined() || member.undefined());
-            else if (!member.array() && member.name().equals("undefined")) base = base.withUndefined(true).withOptional(base.optional() || member.optional());
-            else fail("UI1007", "Only nullish unions are supported", previous());
-        }
-        return base.withOptional(optional || base.optional());
+        String text = tokens.subList(begin, position).stream().map(T::text).collect(java.util.stream.Collectors.joining(" "));
+        try { return UiTypes.project(UiTypes.parse(text)); }
+        catch (IllegalArgumentException failure) { fail("UI1007", failure.getMessage(), start); return null; }
     }
     private String qualified() {
         StringBuilder value = new StringBuilder(id());
@@ -541,7 +503,7 @@ public final class UiParser {
                 continue;
             }
             String op = null;
-            for (String candidate : List.of(">>>=", "===", "!==", "**=", "&&=", "||=", "??=", "<<=", ">>=", ">>>", "==", "!=", "??", "?.", "**", "<<", ">>", "||", "&&", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "++", "--")) {
+            for (String candidate : List.of(">>>=", "===", "!==", "**=", "&&=", "||=", "??=", "<<=", ">>=", ">>>", "=>", "==", "!=", "??", "?.", "**", "<<", ">>", "||", "&&", "<=", ">=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "++", "--")) {
                 if (source.startsWith(candidate, i)) { op = candidate; break; }
             }
             if (op != null) {

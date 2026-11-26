@@ -16,8 +16,8 @@ public final class UiNominalIdentityTest {
         var checker = new UiChecker();
         checker.check(Path.of("root/view.dealui"), UiParser.parseViews(Path.of("root/view.dealui"), header + "Helper(value: state.row)}view Helper(value: app.Row): View {ui.Data(value: value.n)}"),
                 Path.of("root/app.deal"), checker.parseDeal(Path.of("root/app.deal"), logic), Map.of("./pack", UiParser.parsePack(Path.of("root/pack"), scalar)));
-        reject(logic, header.replace("app.State", "app.bogus.State") + "ui.Data(value: state.row.n)}", scalar, "UI2004");
-        reject(logic, header + "Helper(value: state.row)}view Helper(value: app.bogus.Row): View {ui.Data(value: value.n)}", scalar, "UI2031");
+        reject(logic, header.replace("app.State", "app.bogus.State") + "ui.Data(value: state.row.n)}", scalar, "UI1007");
+        reject(logic, header + "Helper(value: state.row)}view Helper(value: app.bogus.Row): View {ui.Data(value: value.n)}", scalar, "UI1007");
         System.out.println("UiNominalIdentityTest: distinct declarations and bogus qualifiers reject; application alias resolves");
     }
     private static void reject(String logic, String view, String pack, String code) {

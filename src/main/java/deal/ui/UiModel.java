@@ -58,6 +58,7 @@ public final class UiModel {
         }
         public String sourceType(String qualifiedName) {
             String result = qualifiedName;
+            if (result.contains("=>") && (dimensions > 0 || optional || undefined)) result = "(" + result + ")";
             for (int i = 0; i < dimensions; i++) {
                 boolean nullable = nullableElements.get(i) || undefinedElements.get(i);
                 if (nullableElements.get(i)) result += " | null";

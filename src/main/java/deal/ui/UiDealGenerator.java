@@ -617,9 +617,11 @@ final class UiDealGenerator {
     }
 
     private String qualifiedType(UiModel.TypeRef type, String app) {
-        String name = type.name();
-        if (program.packClasses().containsKey(name)) name = packTypeName(name);
-        if (!app.isEmpty() && !name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
+        String name = UiTypes.rename(type.name(), n -> {
+            if (program.packClasses().containsKey(n)) return packTypeName(n);
+            if (!app.isEmpty() && !n.contains(".") && program.deal().classes().containsKey(n)) return "app." + n;
+            return n;
+        });
         return type.sourceType(name);
     }
     private String packTypeName(String name) { return "UiPack_" + name.replace(".", "_"); }

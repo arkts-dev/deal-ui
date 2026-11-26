@@ -711,7 +711,7 @@ public final class UiChecker {
     private String resolvedName(String name) { return typeNames.getOrDefault(name, name); }
     private boolean sameName(String left, String right) { return resolvedName(left).equals(resolvedName(right)); }
     private UiModel.TypeRef qualifyPackType(UiModel.TypeRef type, String alias, UiModel.PackModule pack) {
-        return pack.classes().containsKey(type.name()) ? type.withName(alias + "." + type.name()) : type;
+        return UiNominals.rename(type, name -> pack.classes().containsKey(name) ? alias + "." + name : name);
     }
     private String prefix(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(0, dot + 1); }
     private String simple(String name) { int dot = name.lastIndexOf('.'); return dot < 0 ? name : name.substring(dot + 1); }
@@ -820,18 +820,19 @@ public final class UiChecker {
     }
 
     private UiModel.TypeRef type(TypeNode type, boolean optional) {
-        if (type instanceof NullableType nullable) {
-            UiModel.TypeRef inner = type(nullable.innerType(), false);
-            return nullable.undefinedMember() ? inner.withUndefined(true) : inner.withOptional(true);
+        try {
+            UiTypes.validateNullish(type);
+            UiModel.TypeRef result = UiTypes.project(type);
+            return result.withOptional(optional || result.optional());
+        } catch (IllegalArgumentException failure) {
+            throw new UiDiagnostic("UI1007", failure.getMessage(), Path.of(type.span().file()), type.span().startLine(), type.span().startColumn());
         }
-        if (type instanceof ArrayType array) return type(array.elementType(), false).arrayOf(array.readonly()).withOptional(optional);
-        return new UiModel.TypeRef(typeName(type), optional, false);
     }
     private String typeName(TypeNode type) {
         if (type instanceof NamedType named) return named.name();
         if (type instanceof QualifiedType qualified) return qualified.moduleName() + "." + qualified.typeName();
-        if (type instanceof ArrayType) return type(type, false).sourceType(type(type, false).name());
-        return type.toString();
+        var projected = type(type, false);
+        return projected.sourceType(projected.name());
     }
     private UiModel.Span span(Path file, int line, int column) { return new UiModel.Span(file, line, column); }
     private void requireSingleRoot(List<UiModel.Node> nodes, UiModel.Span span) {

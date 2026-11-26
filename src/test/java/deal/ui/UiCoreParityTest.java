@@ -17,7 +17,11 @@ public final class UiCoreParityTest {
         check("export class State {a?: unknown; b: unknown;}", "ui.Data(value: state.a === state.b)", "boolean", "");
         for (String bad : new String[]{"number | null | null", "null | number | null", "unknown | undefined | undefined", "null | null"})
             expect("UI1007", () -> UiParser.parseViews(ROOT.resolve("bad.dealui"), "view H(v: " + bad + "): View {}"));
-        System.out.println("UiCoreParityTest: core nullish and unknown compatibility; duplicate members reject");
+        var functions = new UiChecker().parseDeal(ROOT.resolve("functions.deal"), "export class State {a: () => number; b: () => number;}");
+        if (!functions.classes().get("State").fields().get("a").type().equals(functions.classes().get("State").fields().get("b").type()))
+            throw new AssertionError("Source locations leaked into function types");
+        check("export class State {a: (x: number) => number;}", "H(v: state.a)", "boolean", "view H(v: (other: number) => number): View {ui.Data(value: v === v)}");
+        System.out.println("UiCoreParityTest: core nullish, unknown and function compatibility");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",
