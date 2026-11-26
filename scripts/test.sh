@@ -25,6 +25,7 @@ TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiRootTypeTest.java
   "$ROOT"/src/test/java/deal/ui/UiNullishTypesTest.java
   "$ROOT"/src/test/java/deal/ui/UiAssignabilityTest.java
+  "$ROOT"/src/test/java/deal/ui/UiCoreParityTest.java
   "$ROOT"/src/test/java/deal/ui/UiComparisonsTest.java
   "$ROOT"/src/test/java/deal/ui/UiPresenceTest.java
   "$ROOT"/src/test/java/deal/ui/UiActionSamplesTest.java
@@ -54,6 +55,7 @@ java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPackDe
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRootTypeTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullishTypesTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiAssignabilityTest
+java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiCoreParityTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiComparisonsTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPresenceTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiLexicalParityTest

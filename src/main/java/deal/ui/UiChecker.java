@@ -698,6 +698,9 @@ public final class UiChecker {
                 && actual.nullableElements().equals(expected.nullableElements()) && actual.undefinedElements().equals(expected.undefinedElements());
     }
     private boolean assignable(UiModel.TypeRef actual, UiModel.TypeRef expected) {
+        if (actual.name().equals("null") || actual.name().equals("undefined")
+                || expected.name().equals("null") || expected.name().equals("undefined"))
+            return deal.types.Types.isAssignable(UiTypes.core(actual, this::resolvedName), UiTypes.core(expected, this::resolvedName));
         if (!expected.array() && expected.name().equals("unknown")) return !actual.name().equals("void");
         if (!actual.array() && actual.name().equals("null")) return expected.optional() || !expected.array() && expected.name().equals("null");
         if (!actual.array() && actual.name().equals("undefined")) return expected.undefined() || !expected.array() && expected.name().equals("undefined");
@@ -720,7 +723,8 @@ public final class UiChecker {
             throw mismatch("UI2032", "Operand requires a nonnullable " + expected + " (no implicit coercion)", span, expected, typeText(actual));
     }
     private UiModel.TypeRef primitive(String name) { return new UiModel.TypeRef(name, false, false); }
-    private boolean sameName(String left, String right) { return typeNames.getOrDefault(left, left).equals(typeNames.getOrDefault(right, right)); }
+    private String resolvedName(String name) { return typeNames.getOrDefault(name, name); }
+    private boolean sameName(String left, String right) { return resolvedName(left).equals(resolvedName(right)); }
     private UiModel.TypeRef qualifyPackType(UiModel.TypeRef type, String alias, UiModel.PackModule pack) {
         return pack.classes().containsKey(type.name()) ? type.withName(alias + "." + type.name()) : type;
     }
@@ -863,12 +867,7 @@ public final class UiChecker {
     private void error(String code, String message, UiModel.Span span) { throw new UiDiagnostic(code, message, span.file(), span.line(), span.column()); }
 
     private boolean singletonComparison(UiModel.TypeRef singleton, UiModel.TypeRef target) {
-        if (singleton.array()) return false;
-        return switch (singleton.name()) {
-            case "null" -> target.optional() || !target.array() && (target.name().equals("unknown") || target.name().equals("null"));
-            case "undefined" -> target.undefined() || !target.array() && (target.name().equals("unknown") || target.name().equals("undefined"));
-            default -> false;
-        };
+        return UiTypes.singleton(UiTypes.core(singleton, this::resolvedName), UiTypes.core(target, this::resolvedName));
     }
 
     private void typeMismatch(UiModel.Binary binary, UiModel.TypeRef left, UiModel.TypeRef right) {
