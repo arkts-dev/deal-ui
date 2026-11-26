@@ -345,8 +345,8 @@ public final class UiChecker {
             } else if (node instanceof UiModel.When when) {
                 requireType(type(when.condition(), scope, deal, packClasses, tokens, aliases, actions, null), "boolean", when.condition().span());
                 result.add(new UiModel.RenderWhen(when.condition(),
-                    lower(when.thenNodes(), nodeIdentity + "/then", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
-                    lower(when.elseNodes(), nodeIdentity + "/else", scope, views, components, packClasses, tokens, deal, aliases, actions, viewStack),
+                    lower(when.thenNodes(), nodeIdentity + "/then", UiFlowScope.branch(when.condition(), true, scope, (path, flow) -> pathType(path, flow, deal, packClasses, tokens)), views, components, packClasses, tokens, deal, aliases, actions, viewStack),
+                    lower(when.elseNodes(), nodeIdentity + "/else", UiFlowScope.branch(when.condition(), false, scope, (path, flow) -> pathType(path, flow, deal, packClasses, tokens)), views, components, packClasses, tokens, deal, aliases, actions, viewStack),
                     nodeIdentity, when.span()));
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
@@ -355,8 +355,7 @@ public final class UiChecker {
                         || !array.elementType().readonlyLayers().equals(each.item().type().readonlyLayers()))
                     throw mismatch("UI2014", "ForEach requires an exact nonnullable item array", each.source().span(),
                             typeText(each.item().type().arrayOf(false)), typeText(array));
-                Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
-                nested.put(each.item().name(), each.item().type());
+                Map<String, UiModel.TypeRef> nested = UiFlowScope.shadow(scope, each.item().name(), each.item().type());
                 UiModel.TypeRef key = type(each.key(), nested, deal, packClasses, tokens, aliases, actions, null);
                 if (key.nullish() || key.array() || !key.name().equals("number") && !key.name().equals("string")) {
                     throw new UiDiagnostic(
@@ -439,7 +438,9 @@ public final class UiChecker {
         }
         UiModel.Binary binary = (UiModel.Binary) expression;
         UiModel.TypeRef left = type(binary.left(), scope, deal, packClasses, tokens, aliases, actions, event);
-        UiModel.TypeRef right = type(binary.right(), scope, deal, packClasses, tokens, aliases, actions, event);
+        var rightScope = binary.operator().equals("&&") || binary.operator().equals("||")
+                ? UiFlowScope.branch(binary.left(), binary.operator().equals("&&"), scope, (path, flow) -> pathType(path, flow, deal, packClasses, tokens)) : scope;
+        UiModel.TypeRef right = type(binary.right(), rightScope, deal, packClasses, tokens, aliases, actions, event);
         return switch (binary.operator()) {
             case "&&", "||" -> { requireType(left, "boolean", binary.left().span()); requireType(right, "boolean", binary.right().span()); yield primitive("boolean"); }
             case "===", "!==" -> {
@@ -499,7 +500,7 @@ public final class UiChecker {
                     path.span().file(), path.span().line(), path.span().column(),
                     (clazz != null ? clazz.fields().keySet().stream() : packClass.fields().stream().map(UiModel.Field::name))
                             .sorted().collect(java.util.stream.Collectors.joining(", ")), fieldName);
-            current = field.optional() ? field.type().withUndefined(true) : field.type();
+            current = scope.getOrDefault(String.join(".", path.parts().subList(0, i + 1)), field.optional() ? field.type().withUndefined(true) : field.type());
         }
         return current;
     }

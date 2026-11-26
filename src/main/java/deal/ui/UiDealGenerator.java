@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 final class UiDealGenerator {
-    record GeneratedAction(UiModel.Action action, UiModel.TypeRef payloadType, Map<String, UiModel.TypeRef> captures) {}
+    record GeneratedAction(UiModel.Action action, UiModel.TypeRef payloadType, Map<String, UiModel.TypeRef> captures, Map<String, UiModel.TypeRef> scope) {}
     record Output(String source, String appAugmentation, Map<Integer, GeneratedAction> actions, Map<String, Integer> actionIds, Map<String, Integer> effectIds) {}
 
     private final UiModel.CheckedProgram program;
@@ -19,6 +19,7 @@ final class UiDealGenerator {
     private final Map<String, Integer> effectIds = new LinkedHashMap<>();
     private int actionSlot;
     private int localId;
+    private Map<String, UiModel.TypeRef> expressionScope = Map.of();
     private boolean splitViews;
     private final StringBuilder viewHelpers = new StringBuilder();
     private final Map<UiModel.Call, List<UiModel.Node>> forwardedViews = new java.util.IdentityHashMap<>();
@@ -217,6 +218,7 @@ final class UiDealGenerator {
     private void emitNodes(StringBuilder out, List<UiModel.Node> nodes, String target, String identity, String key, String app, int indent, Map<String, UiModel.TypeRef> scope) {
         int index = 0;
         for (UiModel.Node node : nodes) {
+            expressionScope = scope;
             String structural = identity + "/" + index++;
             String pad = "  ".repeat(indent);
             if (node instanceof UiModel.Call call) {
@@ -246,9 +248,10 @@ final class UiDealGenerator {
                         UiModel.Event event = event(program.components().get(call.name()), argument.getKey());
                         Map<String, UiModel.TypeRef> captures = new LinkedHashMap<>();
                         for (var binding : scope.entrySet()) {
+                            if (binding.getKey().contains(".")) continue;
                             if (action.fields().values().stream().anyMatch(e -> references(e, binding.getKey()))) captures.put(binding.getKey(), binding.getValue());
                         }
-                        actions.put(slot, new GeneratedAction(action, event.payload(), Map.copyOf(captures)));
+                        actions.put(slot, new GeneratedAction(action, event.payload(), Map.copyOf(captures), Map.copyOf(scope)));
                         String data = captures.keySet().stream().map(name -> name + ": " + name).collect(java.util.stream.Collectors.joining(", "));
                         value = "core.boundActionProp(\"" + argument.getKey() + "\", " + slot + ", {" + data + "})";
                     } else {
@@ -282,6 +285,7 @@ final class UiDealGenerator {
                         .append("(\"").append(structural).append("\", ").append(key);
                     StringBuilder body = new StringBuilder("function ").append(helper).append("(identityPrefix: string, parentKey: core.Key");
                     for (var binding : scope.entrySet()) {
+                        if (binding.getKey().contains(".")) continue;
                         out.append(", ").append(binding.getKey());
                         body.append(", ").append(binding.getKey()).append(": ").append(qualifiedType(binding.getValue(), app));
                     }
@@ -297,9 +301,9 @@ final class UiDealGenerator {
                 out.append(pad).append(target).append("[").append(target).append(".length] = core.node(\"").append(call.name()).append("\", \"").append(structural).append("\", ").append(key).append(", ").append(props).append(", ").append(children).append(");\n");
             } else if (node instanceof UiModel.When when) {
                 out.append(pad).append("if (").append(expr(when.condition(), app)).append(") {\n");
-                emitNodes(out, when.thenNodes(), target, structural + "/then", key, app, indent + 1, scope);
+                emitNodes(out, when.thenNodes(), target, structural + "/then", key, app, indent + 1, flowScope(when.condition(), true, scope));
                 out.append(pad).append("} else {\n");
-                emitNodes(out, when.elseNodes(), target, structural + "/else", key, app, indent + 1, scope);
+                emitNodes(out, when.elseNodes(), target, structural + "/else", key, app, indent + 1, flowScope(when.condition(), false, scope));
                 out.append(pad).append("}\n");
             } else {
                 UiModel.ForEach each = (UiModel.ForEach) node;
@@ -307,7 +311,7 @@ final class UiDealGenerator {
                 UiModel.TypeRef keyType = fieldType(each.item().type(), each.key());
                 String keyExpr = simple(keyType.name()).equals("number") ? "core.numberKey(" + expr(each.key(), app) + ")" : "core.stringKey(" + expr(each.key(), app) + ")";
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
-                nested.put(each.item().name(), each.item().type());
+                nested = UiFlowScope.shadow(nested, each.item().name(), each.item().type());
                 emitNodes(out, each.children(), target, structural + "/item\" + repeatedScope(" + key + ") + \"", keyExpr, app, indent + 1, nested);
                 out.append(pad).append("}\n");
             }
@@ -372,6 +376,7 @@ final class UiDealGenerator {
     private void generateActionFactories(StringBuilder out) {
         for (Map.Entry<Integer, GeneratedAction> entry : actions.entrySet()) {
             UiModel.Action action = entry.getValue().action();
+            expressionScope = entry.getValue().scope();
             int id = actionIds.get(simple(action.name()));
             UiModel.TypeRef payloadType = entry.getValue().payloadType();
             out.append("export function action_").append(entry.getKey()).append("(bindings: Record<string, unknown>");
@@ -475,12 +480,18 @@ final class UiDealGenerator {
                 String root = each.source().parts().get(0);
                 UiModel.TypeRef rootType = scope.get(root);
                 if (rootType == null) throw new IllegalStateException("Unknown iteration scope " + root);
-                out.append("\nexport function uiItems").append(iterationIds.get(each)).append("(").append(root).append(": ").append(dealType(rootType.withName(simple(rootType.name())))).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(String.join(".", each.source().parts())).append("; }\n");
+                var savedScope = expressionScope;
+                var localScope = new LinkedHashMap<String, UiModel.TypeRef>();
+                scope.forEach((name, type) -> localScope.put(name, type.withName(simple(type.name()))));
+                expressionScope = localScope;
+                String source = expr(each.source(), "");
+                expressionScope = savedScope;
+                out.append("\nexport function uiItems").append(iterationIds.get(each)).append("(").append(root).append(": ").append(dealType(rootType.withName(simple(rootType.name())))).append("): ").append(dealType(expressionType(each.source(), scope))).append(" { return ").append(source).append("; }\n");
                 Map<String, UiModel.TypeRef> nested = new LinkedHashMap<>(scope);
-                nested.put(each.item().name(), each.item().type());
+                nested = UiFlowScope.shadow(nested, each.item().name(), each.item().type());
                 appendForEachAccessors(out, each.children(), nested);
             } else if (node instanceof UiModel.Call call) appendForEachAccessors(out, forwardedViews.getOrDefault(call, call.children()), scope);
-            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), scope); appendForEachAccessors(out, when.elseNodes(), scope); }
+            else if (node instanceof UiModel.When when) { appendForEachAccessors(out, when.thenNodes(), flowScope(when.condition(), true, scope)); appendForEachAccessors(out, when.elseNodes(), flowScope(when.condition(), false, scope)); }
         }
     }
 
@@ -498,7 +509,12 @@ final class UiDealGenerator {
             UiModel.Token token = program.tokens().get(String.join(".", path.parts()));
             if (token != null) return token.type();
             UiModel.TypeRef root = scope.get(path.parts().get(0));
-            if (root != null) return pathType(root, path.parts().subList(1, path.parts().size()));
+            if (root != null) {
+                for (int i = path.parts().size(); i > 0; i--) {
+                    var refined = scope.get(String.join(".", path.parts().subList(0, i)));
+                    if (refined != null) return pathType(refined, path.parts().subList(i, path.parts().size()));
+                }
+            }
         }
         if (expression instanceof UiModel.Has) return new UiModel.TypeRef("boolean", false, false);
         if (expression instanceof UiModel.Unary unary) {
@@ -513,6 +529,10 @@ final class UiDealGenerator {
             };
         }
         throw new IllegalStateException("Unknown UI expression type " + expression.getClass().getName());
+    }
+
+    private Map<String, UiModel.TypeRef> flowScope(UiModel.Expr condition, boolean matching, Map<String, UiModel.TypeRef> scope) {
+        return UiFlowScope.branch(condition, matching, scope, this::expressionType);
     }
 
     private UiModel.TypeRef fieldType(UiModel.TypeRef root, UiModel.PathExpr path) { return pathType(root, path.parts().subList(1, path.parts().size())); }
@@ -538,7 +558,14 @@ final class UiDealGenerator {
         }
         if (expression instanceof UiModel.PathExpr path) {
             var token = program.tokens().get(String.join(".", path.parts()));
-            return token == null ? String.join(".", path.parts()) : expr(token.value(), app);
+            if (token != null) return expr(token.value(), app);
+            String result = path.parts().getFirst();
+            for (int i = 1; i <= path.parts().size(); i++) {
+                if (i > 1) result += "." + path.parts().get(i - 1);
+                var refined = expressionScope.get(String.join(".", path.parts().subList(0, i)));
+                if (refined != null && i > 1) result = "(" + result + " as " + qualifiedType(refined, app) + ")";
+            }
+            return result;
         }
         if (expression instanceof UiModel.Has has) {
             List<String> parts = has.path().parts();
@@ -592,7 +619,7 @@ final class UiDealGenerator {
     private String qualifiedType(UiModel.TypeRef type, String app) {
         String name = type.name();
         if (program.packClasses().containsKey(name)) name = packTypeName(name);
-        if (!name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
+        if (!app.isEmpty() && !name.contains(".") && program.deal().classes().containsKey(name)) name = "app." + name;
         return type.sourceType(name);
     }
     private String packTypeName(String name) { return "UiPack_" + name.replace(".", "_"); }
