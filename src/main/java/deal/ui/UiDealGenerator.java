@@ -273,14 +273,15 @@ final class UiDealGenerator {
                             throw new UiDiagnostic("UI2053", "Renderer props cannot encode undefined; prepare an explicit supported value in DEAL",
                                     argument.getValue().span().file(), argument.getValue().span().line(), argument.getValue().span().column());
                         boolean token = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts()));
-                        boolean structured = !token && (type.nullish() || type.array() || !List.of("number", "boolean", "string").contains(simple(type.name())));
+                        boolean tokenHandle = token && !type.array() && !type.nullish() && program.packClasses().containsKey(type.name());
+                        boolean structured = !tokenHandle && (type.nullish() || type.array() || !List.of("number", "boolean", "string").contains(simple(type.name())));
                         String factory = structured ? "jsonProp" : switch (simple(type.name())) {
                             case "number" -> "numberProp";
                             case "boolean" -> "booleanProp";
                             case "string" -> "stringProp";
                             default -> "tokenProp";
                         };
-                        String expression = argument.getValue() instanceof UiModel.PathExpr path && program.tokens().containsKey(String.join(".", path.parts())) ? "\"" + String.join(".", path.parts()) + "\"" : expr(argument.getValue(), app);
+                        String expression = tokenHandle ? quote(String.join(".", ((UiModel.PathExpr)argument.getValue()).parts())) : expr(argument.getValue(), app);
                         if (structured) {
                             String helper = "viewProp" + local + "_" + argument.getKey();
                             viewHelpers.append("function ").append(helper).append("(value: ").append(qualifiedType(type, app)).append("): core.Prop {\n");
@@ -563,17 +564,43 @@ final class UiDealGenerator {
         return current;
     }
 
+    private String tokenExpression(String name, String app) {
+        var token = program.tokens().get(name);
+        if (token.value() instanceof UiModel.PathExpr path) {
+            String target = String.join(".", path.parts());
+            if (!program.tokens().containsKey(target)) target = name.substring(0, name.lastIndexOf('.') + 1) + target;
+            return tokenExpression(target, app);
+        }
+        return expr(tokenInitializer(token.value(), name.substring(0, name.lastIndexOf('.') + 1)), app);
+    }
+    private UiModel.Expr tokenInitializer(UiModel.Expr value, String namespace) {
+        if (value instanceof UiModel.PathExpr path) {
+            String target = String.join(".", path.parts());
+            if (!program.tokens().containsKey(target)) target = namespace + target;
+            return new UiModel.PathExpr(List.of(target.split("\\.")), path.span());
+        }
+        if (value instanceof UiModel.Literal literal && literal.value() instanceof List<?> items)
+            return new UiModel.Literal(items.stream().map(item -> tokenInitializer((UiModel.Expr)item, namespace)).toList(), literal.type(), literal.span());
+        if (value instanceof UiModel.Literal literal && literal.value() instanceof Map<?, ?> fields) {
+            var result = new LinkedHashMap<String, UiModel.Expr>();
+            fields.forEach((key, field) -> result.put((String)key, tokenInitializer((UiModel.Expr)field, namespace)));
+            return new UiModel.Literal(result, literal.type(), literal.span());
+        }
+        return value;
+    }
+
     private String expr(UiModel.Expr expression, String app) {
         if (expression instanceof UiModel.Literal literal) {
             if (literal.value() == null) return "null";
             if (literal.value() instanceof String string) return quote(string);
+            if (literal.value() instanceof List<?> items) return "[" + items.stream().map(item -> expr((UiModel.Expr)item, app)).collect(java.util.stream.Collectors.joining(", ")) + "]";
             if (literal.value() instanceof Map<?, ?> fields) return "{" + fields.entrySet().stream()
                     .map(field -> field.getKey() + ": " + expr((UiModel.Expr) field.getValue(), app)).collect(java.util.stream.Collectors.joining(", ")) + "}";
             return String.valueOf(literal.value());
         }
         if (expression instanceof UiModel.PathExpr path) {
             var token = program.tokens().get(String.join(".", path.parts()));
-            if (token != null) return expr(token.value(), app);
+            if (token != null) return tokenExpression(String.join(".", path.parts()), app);
             String result = path.parts().getFirst();
             for (int i = 1; i <= path.parts().size(); i++) {
                 if (i > 1) result += "." + path.parts().get(i - 1);

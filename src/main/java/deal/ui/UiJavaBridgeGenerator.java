@@ -57,6 +57,7 @@ final class UiJavaBridgeGenerator {
             out.append("), java.util.Map.ofEntries(");
             first = true;
             for (Map.Entry<String, UiModel.Token> token : program.tokens().entrySet()) {
+                if (!program.packClasses().containsKey(token.getValue().type().name()) || token.getValue().type().array() || token.getValue().type().nullish()) continue;
                 if (!first) out.append(", ");
                 first = false;
                 out.append("java.util.Map.entry(\"").append(token.getKey()).append("\", ").append(tokenValue(token.getValue())).append(")");
