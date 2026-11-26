@@ -36,7 +36,8 @@ public final class UiCoreParityTest {
         expect("UI1010", () -> check("export class State {}", "ui.Data(value: 0)", "number", "view Bad(v: number, v: number): View {ui.Data(value: 0)}"));
         expect("UI1010", () -> UiParser.parsePack(ROOT.resolve("error.pack"), "export class Error {}"));
         expect("UI1010", () -> UiParser.parsePack(ROOT.resolve("bad.pack"), "export class Props {x: number; x: string;}"));
-        System.out.println("UiCoreParityTest: core compatibility, members, visibility and declarations");
+        expect("UI2036", () -> check("export class State {}export class Other {}export class Go {}\n// @ui-update\nexport function go(s: Other, a: Go): Other {return s;}", "ui.Data(value: 0)", "number", ""));
+        System.out.println("UiCoreParityTest: core compatibility, members, declarations and root-state handlers");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",

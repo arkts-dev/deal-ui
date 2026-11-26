@@ -181,6 +181,10 @@ public final class UiChecker {
         Map<String, UiModel.Handler> effects = handlers(deal.handlers(), "ui-effect");
         Map<String, UiModel.Handler> effectPolicies = handlers(deal.handlers(), "ui-effect-policy");
         Map<String, UiModel.Handler> effectFailures = handlers(deal.handlers(), "ui-effect-failure");
+        for (var handler : updates.values()) if (!handler.stateType().equals(stateType) || !handler.returnType().equals(stateType))
+            error("UI2036", "Update input and result must match root state '" + stateType + "'", handler.span());
+        for (var handler : effects.values()) if (!handler.stateType().equals(stateType))
+            error("UI2036", "Effect state must match root state '" + stateType + "'", handler.span());
         Set<String> reachableActions = new LinkedHashSet<>();
         Map<String, UiModel.TypeRef> scope = new LinkedHashMap<>();
         scope.put(root.parameters().get(0).name(), new UiModel.TypeRef(stateType, false, false));
