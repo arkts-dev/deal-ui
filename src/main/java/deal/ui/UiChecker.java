@@ -542,10 +542,53 @@ public final class UiChecker {
                 }
             }
         }
-        for (UiModel.PackClass clazz : classes.values()) for (UiModel.Field field : clazz.fields()) {
-            if (field.defaultValue() instanceof UiModel.PathExpr path && !tokens.containsKey(String.join(".", path.parts()))) error("UI2026", "Pack-default name must resolve to token", field.span());
+        for (var entry : classes.entrySet()) for (UiModel.Field field : entry.getValue().fields()) {
+            if (field.defaultValue() != null) validateDefault(field.defaultValue(), field.type(), prefix(entry.getKey()), classes, tokens);
         }
         for (UiModel.Token token : tokens.values()) if (token.value() == null) error("UI2026", "Token requires a host value", token.span());
+    }
+
+    private void validateDefault(UiModel.Expr value, UiModel.TypeRef expected, String namespace,
+                                 Map<String, UiModel.PackClass> classes, Map<String, UiModel.Token> tokens) {
+        if (value instanceof UiModel.PathExpr path) {
+            String name = String.join(".", path.parts());
+            var token = tokens.get(name);
+            if (token == null) token = tokens.get(namespace + name);
+            if (token == null) error("UI2026", "Pack-default name must resolve to token", value.span());
+            if (!assignable(token.type(), expected)) throw mismatch("UI2026", "Pack default type mismatch", value.span(), typeText(expected), typeText(token.type()));
+            return;
+        }
+        if (value instanceof UiModel.Literal literal && literal.value() instanceof List<?> elements) {
+            if (!expected.array() && !expected.name().equals("unknown"))
+                throw mismatch("UI2026", "Pack default type mismatch", value.span(), typeText(expected), "array");
+            var elementType = expected.array() ? expected.elementType() : primitive("unknown");
+            for (var element : elements) validateDefault((UiModel.Expr) element, elementType, namespace, classes, tokens);
+            return;
+        }
+        if (value instanceof UiModel.Literal literal && literal.value() instanceof Map<?, ?> fields) {
+            boolean unknown = !expected.array() && expected.name().equals("unknown");
+            boolean record = !expected.array() && (expected.name().equals("Record<string, string>") || expected.name().equals("Record<string, unknown>"));
+            var clazz = classes.get(expected.name());
+            if (clazz == null && !expected.name().contains(".")) clazz = classes.get(namespace + expected.name());
+            if (expected.array() || !unknown && !record && clazz == null)
+                throw mismatch("UI2026", "Pack default type mismatch", value.span(), typeText(expected), "object");
+            if (clazz != null) for (var field : clazz.fields()) if (!field.optional() && !fields.containsKey(field.name()))
+                error("UI2026", "Pack default is missing required field '" + field.name() + "'", value.span());
+            for (var field : fields.entrySet()) {
+                UiModel.TypeRef target = unknown || record ? primitive(expected.name().equals("Record<string, string>") ? "string" : "unknown") : null;
+                if (clazz != null) {
+                    for (var declaration : clazz.fields()) if (declaration.name().equals(field.getKey())) target = declaration.type();
+                    if (target == null) error("UI2026", "Unknown pack default field '" + field.getKey() + "'", value.span());
+                }
+                validateDefault((UiModel.Expr) field.getValue(), target, namespace, classes, tokens);
+            }
+            return;
+        }
+        UiModel.TypeRef actual;
+        if (value instanceof UiModel.Literal literal) actual = primitive(literal.type());
+        else if (value instanceof UiModel.Unary unary && unary.operator().equals("-")) { validateDefault(unary.operand(), primitive("number"), namespace, classes, tokens); actual = primitive("number"); }
+        else { error("UI2026", "Invalid pack default expression", value.span()); return; }
+        if (!assignable(actual, expected)) throw mismatch("UI2026", "Pack default type mismatch", value.span(), typeText(expected), typeText(actual));
     }
 
     private UiModel.PackClass findPackClass(String name, String component, Map<String, UiModel.PackClass> classes) {

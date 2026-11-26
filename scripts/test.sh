@@ -19,6 +19,7 @@ TEST_SOURCES=(
   "$ROOT"/src/test/java/deal/ui/UiPortableIdleTest.java
   "$ROOT"/src/test/java/deal/ui/UiJsEffectPolicyTest.java
   "$ROOT"/src/test/java/deal/ui/UiJsFailureActionTest.java
+  "$ROOT"/src/test/java/deal/ui/UiPackDefaultsTest.java
   "$ROOT"/src/test/java/deal/ui/UiRootTypeTest.java
   "$ROOT"/src/test/java/deal/ui/UiNullishTypesTest.java
   "$ROOT"/src/test/java/deal/ui/UiAssignabilityTest.java
@@ -45,6 +46,7 @@ javac --release 25 -Xlint:all -Werror -cp "$ROOT/build/classes:$FS_ROOT/build" -
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPortableIdleTest)
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiJsEffectPolicyTest)
 (cd "$ROOT" && java -ea -Ddeal.home="$FS_ROOT" -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiJsFailureActionTest)
+java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiPackDefaultsTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiRootTypeTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiNullishTypesTest
 java -ea -cp "$TEST_CLASSES:$ROOT/build/classes:$FS_ROOT/build" deal.ui.UiAssignabilityTest
