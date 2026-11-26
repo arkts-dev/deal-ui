@@ -135,9 +135,12 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             state = transition.state();
             tree = transition.tree();
             store = transition.store();
-            retirePending();
         }
-        applyEffectCommand(transition);
+        // Keep the action pending until its effect is registered (or suppressed).
+        // Otherwise awaitIdle can observe a false zero between these phases.
+        try { applyEffectCommand(transition); }
+        catch (RuntimeException failure) { synchronized (this) { asynchronousFailure = failure; } }
+        finally { synchronized (this) { retirePending(); } }
     }
 
     private void applyEffectCommand(UiPortableBridge.Transition transition) {
@@ -156,7 +159,11 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             }
             runningEffects++;
         }
-        invocation.future = effects.schedule(() -> runEffect(invocation, transition), command.delayMillis(), TimeUnit.MILLISECONDS);
+        try { invocation.future = effects.schedule(() -> runEffect(invocation, transition), command.delayMillis(), TimeUnit.MILLISECONDS); }
+        catch (java.util.concurrent.RejectedExecutionException failure) {
+            synchronized (this) { finishEffect(invocation); }
+            throw failure;
+        }
     }
 
     private void runEffect(ScheduledEffect invocation, UiPortableBridge.Transition transition) {
