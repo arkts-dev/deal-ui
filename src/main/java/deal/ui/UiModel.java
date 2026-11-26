@@ -23,6 +23,13 @@ public final class UiModel {
             undefinedElements = List.copyOf(undefinedElements);
             if (readonlyLayers.size() != dimensions || nullableElements.size() != dimensions || undefinedElements.size() != dimensions)
                 throw new IllegalArgumentException("Array qualifier depth mismatch");
+            if (name.equals("unknown")) {
+                if (dimensions == 0) { optional = false; undefined = false; }
+                else {
+                    var nulls = new java.util.ArrayList<>(nullableElements); nulls.set(0, false); nullableElements = List.copyOf(nulls);
+                    var missing = new java.util.ArrayList<>(undefinedElements); missing.set(0, false); undefinedElements = List.copyOf(missing);
+                }
+            }
         }
         public TypeRef(String name, boolean optional, int dimensions, List<Boolean> readonlyLayers, List<Boolean> nullableElements) {
             this(name, optional, dimensions, readonlyLayers, nullableElements, false, java.util.Collections.nCopies(dimensions, false));

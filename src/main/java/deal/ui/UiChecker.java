@@ -693,25 +693,10 @@ public final class UiChecker {
             throw mismatch("UI2031", "Property type mismatch", span, typeText(expected), typeText(actual));
     }
     private boolean sameElementType(UiModel.TypeRef actual, UiModel.TypeRef expected) {
-        return sameName(actual.name(), expected.name()) && actual.dimensions() == expected.dimensions()
-                && actual.optional() == expected.optional() && actual.undefined() == expected.undefined()
-                && actual.nullableElements().equals(expected.nullableElements()) && actual.undefinedElements().equals(expected.undefinedElements());
+        return deal.types.Types.equals(UiTypes.core(actual, this::resolvedName), UiTypes.core(expected, this::resolvedName));
     }
     private boolean assignable(UiModel.TypeRef actual, UiModel.TypeRef expected) {
-        if (actual.name().equals("null") || actual.name().equals("undefined")
-                || expected.name().equals("null") || expected.name().equals("undefined"))
-            return deal.types.Types.isAssignable(UiTypes.core(actual, this::resolvedName), UiTypes.core(expected, this::resolvedName));
-        if (!expected.array() && expected.name().equals("unknown")) return !actual.name().equals("void");
-        if (!actual.array() && actual.name().equals("null")) return expected.optional() || !expected.array() && expected.name().equals("null");
-        if (!actual.array() && actual.name().equals("undefined")) return expected.undefined() || !expected.array() && expected.name().equals("undefined");
-        if (actual.optional() && !expected.optional() || actual.undefined() && !expected.undefined()) return false;
-        if (actual.array() && expected.array() && expected.readonlyLayers().get(expected.dimensions() - 1))
-            return assignable(actual.elementType(), expected.elementType());
-        if (!sameName(actual.name(), expected.name()) || actual.dimensions() != expected.dimensions()) return false;
-        if (!actual.array()) return true;
-        int outer = actual.dimensions() - 1;
-        return !actual.readonlyLayers().get(outer) && sameElementType(actual.elementType(), expected.elementType())
-                && actual.elementType().readonlyLayers().equals(expected.elementType().readonlyLayers());
+        return deal.types.Types.isAssignable(UiTypes.core(actual, this::resolvedName), UiTypes.core(expected, this::resolvedName));
     }
     private static String typeText(UiModel.TypeRef type) { return type.sourceType(type.name()); }
     private static UiDiagnostic mismatch(String code, String message, UiModel.Span span, String expected, String actual) {

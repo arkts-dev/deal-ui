@@ -13,7 +13,9 @@ public final class UiCoreParityTest {
         rejects("(null | undefined)[]", "readonly (number | undefined)[]");
         String logic = "export class State {a: null | undefined; b: number | undefined;}";
         expect("UI2020", () -> check(logic, "ui.Data(value: state.a === state.b)", "boolean", ""));
-        System.out.println("UiCoreParityTest: nullish unions never masquerade as singletons");
+        check("export class State {a: (unknown | null)[];}", "H(v: state.a)", "number", "view H(v: unknown[]): View {ui.Data(value: 0)}");
+        check("export class State {a?: unknown; b: unknown;}", "ui.Data(value: state.a === state.b)", "boolean", "");
+        System.out.println("UiCoreParityTest: core nullish and unknown compatibility");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",
