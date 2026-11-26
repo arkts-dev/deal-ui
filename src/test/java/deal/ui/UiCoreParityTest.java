@@ -25,7 +25,9 @@ public final class UiCoreParityTest {
         check("export class State {table: Record<string, unknown>;}", "ui.Data(value: state.table.entry)", "unknown", "");
         check("export class State {error: Error;}", "ui.Data(value: state.error.message)", "string", "");
         check("export class State {table: Record<string, string>;}", "ui.Data(value: has(state.table.entry))", "boolean", "");
-        System.out.println("UiCoreParityTest: core compatibility and intrinsic member reads");
+        expect("UI2004", () -> check("class State {}", "ui.Data(value: 0)", "number", ""));
+        expect("UI2004", () -> check("class Hidden {} export class State {a: Hidden;}", "H(v: state.a)", "number", "view H(v: app.Hidden): View {ui.Data(value: 0)}"));
+        System.out.println("UiCoreParityTest: core compatibility, members and export visibility");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",

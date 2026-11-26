@@ -153,6 +153,13 @@ public final class UiChecker {
         String stateType = localType(rootType.name(), aliases, dealFile, deal);
         UiModel.DealClass state = deal.classes().get(stateType);
         if (state == null) error("UI2004", "Unknown root state class '" + stateType + "'", root.span());
+        if (!state.exported()) error("UI2004", "Root state class must be exported", root.span());
+        for (var view : views.values()) for (var parameter : view.parameters()) UiTypes.rename(parameter.type().name(), name -> {
+            if (name.contains(".") && deal.classes().containsKey(localType(name, aliases, dealFile, deal))
+                    && !deal.classes().get(localType(name, aliases, dealFile, deal)).exported())
+                error("UI2004", "View annotation names a non-exported class '" + name + "'", view.span());
+            return name;
+        });
 
         Map<String, UiModel.Component> components = new LinkedHashMap<>();
         Map<String, UiModel.PackClass> packClasses = new LinkedHashMap<>();
@@ -436,7 +443,7 @@ public final class UiChecker {
         if (expression instanceof UiModel.Action action) {
             String name = typeNames.getOrDefault(action.name(), action.name());
             UiModel.DealClass declaration = deal.classes().get(name);
-            if (declaration == null) error("UI2018", "Unknown nominal action '" + name + "'", action.span());
+            if (declaration == null || !declaration.exported()) error("UI2018", "Unknown or non-exported nominal action '" + name + "'", action.span());
             for (var field : declaration.fields().values()) if (!field.optional() && !action.fields().containsKey(field.name()))
                 error("UI2030", "Missing required action field '" + field.name() + "'", action.span());
             for (String field : action.fields().keySet()) if (!declaration.fields().containsKey(field))
