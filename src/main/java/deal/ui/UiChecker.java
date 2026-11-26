@@ -412,7 +412,7 @@ public final class UiChecker {
             String fieldName = parts.getLast();
             UiModel.Field field = clazz != null ? clazz.fields().get(fieldName) : packClass == null ? null
                     : packClass.fields().stream().filter(value -> value.name().equals(fieldName)).findFirst().orElse(null);
-            if (field == null || !field.optional()) error("UI2017", "has requires an optional final field", has.span());
+            if (!owner.name().startsWith("Record<") && (field == null || !field.optional())) error("UI2017", "has requires an optional final field", has.span());
             return primitive("boolean");
         }
         if (expression instanceof UiModel.Action action) {
@@ -486,6 +486,8 @@ public final class UiChecker {
                 throw new UiDiagnostic("UI2023", "Arrays expose only length in view paths; use ForEach for elements",
                         path.span().file(), path.span().line(), path.span().column(), "array length or ForEach collection path", joined);
             }
+            UiModel.TypeRef intrinsic = UiTypes.member(current, fieldName);
+            if (intrinsic != null) { current = intrinsic; continue; }
             UiModel.DealClass clazz = externalClasses.get(current.name());
             if (clazz == null) clazz = deal.classes().get(typeNames.getOrDefault(current.name(), current.name()));
             UiModel.PackClass packClass = clazz == null ? uniquePackClass(current.name(), packClasses, path.span()) : null;

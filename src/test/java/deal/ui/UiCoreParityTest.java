@@ -21,7 +21,11 @@ public final class UiCoreParityTest {
         if (!functions.classes().get("State").fields().get("a").type().equals(functions.classes().get("State").fields().get("b").type()))
             throw new AssertionError("Source locations leaked into function types");
         check("export class State {a: (x: number) => number;}", "H(v: state.a)", "boolean", "view H(v: (other: number) => number): View {ui.Data(value: v === v)}");
-        System.out.println("UiCoreParityTest: core nullish, unknown and function compatibility");
+        check("export class State {text: string;}", "ui.Data(value: state.text.length)", "number", "");
+        check("export class State {table: Record<string, unknown>;}", "ui.Data(value: state.table.entry)", "unknown", "");
+        check("export class State {error: Error;}", "ui.Data(value: state.error.message)", "string", "");
+        check("export class State {table: Record<string, string>;}", "ui.Data(value: has(state.table.entry))", "boolean", "");
+        System.out.println("UiCoreParityTest: core compatibility and intrinsic member reads");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",

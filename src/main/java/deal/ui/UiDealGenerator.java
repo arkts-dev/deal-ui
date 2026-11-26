@@ -539,7 +539,8 @@ final class UiDealGenerator {
     private UiModel.TypeRef pathType(UiModel.TypeRef root, List<String> fields) {
         UiModel.TypeRef current = root;
         for (String field : fields) {
-            if (current.array() && field.equals("length")) { current = new UiModel.TypeRef("number", false, false); continue; }
+            UiModel.TypeRef intrinsic = UiTypes.member(current, field);
+            if (intrinsic != null) { current = intrinsic; continue; }
             var pack = program.packClasses().get(current.name());
             UiModel.Field declaration = pack == null ? program.deal().classes().get(simple(current.name())).fields().get(field)
                     : pack.fields().stream().filter(value -> value.name().equals(field)).findFirst().orElseThrow();

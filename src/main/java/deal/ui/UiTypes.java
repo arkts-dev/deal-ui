@@ -109,6 +109,15 @@ final class UiTypes {
         String result = text(f.returnType(), names);
         return "(" + String.join(", ", parameters) + ") => " + (f.isAsync() ? "Promise<" + result + ">" : result);
     }
+    static UiModel.TypeRef member(UiModel.TypeRef receiver, String field) {
+        if (receiver.array() && field.equals("length") || receiver.name().equals("string") && field.equals("length"))
+            return new UiModel.TypeRef("number", false, false);
+        if (receiver.name().equals("Record<string, unknown>")) return new UiModel.TypeRef("unknown", false, false);
+        if (receiver.name().equals("Record<string, string>")) return new UiModel.TypeRef("string", false, false).withUndefined(true);
+        if (receiver.name().equals("Error") && (field.equals("name") || field.equals("message")))
+            return new UiModel.TypeRef("string", false, false);
+        return null;
+    }
     static boolean singleton(Type singleton, Type target) {
         if (singleton instanceof Type.Null) return target instanceof Type.Unknown || target instanceof Type.Null
                 || target instanceof Type.Nullable n && (n.admitsNull() || n.inner() instanceof Type.Null);
