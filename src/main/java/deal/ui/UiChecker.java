@@ -286,8 +286,17 @@ public final class UiChecker {
                     exactArguments(call.arguments(), view.parameters().stream().map(UiModel.Parameter::name).toList(), call.span());
                     if (!viewStack.add(view.name())) error("UI2011", "Recursive view call '" + view.name() + "'", call.span());
                     if (view.parameters().stream().anyMatch(parameter -> parameter.type().name().equals("Action"))) {
-                        for (var parameter : view.parameters()) if (!parameter.type().name().equals("Action"))
-                            checkAssignable(type(call.arguments().get(parameter.name()), scope, deal, packClasses, tokens, aliases, actions, null), parameter.type(), call.span());
+                        Map<String, UiModel.TypeRef> declaredScope = new LinkedHashMap<>();
+                        for (var parameter : view.parameters()) {
+                            if (parameter.type().name().equals("Action") && (parameter.type().array() || parameter.type().nullish()))
+                                error("UI2031", "Forwarded Action parameters must be scalar and nonnullable", view.span());
+                            declaredScope.put(parameter.name(), parameter.type());
+                            if (!parameter.type().name().equals("Action"))
+                                checkAssignable(type(call.arguments().get(parameter.name()), scope, deal, packClasses, tokens, aliases, actions, null), parameter.type(), call.span());
+                        }
+                        // Validate the body against its declaration before specializing event payloads.
+                        lower(view.nodes(), nodeIdentity + "/" + view.name(), declaredScope, views, components,
+                                packClasses, tokens, deal, aliases, new LinkedHashSet<>(), new LinkedHashSet<>(viewStack));
                         result.addAll(lower(UiViewBindings.bind(view.nodes(), call.arguments()), nodeIdentity + "/" + view.name(), scope, views, components,
                                 packClasses, tokens, deal, aliases, actions, viewStack));
                         viewStack.remove(view.name());

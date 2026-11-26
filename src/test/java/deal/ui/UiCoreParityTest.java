@@ -27,6 +27,7 @@ public final class UiCoreParityTest {
         check("export class State {table: Record<string, string>;}", "ui.Data(value: has(state.table.entry))", "boolean", "");
         expect("UI2004", () -> check("class State {}", "ui.Data(value: 0)", "number", ""));
         expect("UI2004", () -> check("class Hidden {} export class State {a: Hidden;}", "H(v: state.a)", "number", "view H(v: app.Hidden): View {ui.Data(value: 0)}"));
+        expect("UI2031", () -> check("export class State {} export class Go {}", "H(v: 1, a: action app.Go {})", "number", "view H(v: unknown, a: Action): View {ui.Data(value: v)}"));
         System.out.println("UiCoreParityTest: core compatibility, members and export visibility");
     }
     private static void rejects(String from, String to) {
