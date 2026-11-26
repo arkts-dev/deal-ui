@@ -21,6 +21,19 @@ import java.util.function.UnaryOperator;
 final class UiTypes {
     private UiTypes() {}
     private static final Map<String, Type> NOMINALS = new java.util.concurrent.ConcurrentHashMap<>();
+    static void validateData(UiModel.TypeRef type, java.util.function.Predicate<String> declared) {
+        TypeNode node = parse(type.sourceType(type.name()));
+        String projected = text(node, name -> {
+            if (List.of("number", "string", "boolean", "null", "undefined", "unknown", "Error", "void", "never", "Record<string, unknown>", "Record<string, string>").contains(name)) return name;
+            if (!declared.test(name)) throw new IllegalArgumentException("Unknown data type '" + name + "'");
+            return "Value";
+        });
+        var parsed = new Parser(new Lexer("class Value { field: " + projected + "; }", "ui-type").tokenize().tokens(), "ui-type").parse();
+        var resolver = new NameResolver("ui-validation", null);
+        resolver.resolve(parsed.program());
+        resolver.resolveTypeNode(((ClassDeclaration)parsed.program().statements().getFirst()).fields().getFirst().type());
+        resolver.diagnostics().stream().filter(d -> d.severity().equals("error")).findFirst().ifPresent(d -> { throw new IllegalArgumentException(d.message()); });
+    }
     static Type core(UiModel.TypeRef ref, UnaryOperator<String> names) {
         Type value = ref.name().contains("=>") ? resolve(parse(ref.name()), names) : leaf(names.apply(ref.name()));
         for (int i = 0; i < ref.dimensions(); i++) {

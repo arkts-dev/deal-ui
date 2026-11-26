@@ -174,6 +174,7 @@ public final class UiChecker {
             pack.tokens().forEach((name, value) -> tokens.put(imported.alias() + "." + name,
                     new UiModel.Token(value.name(), qualifyPackType(value.type(), imported.alias(), pack), value.value(), value.span())));
         }
+        validatePackTypes(packClasses, tokens, deal);
         validatePack(components, packClasses, tokens);
 
         Map<String, UiModel.Handler> updates = handlers(deal.handlers(), "ui-update");
@@ -550,6 +551,18 @@ public final class UiChecker {
             .toList();
         if (matches.size() > 1) error("UI2023", "Ambiguous pack class '" + typeName + "'", span);
         return matches.isEmpty() ? null : matches.get(0);
+    }
+
+    private void validatePackTypes(Map<String, UiModel.PackClass> classes, Map<String, UiModel.Token> tokens, UiModel.DealModule deal) {
+        for (var entry : classes.entrySet()) for (var field : entry.getValue().fields())
+            validateDataType(field.type(), field.span(), classes, deal);
+        for (var token : tokens.values()) validateDataType(token.type(), token.span(), classes, deal);
+    }
+    private void validateDataType(UiModel.TypeRef type, UiModel.Span span, Map<String, UiModel.PackClass> classes, UiModel.DealModule deal) {
+        String name = type.name();
+        if (name.equals("Action")) return;
+        try { UiTypes.validateData(type, n -> classes.containsKey(n) || deal.classes().containsKey(resolvedName(n)) || externalClasses.containsKey(n)); }
+        catch (IllegalArgumentException failure) { error("UI2025", failure.getMessage(), span); }
     }
 
     private void validatePack(Map<String, UiModel.Component> components, Map<String, UiModel.PackClass> classes,

@@ -50,6 +50,7 @@ public final class UiParser {
                 do {
                     String parameter = id();
                     require(":");
+                    if (parameters.stream().anyMatch(existing -> existing.name().equals(parameter))) fail("UI1010", "Duplicate parameter '" + parameter + "'", peek());
                     parameters.add(new UiModel.Parameter(parameter, type()));
                 } while (match(",") && !at(")"));
             }
@@ -78,6 +79,7 @@ public final class UiParser {
             T start = peek();
             if (match("class")) {
                 String name = id();
+                if (name.equals("Error")) fail("UI1010", "Cannot redeclare builtin Error", start);
                 require("{");
                 List<UiModel.Field> fields = new ArrayList<>();
                 while (!match("}")) {
@@ -88,6 +90,7 @@ public final class UiParser {
                     UiModel.TypeRef type = type();
                     UiModel.Expr value = match("=") ? packDefault() : null;
                     match(";");
+                    if (fields.stream().anyMatch(existing -> existing.name().equals(fieldName))) fail("UI1010", "Duplicate field '" + fieldName + "'", field);
                     fields.add(new UiModel.Field(fieldName, type, value, span(field), optional));
                 }
                 duplicate(classes, name, new UiModel.PackClass(name, fields, span(start)));
