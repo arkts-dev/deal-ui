@@ -1,0 +1,23 @@
+"use strict";
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const file=process.argv[2],entry=require(file),rt=require(file.replace('entry.js','deal/runtime.js')),schema=require(file.replace('entry.js','checkpoint-schema.js'));
+vm.runInThisContext(fs.readFileSync('runtime-js/checkpoint.js','utf8'));
+vm.runInThisContext(fs.readFileSync('runtime-js/session.js','utf8'));
+const tick=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+(async()=>{
+ const calls=[];const session=createDealUiSession(entry,rt,null,(invoke,complete,fail,exit)=>{calls.push({invoke,complete,fail,exit});},schema);
+ session.dispatch(0);assert.equal(calls.length,0);assert.equal(JSON.parse(session.state()).n,1);
+ session.dispatch(1);assert.equal(calls.length,0);assert.equal(session.checkpoint(),null);
+ session.dispatch(2);await tick(80);assert.equal(calls.length,0);assert.doesNotThrow(()=>session.state());
+ session.dispatch(1);session.dispatch(1);await tick(80);assert.equal(calls.length,1,'replace cancels delayed predecessor');
+ session.dispatch(3);assert.equal(calls.length,2);calls[0].complete(await calls[0].invoke());
+ assert.equal(JSON.parse(session.snapshot()).version,7,'suppressed running completion does not commit');
+ calls[0].exit();assert.equal(session.checkpoint(),null,'replacement remains physically outstanding');
+ calls[1].complete(await calls[1].invoke());assert.equal(session.checkpoint(),null);calls[1].exit();
+ assert.equal(JSON.parse(session.state()).n,10);
+ session.dispatch(1);session.dispose();await tick(80);assert.equal(calls.length,2,'dispose cancels delayed effect');
+ assert.doesNotThrow(()=>session.state());
+ const interrupt=[];const s=createDealUiSession(entry,rt,null,(invoke,complete,fail,exit)=>{const call={exit,cancelled:false};interrupt.push(call);return ()=>{call.cancelled=true;};},schema);
+ s.dispatch(3);s.dispatch(2);assert.equal(interrupt[0].cancelled,true);assert.equal(s.checkpoint(),null);interrupt[0].exit();assert.doesNotThrow(()=>s.state());s.dispose();
+ console.log('UiJsEffectPolicyTest: none, delay, replacement, cancellation, physical exit and disposal');
+})().catch(error=>{console.error(error);process.exitCode=1;});
