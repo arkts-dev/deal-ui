@@ -15,7 +15,9 @@ public final class UiCoreParityTest {
         expect("UI2020", () -> check(logic, "ui.Data(value: state.a === state.b)", "boolean", ""));
         check("export class State {a: (unknown | null)[];}", "H(v: state.a)", "number", "view H(v: unknown[]): View {ui.Data(value: 0)}");
         check("export class State {a?: unknown; b: unknown;}", "ui.Data(value: state.a === state.b)", "boolean", "");
-        System.out.println("UiCoreParityTest: core nullish and unknown compatibility");
+        for (String bad : new String[]{"number | null | null", "null | number | null", "unknown | undefined | undefined", "null | null"})
+            expect("UI1007", () -> UiParser.parseViews(ROOT.resolve("bad.dealui"), "view H(v: " + bad + "): View {}"));
+        System.out.println("UiCoreParityTest: core nullish and unknown compatibility; duplicate members reject");
     }
     private static void rejects(String from, String to) {
         expect("UI2031", () -> check("export class State {a: " + from + ";}", "H(v: state.a)", "number",

@@ -375,7 +375,24 @@ public final class UiParser {
         return new UiModel.PathExpr(parts, span(start));
     }
 
-    private UiModel.TypeRef type() { return type(false); }
+    private UiModel.TypeRef type() { int start = position; UiModel.TypeRef result = type(false); validateNullish(start, position); return result; }
+    private void validateNullish(int start, int end) {
+        // Validate the source annotation before projection can erase duplicate members.
+        String text = tokens.subList(start, end).stream().map(T::text).collect(java.util.stream.Collectors.joining(" "));
+        var parsed = new deal.parser.Parser(new deal.lexer.Lexer("class Value { field: " + text + "; }", file.toString()).tokenize().tokens(), file.toString()).parse();
+        if (!parsed.diagnostics().isEmpty()) return;
+        var type = ((deal.ast.ClassDeclaration) parsed.program().statements().getFirst()).fields().getFirst().type();
+        validateNullish(type, tokens.get(start));
+    }
+    private void validateNullish(deal.ast.TypeNode type, T start) {
+        if (type instanceof deal.ast.NullableType nullable) {
+            for (deal.ast.TypeNode node = nullable.innerType(); node instanceof deal.ast.NullableType inner; node = inner.innerType())
+                if (nullable.undefinedMember() == inner.undefinedMember()) fail("UI1007", "Duplicate nullish member", start);
+            if (nullable.innerType() instanceof deal.ast.NamedType named && named.name().equals(nullable.undefinedMember() ? "undefined" : "null"))
+                fail("UI1007", "Duplicate nullish member", start);
+            validateNullish(nullable.innerType(), start);
+        } else if (type instanceof deal.ast.ArrayType array) validateNullish(array.elementType(), start);
+    }
     private UiModel.TypeRef type(boolean optional) {
         boolean readonly = match("readonly");
         UiModel.TypeRef base;
