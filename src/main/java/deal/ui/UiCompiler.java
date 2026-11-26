@@ -86,7 +86,7 @@ public final class UiCompiler {
         Files.createDirectories(project);
         Path stagedApplication = stageDependencies(deal, project, generatedDeal.appAugmentation());
         Path entry = project.resolve("ui_application.deal");
-        Files.writeString(entry, rewriteApplicationImport(generatedDeal.source(), deal, relativeSpecifier(entry, stagedApplication)));
+        Files.writeString(entry, rewriteApplicationImport(generatedDeal.source(), deal, entry, relativeSpecifier(entry, stagedApplication)));
 
         Path generated = destination.resolve("generated");
         Files.createDirectories(generated);
@@ -135,6 +135,8 @@ public final class UiCompiler {
         return "public final class " + uiClass + " {\n  private " + uiClass + "() {}\n  public static void main(String[] args) { deal.ui.UiLauncher.launch(new " + bridgeClass + "()); }\n}\n";
     }
 
+    private Map<Path, Path> stagedDependencies = Map.of();
+
     private Path stageDependencies(Path application, Path project, String augmentation) throws IOException {
         Path canonicalApplication = application.toRealPath();
         List<ApprovedRoot> roots = List.of(
@@ -145,6 +147,7 @@ public final class UiCompiler {
         Map<Path, Path> staged = new LinkedHashMap<>();
         staged.put(canonicalApplication, stageTarget(canonicalApplication, project, roots));
         stageDependency(canonicalApplication, project, roots, staged, augmentation);
+        stagedDependencies = Map.copyOf(staged);
         return staged.get(canonicalApplication);
     }
 
@@ -263,10 +266,12 @@ public final class UiCompiler {
         return stripSuffix(relative, ".deal");
     }
 
-    private String rewriteApplicationImport(String source, Path application, String specifier) throws IOException {
+    private String rewriteApplicationImport(String source, Path application, Path generatedEntry, String specifier) throws IOException {
         LexResult lexed = new Lexer(source, application.toString()).tokenize();
         requireValid(application, lexed.diagnostics());
         List<Token> tokens = lexed.tokens();
+        List<Replacement> imports = new ArrayList<>();
+        boolean applicationImport = false;
         for (int index = 0; index < tokens.size(); index++) {
             if (tokens.get(index).type() != TokenType.IMPORT) continue;
             for (int cursor = index + 1; cursor < tokens.size(); cursor++) {
@@ -274,12 +279,24 @@ public final class UiCompiler {
                 if (token.type() == TokenType.STRING_LITERAL && cursor > index && tokens.get(cursor - 1).type() == TokenType.FROM) {
                     int start = token.startScalarOffset();
                     int end = token.endScalarOffset();
-                    return rewrite(source, List.of(new Replacement(start, end, quote(specifier))));
+                    if (!applicationImport) {
+                        imports.add(new Replacement(start, end, quote(specifier))); applicationImport = true;
+                    } else {
+                        String imported = token.lexeme().substring(1, token.lexeme().length() - 1);
+                        if (isRelative(imported)) {
+                            Path dependency = application.getParent().resolve(imported).normalize();
+                            if (!Files.isRegularFile(dependency)) dependency = Path.of(dependency + ".deal");
+                            Path staged = Files.isRegularFile(dependency) ? stagedDependencies.get(dependency.toRealPath()) : null;
+                            if (staged != null) imports.add(new Replacement(start, end, quote(relativeSpecifier(generatedEntry, staged))));
+                        }
+                    }
+                    break;
                 }
                 if (token.type() == TokenType.SEMICOLON) break;
             }
         }
-        throw new IOException("Generated UI application has no application import");
+        if (!applicationImport) throw new IOException("Generated UI application has no application import");
+        return rewrite(source, imports);
     }
 
     private String rewrite(String source, List<Replacement> replacements) {

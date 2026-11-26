@@ -129,8 +129,10 @@ public final class UiModel {
     public record DealFunction(String name, List<TypeRef> parameters, TypeRef returnType, boolean exported, boolean async, Span span) {
         public DealFunction { parameters = List.copyOf(parameters); }
     }
-    public record DealModule(Map<String, DealClass> classes, Map<String, DealFunction> functions, List<Handler> handlers, Path source) {
-        public DealModule { classes = immutable(classes); functions = immutable(functions); handlers = List.copyOf(handlers); }
+    public record DealModule(Map<String, DealClass> classes, Map<String, DealFunction> functions, List<Handler> handlers, Path source,
+                             Map<String, String> imports, Map<String, DealClass> importedClasses) {
+        public DealModule { classes = immutable(classes); functions = immutable(functions); handlers = List.copyOf(handlers); imports = immutable(imports); importedClasses = immutable(importedClasses); }
+        public DealModule(Map<String, DealClass> classes, Map<String, DealFunction> functions, List<Handler> handlers, Path source) { this(classes, functions, handlers, source, Map.of(), Map.of()); }
     }
 
     public record ActionBinding(String typeName, Map<String, Expr> fields, Span span) { public ActionBinding { fields = immutable(fields); } }

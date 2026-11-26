@@ -38,7 +38,7 @@ public final class UiChecker {
     private final Map<String, String> typeNames = new LinkedHashMap<>();
     private final Map<String, UiModel.DealClass> externalClasses = new LinkedHashMap<>();
     void externalDeclarations(Map<String, UiModel.PackModule> packs, Map<String, String> declarations) {
-        for (var pack : packs.values()) for (var imported : pack.imports()) {
+        for (var pack : UiNominals.packs(packs).values()) for (var imported : pack.imports()) {
             String source = declarations.get(imported.specifier());
             if (source == null) continue;
             var module = parseDeal(Path.of("external.d.deal"), source);
@@ -50,6 +50,14 @@ public final class UiChecker {
                 externalClasses.put(imported.alias() + "." + clazz.name(), new UiModel.DealClass(clazz.name(), fields, clazz.exported()));
             }
         }
+    }
+
+    private void registerModule(String alias, UiModel.DealModule module) {
+        module.classes().forEach((name, clazz) -> {
+            var fields = new LinkedHashMap<String, UiModel.Field>();
+            clazz.fields().forEach((key, f) -> fields.put(key, new UiModel.Field(key, UiNominals.rename(f.type(), n -> module.classes().containsKey(n) ? alias + "." + n : n), f.defaultValue(), f.span(), f.optional())));
+            externalClasses.put(alias + "." + name, new UiModel.DealClass(name, fields, clazz.exported()));
+        });
     }
 
     public List<UiDiagnostic> diagnose(Path viewFile, UiModel.ViewModule module, Path dealFile,
@@ -72,7 +80,16 @@ public final class UiChecker {
             diagnostics.addAll(ModuleShapeValidator.validate(parsed.program(), file.toString(), false));
         if (diagnostics.stream().anyMatch(d -> d.severity().equals("error")))
             throw UiDiagnostic.compilerBatch(diagnostics, file, source);
-        return dealModule(parsed.program(), file, source);
+        var module = dealModule(parsed.program(), file, source);
+        for (StatementNode statement : parsed.program().statements()) if (statement instanceof deal.ast.ImportDeclaration imported && imported.modulePath().startsWith(".")) {
+            Path dependency = file.toAbsolutePath().getParent().resolve(imported.modulePath()).normalize();
+            if (!java.nio.file.Files.isRegularFile(dependency)) dependency = Path.of(dependency + ".deal");
+            if (java.nio.file.Files.isRegularFile(dependency) && !consumedSources.containsKey(dependency.toString())) {
+                try { registerModule(UiNominals.alias(imported.modulePath(), file), parseDeal(dependency, java.nio.file.Files.readString(dependency))); }
+                catch (java.io.IOException failure) { throw new IllegalArgumentException("Cannot read imported DEAL declaration", failure); }
+            }
+        }
+        return new UiModel.DealModule(module.classes(), module.functions(), module.handlers(), module.source(), module.imports(), externalClasses);
     }
 
     public UiModel.CheckedProgram check(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
@@ -94,6 +111,7 @@ public final class UiChecker {
 
     private UiModel.CheckedProgram checkProgram(Path viewFile, UiModel.ViewModule viewModule, Path dealFile,
             UiModel.DealModule deal, Map<String, UiModel.PackModule> packs, boolean allowUnreachableUpdates) {
+        packs = UiNominals.packs(packs);
         Map<String, String> aliases = aliases(viewModule.imports());
         typeNames.clear();
         var packAliases = new LinkedHashMap<String, String>();
@@ -784,7 +802,22 @@ public final class UiChecker {
         }
         new UiBorrowedValueChecker(file, classDeclarations, functionDeclarations)
             .check(handlers.stream().map(UiModel.Handler::name).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
-        return new UiModel.DealModule(classes, functionInfo, handlers, file);
+        var imports = new LinkedHashMap<String, String>();
+        for (StatementNode statement : program.statements()) if (statement instanceof deal.ast.ImportDeclaration i) imports.put(i.alias(), i.modulePath());
+        java.util.function.UnaryOperator<String> rename = name -> {
+            int dot = name.indexOf('.');
+            return dot < 0 || !imports.containsKey(name.substring(0, dot)) ? name
+                    : UiNominals.alias(imports.get(name.substring(0, dot)), file) + name.substring(dot);
+        };
+        var normalized = new LinkedHashMap<String, UiModel.DealClass>();
+        classes.forEach((name, clazz) -> {
+            var fields = new LinkedHashMap<String, UiModel.Field>();
+            clazz.fields().forEach((key, field) -> fields.put(key, new UiModel.Field(key, UiNominals.rename(field.type(), rename), null, field.span(), field.optional())));
+            normalized.put(name, new UiModel.DealClass(name, fields, clazz.exported()));
+        });
+        var importedModules = new LinkedHashMap<String, String>();
+        imports.values().forEach(specifier -> importedModules.put(UiNominals.alias(specifier, file), specifier));
+        return new UiModel.DealModule(normalized, functionInfo, handlers, file, importedModules, Map.of());
     }
 
     private boolean policyMayStart(Block block) {

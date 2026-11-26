@@ -28,6 +28,11 @@ final class UiDealGenerator {
     UiDealGenerator(UiModel.CheckedProgram program, java.nio.file.Path frameworkRoot) {
         this.program = program;
         this.frameworkRoot = frameworkRoot;
+        program.deal().imports().forEach((alias, specifier) -> {
+            boolean used = program.deal().classes().values().stream().flatMap(c -> c.fields().values().stream()).anyMatch(f -> f.type().name().contains(alias + "."));
+            if (used) nominalImports.put(alias, specifier);
+        });
+        nominalClasses.putAll(program.deal().importedClasses());
         schemaDigest = digest(stateSchema(program));
         for (UiModel.View view : program.views().values()) if (!actionView(view)) { expandForwarding(view.nodes()); indexIterations(view.nodes()); }
         int id = 0;
@@ -40,14 +45,22 @@ final class UiDealGenerator {
                     Map<String, UiModel.PackModule> packs, Map<String, String> declarations) {
         this(program, frameworkRoot);
         schemaDigest = digest(stateSchema(program) + new java.util.TreeMap<>(declarations) + new java.util.TreeMap<>(program.metadata().packDigests()));
-        for (var pack : packs.values()) for (var imported : pack.imports()) {
+        for (var pack : UiNominals.packs(packs).values()) for (var imported : pack.imports()) {
             String declaration = declarations.get(imported.specifier());
-            if (declaration == null && (imported.specifier().equals("./" + moduleName(program.dealSource())) || imported.specifier().equals("./" + moduleName(program.dealSource()) + ".deal"))) continue;
+            if (declaration == null && (imported.specifier().equals("./" + moduleName(program.dealSource())) || imported.specifier().equals("./" + moduleName(program.dealSource()) + ".deal"))) {
+                nominalImports.put(imported.alias(), imported.specifier());
+                program.deal().classes().forEach((name, clazz) -> nominalClasses.put(imported.alias() + "." + name, clazz));
+                continue;
+            }
             if (declaration == null) throw new UiDiagnostic("UI2053", "Missing nominal declaration: " + imported.specifier(), program.viewSource(), 1, 1);
             String previous = nominalImports.putIfAbsent(imported.alias(), imported.specifier());
             if (previous != null && !previous.equals(imported.specifier())) throw new IllegalArgumentException("Conflicting nominal alias");
             var parsed = new UiChecker().parseDeal(java.nio.file.Path.of("external.d.deal"), declaration);
-            for (var clazz : parsed.classes().values()) nominalClasses.put(imported.alias() + "." + clazz.name(), clazz);
+            for (var clazz : parsed.classes().values()) {
+                var fields = new LinkedHashMap<String, UiModel.Field>();
+                clazz.fields().forEach((name, field) -> fields.put(name, new UiModel.Field(name, UiNominals.rename(field.type(), n -> parsed.classes().containsKey(n) ? imported.alias() + "." + n : n), field.defaultValue(), field.span(), field.optional())));
+                nominalClasses.put(imported.alias() + "." + clazz.name(), new UiModel.DealClass(clazz.name(), fields, clazz.exported()));
+            }
         }
     }
 
@@ -364,7 +377,6 @@ final class UiDealGenerator {
                 for (var field : clazz.fields().values()) {
                     if (field.optional()) continue;
                     String value = checkSample(field.type(), active);
-                    if (nominalImports.getOrDefault(type.name().contains(".") ? type.name().substring(0,type.name().indexOf('.')) : "", "").equals("embedding/graphics") && simple(type.name()).equals("Pointer")) value = switch (field.name()) { case "phase" -> "\"down\""; case "x", "y" -> "12"; case "id" -> "0"; default -> value; };
                     fields.add(field.name() + ": " + value);
                 }
                 active.remove(type.name());
@@ -541,6 +553,8 @@ final class UiDealGenerator {
         for (String field : fields) {
             UiModel.TypeRef intrinsic = UiTypes.member(current, field);
             if (intrinsic != null) { current = intrinsic; continue; }
+            var external = nominalClasses.get(current.name());
+            if (external != null) { var fieldDecl = external.fields().get(field); current = fieldDecl.optional() ? fieldDecl.type().withUndefined(true) : fieldDecl.type(); continue; }
             var pack = program.packClasses().get(current.name());
             UiModel.Field declaration = pack == null ? program.deal().classes().get(simple(current.name())).fields().get(field)
                     : pack.fields().stream().filter(value -> value.name().equals(field)).findFirst().orElseThrow();
