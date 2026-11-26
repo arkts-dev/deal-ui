@@ -63,6 +63,9 @@ public interface UiPortableBridge {
     StoreValue dispose(StoreValue store);
     Completion complete(StoreValue store, ActionValue action);
     Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action);
+    /** Publish or discard compiler-owned candidate captures with renderer acceptance. */
+    default void acceptTransition() {}
+    default void rejectTransition() {}
     ActionValue action(int slot, Object payload);
     ActionValue runEffect(int effectId, StateValue state, ActionValue action);
     default ActionValue effectFailure(int effectId, StateValue state, ActionValue action, RuntimeException failure) { return null; }

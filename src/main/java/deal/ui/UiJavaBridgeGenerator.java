@@ -66,6 +66,10 @@ final class UiJavaBridgeGenerator {
         out.append("  public ").append(bridge).append("() { ").append(ui).append(".dealMain(); }\n")
             .append("  private Object call(String name, Object... args) { return ((deal.codegen.jvm.JvmRuntime.FunctionValue) ").append(ui).append(".exportSurface(\"ui_application\").read(name)).fn.invoke(args); }\n")
             .append("  private record Binding(int slot, Object values) {}\n")
+            .append("  private java.util.Map<Integer, Binding> retainedBindings; private java.util.IdentityHashMap<Object, Integer> retainedHandles; private Object retainedTree;\n")
+            .append("  @Override public void acceptTransition() { retainedBindings = null; retainedHandles = null; retainedTree = null; }\n")
+            .append("  @Override public void rejectTransition() { if (retainedBindings == null) return; bindings.clear(); bindings.putAll(retainedBindings); handles.clear(); handles.putAll(retainedHandles); previousTree = retainedTree; acceptTransition(); }\n")
+            .append("  private void retainTransition() { retainedBindings = new java.util.HashMap<>(bindings); retainedHandles = new java.util.IdentityHashMap<>(handles); retainedTree = previousTree; }\n")
             .append("  private int nextBinding = 1000000; private final java.util.Map<Integer, Binding> bindings = new java.util.HashMap<>(); private final java.util.IdentityHashMap<Object, Integer> handles = new java.util.IdentityHashMap<>(); private Object previousTree;\n")
             .append("  private static Object field(Object value, String name) { return ((deal.codegen.jvm.JvmRuntime.ClassInstance) value).read(name); }\n")
             .append("  private static String text(Object value, String name) { return (String) field(value, name); }\n")
@@ -83,7 +87,7 @@ final class UiJavaBridgeGenerator {
             .append("  @Override public StoreValue reject(StoreValue store) { return new StoreValue(call(\"reject\", store.abi())); }\n")
             .append("  @Override public StoreValue dispose(StoreValue store) { return new StoreValue(call(\"dispose\", store.abi())); }\n")
             .append("  @Override public Completion complete(StoreValue store, ActionValue action) { var v = call(\"complete\", store.abi(), action.abi()); return new Completion(new StoreValue(field(v, \"store\")), flag(v, \"accepted\"), flag(v, \"startDrain\")); }\n")
-            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { var next = new StateValue(call(\"nextState\", state.abi(), action.abi())); return transition(call(\"transitionFromCandidate\", next.abi(), previous == null ? null : previousTree, store.abi(), action.abi()), next, action); }\n");
+            .append("  @Override public Transition transition(StateValue state, Node previous, StoreValue store, ActionValue action) { retainTransition(); try { var next = new StateValue(call(\"nextState\", state.abi(), action.abi())); return transition(call(\"transitionFromCandidate\", next.abi(), previous == null ? null : previousTree, store.abi(), action.abi()), next, action); } catch (RuntimeException | Error failure) { rejectTransition(); throw failure; } }\n");
         generateActions(out);
         generateEffects(out);
         generateEffectFailures(out);

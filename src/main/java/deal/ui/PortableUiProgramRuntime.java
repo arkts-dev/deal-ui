@@ -50,6 +50,7 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             store = initial.store();
             tree = initial.tree();
             renderer.show(tree);
+            bridge.acceptTransition();
         } catch (RuntimeException | Error failure) {
             if (createdStore != null) try { bridge.dispose(createdStore); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
             transitions.shutdownNow();
@@ -110,6 +111,7 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             try {
                 transition = bridge.transition(state, tree, store, action);
             } catch (RuntimeException failure) {
+                bridge.rejectTransition();
                 store = bridge.reject(store);
                 asynchronousFailure = failure;
                 retirePending();
@@ -120,6 +122,7 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             renderer.apply(transition.patches(), transition.tree());
         } catch (RuntimeException failure) {
             synchronized (this) {
+                bridge.rejectTransition();
                 store = bridge.reject(store);
                 asynchronousFailure = failure;
                 retirePending();
@@ -127,7 +130,8 @@ public final class PortableUiProgramRuntime implements AutoCloseable {
             return;
         }
         synchronized (this) {
-            if (disposed) { retirePending(); return; }
+            if (disposed) { bridge.rejectTransition(); retirePending(); return; }
+            bridge.acceptTransition();
             state = transition.state();
             tree = transition.tree();
             store = transition.store();

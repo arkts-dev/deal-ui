@@ -48,6 +48,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             tree = initial.tree();
             store = initial.store();
             renderer = createdRenderer;
+            bridge.acceptTransition();
         } catch (RuntimeException | Error failure) {
             if (createdStore != null) try { bridge.dispose(createdStore); } catch (RuntimeException disposeFailure) { failure.addSuppressed(disposeFailure); }
             try { transitions.shutdownNow(); } catch (RuntimeException shutdownFailure) { failure.addSuppressed(shutdownFailure); }
@@ -125,6 +126,7 @@ public final class UiProgramRuntime implements AutoCloseable {
             transition = bridge.transition(priorState, priorTree, priorStore, action);
         } catch (RuntimeException failure) {
             synchronized (this) {
+                bridge.rejectTransition();
                 try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); }
                 retirePending();
                 reportFailure(failure);
@@ -135,11 +137,12 @@ public final class UiProgramRuntime implements AutoCloseable {
         try {
             renderer.apply(transition.patches(), transition.tree());
         } catch (RuntimeException failure) {
-            synchronized (this) { try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); } reportFailure(failure); retirePending(); }
+            synchronized (this) { bridge.rejectTransition(); try { store = bridge.reject(store); } catch (RuntimeException rejectFailure) { failure.addSuppressed(rejectFailure); } reportFailure(failure); retirePending(); }
             return;
         }
         synchronized (this) {
-            if (disposed) { pending--; notifyAll(); return; }
+            if (disposed) { bridge.rejectTransition(); pending--; notifyAll(); return; }
+            bridge.acceptTransition();
             state = transition.state();
             tree = transition.tree();
             store = transition.store();
